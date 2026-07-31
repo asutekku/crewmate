@@ -7,6 +7,7 @@
  *   bun cli.ts say <text>        # broadcast to every agent
  *   bun cli.ts clear             # wipe roster
  *   bun cli.ts where             # which project/db this directory maps to
+ *   bun cli.ts call-me <name>    # name yourself  [--agent <who>] to rename another
  *
  * And the work board — what each agent is doing, as a timeline:
  *
@@ -40,6 +41,7 @@ import {
   terminalWidth,
 } from "./core/layout.ts";
 import { agentKey, BOARD_OPEN_SHOWN, foldEvents, parsePlan, progress } from "./core/work.ts";
+import { validateAlias } from "./core/topic.ts";
 import { agentTally, briefAge, briefAgo, itemLines } from "./core/board.ts";
 import type { BoardPaint } from "./core/board.ts";
 import {
@@ -431,6 +433,53 @@ function where(): void {
   console.log(`${dim("key:    ")} ${cyan(PROJECT.key)}${note}`);
   console.log(`${dim("root:   ")} ${PROJECT.root}`);
   console.log(`${dim("db:     ")} ${PROJECT.dbPath}`);
+}
+
+/**
+ * Lets an agent name itself.
+ *
+ * `traffic-56` is a process label and `ada` is a slot in a fixed list; neither
+ * says what the agent is for, and a roster of eight `traffic-XX` rows makes a
+ * reader match numbers to windows by hand. A name the agent picked is the only
+ * one of the three that carries meaning.
+ *
+ * The operator can rename an agent too, with `--agent <name>` — you are the one
+ * looking at eight windows, and an agent that has not thought to name itself is
+ * exactly the one worth naming.
+ */
+function callMe(name: string, target: string): void {
+  const check = validateAlias(name);
+  if (!check.ok) {
+    console.error(`${red("✗")} ${check.why}`);
+    process.exitCode = 1;
+    return;
+  }
+  withStore(PROJECT.dbPath, (store) => {
+    const now = Date.now();
+    const self =
+      target !== ""
+        ? store.findByName(target, now)
+        : ENV_SESSION !== ""
+          ? store.findBySession(ENV_SESSION)
+          : null;
+    if (!self) {
+      if (target !== "") console.error(`no agent named ${bold(target)} in ${PROJECT.name}`);
+      else {
+        console.error("`call-me` renames the agent that runs it.");
+        console.error(dim("  From a plain terminal, name one with `call-me <name> --agent <who>`."));
+      }
+      process.exitCode = 1;
+      return;
+    }
+    const was = displayName(self);
+    if (store.setAlias(self.sessionId, check.alias, now) === null) {
+      console.error(`${red("✗")} another live agent already answers to ${bold(check.alias)}`);
+      process.exitCode = 1;
+      return;
+    }
+    console.log(`${green("✓")} ${dim(was)} ${dim("→")} ${bold(handleColour(check.alias)(check.alias))}`);
+    console.log(dim(`  Peers reach you at this name; \`msg ${check.alias} "…"\` works now.`));
+  });
 }
 
 /**
@@ -891,6 +940,18 @@ switch (cmd) {
   case "mine":
     mine();
     break;
+  case "call-me":
+  case "name": {
+    const args = [...rest];
+    const target = takeFlag(args, "--agent");
+    const name = args.join(" ").trim();
+    if (!name) {
+      console.error("usage: cli.ts call-me <name> [--agent <who>]");
+      process.exit(1);
+    }
+    callMe(name, target);
+    break;
+  }
   case "clear":
     clear();
     break;

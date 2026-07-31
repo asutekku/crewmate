@@ -1,0 +1,343 @@
+/**
+ * Agent-chosen names.
+ *
+ * A name is durable and ADDRESSABLE — peers type it into `msg`, it is frozen
+ * into every message the agent sends, and it outlives the session on the work
+ * board. So it is validated harder than an intent: an intent that is wrong is
+ * noise for one session, a name that is wrong misroutes messages.
+ */
+
+import { unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { afterEach, describe, expect, test } from "bun:test";
+
+import { displayName, STALE_MS, withStore } from "../core/store.ts";
+import { validateAlias } from "../core/topic.ts";
+
+let n = 0;
+const paths: string[] = [];
+
+function fresh<T>(fn: (s: Parameters<Parameters<typeof withStore>[1]>[0]) => T): T {
+  const path = `${tmpdir().replace(/\\/g, "/")}/presence-alias-${process.pid}-${n++}.db`;
+  paths.push(path);
+  return withStore(path, fn);
+}
+
+afterEach(() => {
+  for (const p of paths.splice(0)) {
+    for (const suffix of ["", "-wal", "-shm"]) {
+      try {
+        unlinkSync(p + suffix);
+      } catch {
+        /* already gone */
+      }
+    }
+  }
+});
+
+describe("validateAlias", () => {
+  test("accepts the names an agent would actually pick", () => {
+    for (const name of ["tooling", "terrain-perf", "water_sim", "R4 core", "a11y", "agent2"]) {
+      const r = validateAlias(name);
+      expect(r.ok).toBe(true);
+      if (r.ok) expect(r.alias).toBe(name);
+    }
+  });
+
+  test("trims and collapses whitespace rather than refusing", () => {
+    const r = validateAlias("  terrain   perf  ");
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.alias).toBe("terrain perf");
+  });
+
+  test("refuses an empty name", () => {
+    expect(validateAlias("").ok).toBe(false);
+    expect(validateAlias("   ").ok).toBe(false);
+  });
+
+  test("refuses names that would break the line a peer copies to reply", () => {
+    // Quotes and backticks end up inside `cli.ts msg <name> "…"`.
+    for (const bad of ['say "hi', "back`tick", "semi;colon", "pipe|it", "$(whoami)", "a'b"]) {
+      expect(validateAlias(bad).ok).toBe(false);
+    }
+  });
+
+  test("refuses control characters that could rewrite a roster line", () => {
+    expect(validateAlias("red" + "\u001b" + "[31m").ok).toBe(false);
+    expect(validateAlias("bell" + "\u0007").ok).toBe(false);
+  });
+
+  test("whitespace is collapsed, so a newline cannot reach the roster intact", () => {
+    // The danger was never the newline character, it was a newline SURVIVING
+    // into a roster line and splitting one agent into two. Collapsing runs of
+    // whitespace before the character check handles both the embedded case and
+    // the trailing one a heredoc or `$(cat file)` produces.
+    const embedded = validateAlias("two\nlines");
+    expect(embedded.ok).toBe(true);
+    if (embedded.ok) expect(embedded.alias).toBe("two lines");
+    const trailing = validateAlias("tooling\n");
+    expect(trailing.ok).toBe(true);
+    if (trailing.ok) expect(trailing.alias).toBe("tooling");
+  });
+
+  test("refuses names reserved by the system", () => {
+    // `human` is the operator's handle: an agent answering to it could post in
+    // the user's voice, which is the forgery sender-identity exists to prevent.
+    for (const bad of ["human", "Human", "everyone", "all", "system", "claude"]) {
+      const r = validateAlias(bad);
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.why).toContain("reserved");
+    }
+  });
+
+  test("refuses anything that looks like a credential", () => {
+    const r = validateAlias("sk_live_0123456789abcdef0123456789abcdef");
+    expect(r.ok).toBe(false);
+  });
+
+  test("refuses a name too long for a roster column", () => {
+    expect(validateAlias("a".repeat(25)).ok).toBe(false);
+    expect(validateAlias("a".repeat(24)).ok).toBe(true);
+  });
+});
+
+describe("displayName precedence", () => {
+  test("a chosen name outranks both the session name and the handle", () => {
+    expect(displayName({ alias: "tooling", name: "traffic-56", handle: "ada" })).toBe("tooling");
+    expect(displayName({ alias: "", name: "traffic-56", handle: "ada" })).toBe("traffic-56");
+    expect(displayName({ alias: "", name: "", handle: "ada" })).toBe("ada");
+  });
+
+  test("a caller that passes no alias field still resolves", () => {
+    // `post` and the claim helpers pass a narrower shape; they must not crash.
+    expect(displayName({ name: "traffic-56", handle: "ada" })).toBe("traffic-56");
+  });
+});
+
+describe("setAlias", () => {
+  test("names a session, and the roster reads it back", () => {
+    fresh((store) => {
+      const now = Date.now();
+      store.register("s1", "/tree", "master", now);
+      expect(store.setAlias("s1", "tooling", now)).toBe("tooling");
+      const s = store.findBySession("s1");
+      expect(s && displayName(s)).toBe("tooling");
+    });
+  });
+
+  test("a peer can reach the agent by its chosen name", () => {
+    fresh((store) => {
+      const now = Date.now();
+      store.register("s1", "/tree", "master", now);
+      store.setAlias("s1", "tooling", now);
+      expect(store.findByName("tooling", now)?.sessionId).toBe("s1");
+      // And by a prefix, like every other name form.
+      expect(store.findByName("tool", now)?.sessionId).toBe("s1");
+    });
+  });
+
+  test("two live agents cannot answer to one name", () => {
+    // Ambiguity here is not cosmetic: `msg <name>` would have two recipients.
+    fresh((store) => {
+      const now = Date.now();
+      store.register("s1", "/tree", "master", now);
+      store.register("s2", "/tree", "master", now);
+      expect(store.setAlias("s1", "tooling", now)).toBe("tooling");
+      expect(store.setAlias("s2", "tooling", now)).toBeNull();
+      expect(store.setAlias("s2", "Tooling", now)).toBeNull();
+      expect(displayName(store.findBySession("s2")!)).not.toBe("tooling");
+    });
+  });
+
+  test("renaming yourself to the name you already hold is not a collision", () => {
+    fresh((store) => {
+      const now = Date.now();
+      store.register("s1", "/tree", "master", now);
+      store.setAlias("s1", "tooling", now);
+      expect(store.setAlias("s1", "tooling", now)).toBe("tooling");
+    });
+  });
+
+  test("a name freed by a dead session is reusable", () => {
+    // Matches how handles are recycled: holding a name against an agent that
+    // left hours ago drifts every later agent down the list.
+    fresh((store) => {
+      const now = Date.now();
+      store.register("s1", "/tree", "master", now - STALE_MS - 1000);
+      store.setAlias("s1", "tooling", now - STALE_MS - 1000);
+      store.register("s2", "/tree", "master", now);
+      expect(store.setAlias("s2", "tooling", now)).toBe("tooling");
+    });
+  });
+
+  test("a chosen name survives a claude-agents sync", () => {
+    // THE TRAP THIS COLUMN EXISTS FOR: `syncAgents` overwrites `name` wholesale
+    // from `claude agents --json` on every roster read, so a chosen name stored
+    // there would revert at the next `who` — visibly, minutes later.
+    fresh((store) => {
+      const now = Date.now();
+      store.register("s1", "/tree", "master", now);
+      store.setAlias("s1", "tooling", now);
+      store.syncAgents([{ sessionId: "s1", name: "traffic-56", status: "busy" }]);
+      const s = store.findBySession("s1");
+      expect(displayName(s!)).toBe("tooling");
+      // The underlying session name is still recorded — the alias layers over it.
+      expect(s?.name).toBe("traffic-56");
+    });
+  });
+
+  test("an overlap warning names the agent the way the roster does", () => {
+    fresh((store) => {
+      const now = Date.now();
+      store.register("s1", "/tree", "master", now);
+      store.register("s2", "/tree", "master", now);
+      store.syncAgents([{ sessionId: "s1", name: "traffic-56", status: "busy" }]);
+      store.setAlias("s1", "tooling", now);
+      store.claim("s1", "src/gen/terrain.ts", now);
+      // A warning calling it `traffic-56` while the roster says `tooling` reads
+      // as two different agents holding the same file.
+      expect(store.conflictingClaims("s2", "src/gen/terrain.ts", now)[0]?.name).toBe("tooling");
+      expect(store.allClaims(now)[0]?.name).toBe("tooling");
+    });
+  });
+
+  test("a message carries the chosen name as its sender", () => {
+    fresh((store) => {
+      const now = Date.now();
+      const handle = store.register("s1", "/tree", "master", now);
+      store.setAlias("s1", "tooling", now);
+      store.post(handle, "say", "hello", now);
+      expect(store.recent(1)[0]?.from).toBe("tooling");
+    });
+  });
+
+});
+
+describe("a name survives a restart", () => {
+  // MEASURED, not assumed (2026-07-31): CLAUDE_CODE_SESSION_ID is the
+  // CONVERSATION uuid — the transcript's own filename, and what
+  // "claude --resume" takes. This tool's conversation was restarted mid-session:
+  // the display name moved traffic-a0 -> traffic-7c while the id stayed
+  // c5ce05bc-… throughout. So a restart is the SAME id, and the only thing that
+  // loses the name is SessionEnd deleting the row.
+  const ID = "c5ce05bc-4024-45ef-8cb0-67c0c08d323d";
+
+  test("a clean exit and relaunch comes back under the chosen name", () => {
+    fresh((store) => {
+      const now = Date.now();
+      store.register(ID, "/tree", "master", now);
+      store.setAlias(ID, "tooling", now);
+
+      // SessionEnd on a double ⌃C: the row goes, the id does not.
+      store.unregister(ID);
+      expect(store.findBySession(ID)).toBeNull();
+
+      store.registerAndRestore(ID, "/tree", "master", now);
+      expect(displayName(store.findBySession(ID)!)).toBe("tooling");
+    });
+  });
+
+  test("a name survives a KILLED terminal too, where SessionEnd never runs", () => {
+    // The name is recorded durably when it is CHOSEN, not only when the session
+    // exits politely — a name that survives only a clean exit is backwards.
+    fresh((store) => {
+      const now = Date.now();
+      store.register(ID, "/tree", "master", now);
+      store.setAlias(ID, "tooling", now);
+      // No unregister: the process was killed. The stale sweep takes the row.
+      store.pruneStale(now + STALE_MS + 1000);
+
+      store.registerAndRestore(ID, "/tree", "master", now + STALE_MS + 2000);
+      expect(displayName(store.findBySession(ID)!)).toBe("tooling");
+    });
+  });
+
+  test("RENAMING THE CONVERSATION does not lose the name", () => {
+    // The reason this is keyed on the id and not the title: a title is
+    // model-written and rewritten as a conversation develops, so title-keying
+    // orphaned a name the moment the conversation was renamed.
+    fresh((store) => {
+      const now = Date.now();
+      store.register(ID, "/tree", "master", now);
+      store.setTitle(ID, "Explore cheap agent communication solutions");
+      store.setAlias(ID, "tooling", now);
+      store.unregister(ID);
+
+      store.registerAndRestore(ID, "/tree", "master", now);
+      store.setTitle(ID, "Something the model renamed it to later");
+      expect(displayName(store.findBySession(ID)!)).toBe("tooling");
+    });
+  });
+
+  test("an untitled session keeps its name — the title is not consulted at all", () => {
+    fresh((store) => {
+      const now = Date.now();
+      store.register(ID, "/tree", "master", now);
+      store.setAlias(ID, "tooling", now);
+      store.unregister(ID);
+      store.registerAndRestore(ID, "/tree", "master", now);
+      expect(displayName(store.findBySession(ID)!)).toBe("tooling");
+    });
+  });
+
+  test("a different conversation gets nothing", () => {
+    fresh((store) => {
+      const now = Date.now();
+      store.register(ID, "/tree", "master", now);
+      store.setAlias(ID, "tooling", now);
+      store.unregister(ID);
+
+      store.registerAndRestore("a-different-uuid", "/tree", "master", now);
+      expect(displayName(store.findBySession("a-different-uuid")!)).not.toBe("tooling");
+    });
+  });
+
+  test("a name a LIVE peer answers to is not restored onto a second session", () => {
+    // Two agents on one name makes every msg to it ambiguous.
+    fresh((store) => {
+      const now = Date.now();
+      store.register(ID, "/tree", "master", now);
+      store.setAlias(ID, "tooling", now);
+      store.unregister(ID);
+      // Someone else took the freed name in the meantime.
+      store.register("other", "/tree", "master", now);
+      store.setAlias("other", "tooling", now);
+
+      store.registerAndRestore(ID, "/tree", "master", now);
+      expect(displayName(store.findBySession(ID)!)).not.toBe("tooling");
+      expect(displayName(store.findBySession("other")!)).toBe("tooling");
+    });
+  });
+
+  test("a name chosen after the restart wins over the remembered one", () => {
+    fresh((store) => {
+      const now = Date.now();
+      store.register(ID, "/tree", "master", now);
+      store.setAlias(ID, "tooling", now);
+      store.unregister(ID);
+
+      store.registerAndRestore(ID, "/tree", "master", now);
+      store.setAlias(ID, "terrain-perf", now);
+      expect(displayName(store.findBySession(ID)!)).toBe("terrain-perf");
+      // And it is the NEW one that comes back next time.
+      store.unregister(ID);
+      store.registerAndRestore(ID, "/tree", "master", now);
+      expect(displayName(store.findBySession(ID)!)).toBe("terrain-perf");
+    });
+  });
+
+  test("the restored name reaches peers, the board and the log", () => {
+    fresh((store) => {
+      const now = Date.now();
+      store.register(ID, "/tree", "master", now);
+      store.setAlias(ID, "tooling", now);
+      store.unregister(ID);
+      store.registerAndRestore(ID, "/tree", "master", now);
+
+      expect(store.findByName("tooling", now)?.sessionId).toBe(ID);
+      const handle = store.findBySession(ID)!.handle;
+      store.post(handle, "say", "back again", now);
+      expect(store.recent(1)[0]?.from).toBe("tooling");
+    });
+  });
+});

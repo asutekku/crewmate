@@ -21,6 +21,7 @@ function session(over: Partial<Session> = {}): Session {
     sessionId: "s1",
     handle: "ada",
     name: "traffic-4b",
+    alias: "",
     status: "busy",
     blocked: "",
     worktree: "I:/Projects/Traffic",

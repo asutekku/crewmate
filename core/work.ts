@@ -89,25 +89,27 @@ export interface WorkEvent {
 /**
  * The durable identity of an agent across restarts.
  *
- * Measured against a live 5-agent roster rather than reasoned about:
+ * IT IS THE SESSION ID, and that is not the tautology it looks like.
+ * `CLAUDE_CODE_SESSION_ID` is not a per-process label — it is the CONVERSATION
+ * uuid, the same one that names the transcript on disk and that
+ * `claude --resume <uuid>` takes. Measured 2026-07-31 on this very tool's own
+ * conversation: the terminal was restarted mid-session, Claude Code's display
+ * name moved `traffic-a0` -> `traffic-7c`, and the session id stayed
+ * `c5ce05bc-…` throughout — the roster row was never replaced, only relabelled.
  *
- * | key              | distinct | verdict                              |
- * |------------------|----------|--------------------------------------|
- * | worktree+branch  | 2 of 5   | 4 agents collapse onto `Traffic#master` |
- * | worktree only    | 2 of 5   | same collapse                        |
- * | conversation title | 5 of 5 | unique for every agent                |
+ * An earlier version keyed on the conversation TITLE, reasoning that a restart
+ * issued a new session id. It does not. The title was strictly worse on two
+ * counts: it is model-written and REWRITTEN as a conversation develops, so
+ * renaming a conversation silently orphaned every record filed under the old
+ * name; and it is empty until the first title lands, so early records fell back
+ * to a second key and split one agent's timeline in two.
  *
- * Worktree+branch is the intuitive answer and it is WRONG: most agents work in
- * the main tree, so it merges four unrelated timelines into one. The title is
- * unique and survives a restart of the same conversation, because it is read
- * from the transcript rather than assigned per process.
- *
- * The session id is the fallback, not the preference: it degrades to one
- * timeline per run (today's behaviour) rather than to nothing.
+ * `title` is still taken, and deliberately ignored, so that every call site
+ * reads as "identity, given what we know about this session" rather than being
+ * quietly rewritten to pass one argument fewer.
  */
-export function agentKey(title: string, sessionId: string): string {
-  const t = title.trim();
-  return t !== "" ? `title:${t}` : `session:${sessionId}`;
+export function agentKey(_title: string, sessionId: string): string {
+  return `session:${sessionId}`;
 }
 
 export function createWorkTables(db: Database): void {

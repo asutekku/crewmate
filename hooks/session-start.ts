@@ -67,7 +67,7 @@ async function main(): Promise<void> {
   const report = withStore(project.dbPath, (store) => {
     const now = Date.now();
     store.pruneStale(now);
-    const handle = store.register(sessionId, tree, currentBranch(cwd), now);
+    const handle = store.registerAndRestore(sessionId, tree, currentBranch(cwd), now);
     // Recorded once, here, because this is the moment the scripts were loaded —
     // stamping it later would report the version installed by then, not the one
     // actually running.

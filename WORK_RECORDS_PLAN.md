@@ -164,27 +164,37 @@ reasoned about:
 |---|---|---|
 | worktree + branch | **2 of 5** | 4 agents collapse onto `Traffic#master` |
 | worktree only | **2 of 5** | same collapse |
-| **conversation title** | **5 of 5** | unique for every agent |
+| conversation title | **5 of 5** | unique — but see the correction below |
 
 Worktree+branch was the intuitive answer and it is **wrong**: most agents work in
 the main tree, so it merges four unrelated agents into one timeline — the exact
 failure ruling 2 exists to prevent.
 
-**The conversation title is the key.** It is also stable: across the six largest
-transcripts, five never changed their title at all, and it survives a restart of
-the same conversation because it is read from the transcript rather than
-assigned per process.
+> **CORRECTED 2026-07-31 — the premise of this whole section was false.**
+>
+> The paragraph above rests on "a restarted terminal is a new session id". **It
+> is not.** `CLAUDE_CODE_SESSION_ID` is the *conversation* uuid: it names the
+> transcript on disk and it is what `claude --resume <uuid>` takes. Measured on
+> this tool's own conversation — restarted mid-session, display name moved
+> `traffic-a0` → `traffic-7c`, session id stayed `c5ce05bc-…` throughout, and
+> the roster row was never replaced.
+>
+> So the title solved a problem that did not exist, and cost two real ones: it is
+> **model-written and rewritten as a conversation develops**, so renaming a
+> conversation orphaned every record under the old name; and it is empty until
+> the first title lands, splitting early records onto a fallback key.
+>
+> **The session id is the key.** `agentKey` still *takes* a title and ignores it,
+> so every call site reads as "identity, given what we know about this session"
+> rather than being quietly rewritten to pass one argument fewer.
+>
+> The lesson generalises past this feature: the title measurement was real and
+> the conclusion drawn from it was wrong, because the *comparison* was never
+> tested. Five titles being distinct says nothing about whether the thing they
+> were replacing needed replacing.
 
-Known gaps, both acceptable:
-
-- **`/clear` starts a new title**, so it starts a new timeline. That is arguably
-  correct — a cleared conversation *is* new work.
-- **An untitled session** (3 of 25 transcripts, all predating the feature) falls
-  back to `session_id`, i.e. today's behaviour, degrading to one timeline per
-  run rather than to nothing.
-
-Store the resolved key on the `work` row at creation so a later title change
-cannot orphan existing records.
+Store the resolved key on the `work` row at creation, so the record still names
+its owner after that session is gone.
 
 ### Hooks fill the skeleton; agents enrich
 

@@ -36,22 +36,46 @@ afterEach(() => {
   }
 });
 
-const AGENT = "title:retiring the old net core";
+const AGENT = "session:c5ce05bc-4024-45ef-8cb0-67c0c08d323d";
 
 describe("agent identity", () => {
-  test("the conversation title keys the timeline, not the session", () => {
-    // The measured reason: worktree+branch collapsed 4 of 5 live agents onto
-    // `Traffic#master`. A restarted terminal is a new session id, so a
-    // session-keyed record would split one agent's timeline in two.
-    const before = agentKey("retiring the old net core", "session-aa");
-    const after = agentKey("retiring the old net core", "session-a0");
-    expect(after).toBe(before);
+  test("the session id IS the conversation id, so it keys the timeline", () => {
+    // MEASURED 2026-07-31 on this tool's own conversation: CLAUDE_CODE_SESSION_ID
+    // is the transcript's filename — the uuid "claude --resume" takes — and a
+    // mid-session restart moved the display name traffic-a0 -> traffic-7c while
+    // the id stayed c5ce05bc-… . A restart is the SAME id.
+    const id = "c5ce05bc-4024-45ef-8cb0-67c0c08d323d";
+    expect(agentKey("Explore cheap agent communication solutions", id)).toBe(`session:${id}`);
   });
 
-  test("an untitled session falls back to its own id rather than to nothing", () => {
+  test("RENAMING the conversation does not orphan its records", () => {
+    // Tests the RECORDS, not the key function. Asserting
+    // `agentKey(titleA, id) === agentKey(titleB, id)` would be a tautology —
+    // `agentKey` ignores its title, so both sides reduce to `session:${id}` and
+    // the assertion would hold for any implementation, including a broken one.
+    // What has to be true is that an item opened before a rename is still found
+    // after it.
+    fresh((store) => {
+      const w = store.work;
+      const id = "c5ce05bc-4024-45ef-8cb0-67c0c08d323d";
+      const opened = w.open(
+        agentKey("Explore cheap agent communication solutions", id),
+        "traffic-a0",
+        "work records P0",
+        ["one"],
+        1000,
+      );
+      const found = w.target(agentKey("Something the model renamed it to later", id));
+      expect(found?.workId).toBe(opened);
+    });
+  });
+
+  test("an untitled session is keyed exactly like a titled one", () => {
+    // The title never participates, so there is no second code path to get
+    // wrong and no window where early records land under a different key.
     expect(agentKey("", "sess-1")).toBe("session:sess-1");
-    expect(agentKey("   ", "sess-1")).toBe("session:sess-1");
-    // Two untitled sessions must NOT share a timeline.
+    expect(agentKey("a title", "sess-1")).toBe("session:sess-1");
+    // Two different conversations must NOT share a timeline.
     expect(agentKey("", "sess-2")).not.toBe(agentKey("", "sess-1"));
   });
 });
@@ -142,24 +166,24 @@ describe("the P0 gate: several items open at once", () => {
     });
   });
 
-  test("a restarted session picks up the checklist the old one opened", () => {
-    // THE PROPERTY THE WHOLE IDENTITY DESIGN EXISTS FOR. Verified end-to-end
-    // too: a session registered as `e2e-session-2` under the same conversation
-    // title ticked step 2 of an item `e2e-session-1` had opened.
+  test("a restarted session picks up the checklist it opened before", () => {
+    // THE PROPERTY THE WHOLE IDENTITY DESIGN EXISTS FOR — and it holds through
+    // a RENAME, which is what the earlier title-keyed version got wrong.
     fresh((store) => {
       const w = store.work;
-      const before = agentKey("retiring the old net core", "session-aa");
-      const id = w.open(before, "traffic-aa", "retiring the old net core", ["one", "two"], 1000);
+      const id = w.open(AGENT, "traffic-a0", "retiring the old net core", ["one", "two"], 1000);
       w.tick(id, 1, "", 2000);
 
-      const after = agentKey("retiring the old net core", "session-a0");
+      // Same conversation after a restart: same id, new display name, and the
+      // model has since rewritten the conversation's title.
+      const after = agentKey("a completely different title now", "c5ce05bc-4024-45ef-8cb0-67c0c08d323d");
       const resumed = w.target(after);
       expect(resumed?.workId).toBe(id);
       expect(w.tick(resumed!.workId, 2, "picked up after a restart", 3000)).toBe(true);
       expect(progress(w.steps(id)).done).toBe(2);
       // The name is the one FROZEN at creation, so the board still credits the
       // agent that opened it rather than blanking out after the restart.
-      expect(resumed?.agentName).toBe("traffic-aa");
+      expect(resumed?.agentName).toBe("traffic-a0");
     });
   });
 

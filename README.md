@@ -335,24 +335,58 @@ later ("who moved the baselines?").
 
 ### Records outlive their session
 
-Work is keyed on the **agent**, not the session — a restarted terminal is a new
-session id, so a session-keyed record would split one agent's timeline exactly
-when it matters. The key is the **conversation title**, chosen by measuring three
-candidates against a live 5-agent roster rather than by reasoning:
+Work is keyed on the **session id**, and that is not the tautology it looks like.
+`CLAUDE_CODE_SESSION_ID` is **not a per-process label** — it is the
+*conversation* uuid: the transcript's own filename, and the id
+`claude --resume <uuid>` takes.
 
-| Key | Distinct | Verdict |
-|---|---|---|
-| worktree + branch | 2 of 5 | four agents collapse onto `Traffic#master` |
-| worktree only | 2 of 5 | same collapse |
-| **conversation title** | **5 of 5** | unique for every agent |
+Measured 2026-07-31 on this tool's own conversation. The terminal was restarted
+mid-session; Claude Code's display name moved `traffic-a0` → `traffic-7c`, and
+the session id stayed `c5ce05bc-…` throughout. **The roster row was never
+replaced, only relabelled.**
 
-Worktree+branch is the intuitive answer and it is **wrong**: most agents work in
-the main tree. An untitled session falls back to its own id, degrading to one
-timeline per run rather than to nothing. `/clear` starts a new title and so a new
-timeline, which is arguably correct — a cleared conversation *is* new work.
+An earlier version keyed on the conversation *title*, on the assumption that a
+restart issued a fresh session id. It does not, and the title was strictly worse
+on two counts: it is model-written and gets **rewritten as a conversation
+develops**, so renaming one silently orphaned every record filed under the old
+name; and it is empty until the first title lands, splitting early records onto
+a second key.
 
 So an **open** record survives the roster's 90-minute stale sweep; a **closed**
 one is kept 7 days (`board --all`) and then pruned with its steps and events.
+
+## Naming an agent
+
+`traffic-56` is a label Claude Code hands out, and `ada` is a slot in a fixed
+list. Neither says what an agent is *for*, and a roster of eight `traffic-XX`
+rows makes you match numbers to windows by hand.
+
+```sh
+cli.ts call-me tooling              # an agent names itself
+cli.ts call-me tooling --agent ada  # you name one that hasn't
+```
+
+The chosen name outranks both others everywhere a name is shown — roster, board,
+overlap warnings, and the sender on every message — and peers address it with
+`msg tooling "…"`.
+
+**It survives a restart.** The name is remembered against the conversation uuid,
+both when it is chosen and again when `SessionEnd` fires, so it comes back
+whether the terminal was closed politely or killed. A name that only survived a
+*clean* exit would be the wrong way round.
+
+Three rules, each protecting something specific:
+
+- **Two live agents cannot share a name** — `msg <name>` would have two
+  recipients. A name freed by a session that has gone is reusable, exactly as
+  handles are recycled.
+- **`human`, `everyone`, `system` and friends are reserved.** The operator's
+  handle outranks peer text wherever it is rendered, so an agent answering to it
+  could post in your voice.
+- **Letters, digits, spaces, `-` and `_` only.** Quotes and backticks would break
+  the `msg` line a peer copies to reply; control characters could rewrite a
+  roster row. Whitespace is collapsed rather than refused, so a name pasted with
+  a trailing newline is cleaned instead of rejected.
 
 ## Files
 

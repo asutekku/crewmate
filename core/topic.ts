@@ -40,6 +40,44 @@ const SENSITIVE =
 const FILLER =
   /^(?:ok|okay|oh|ah|yeah|yes|yep|yup|sure|right|alright|great|lovely|nice|good|perfect|cool|awesome|thanks|thank|please|now|so|and|but|then|well|continue|continuing|go|going|ahead|proceed|carry|keep|next|lets|let's|we|i|you|can|could|should|would|shall|will|start|started|begin|implement|implementing|work|working|do|doing|done|make|making|on|it|that|this|the|a|an|to|of|for|with|step|steps|thing|things|stuff|task|tasks|one|two|first|second|last|more|some|any|all|is|are|was|were|be|been|being|have|has|had|get|got|up|out|in|at|if|as|too|also|just|still|again|ready|there|here|them|its|your|my|works|work|worked|fine|correct|agreed|exactly|indeed|true|looks|sounds|seems)$/i;
 
+/** A chosen name has to fit a roster column beside a worktree and an age. */
+const ALIAS_MAX = 24;
+
+/**
+ * Names this system assigns, which an agent may not claim as its own.
+ *
+ * `human` is the operator's handle — an agent answering to it could post in the
+ * user's voice, which is the one forgery the sender-identity work exists to
+ * prevent. `everyone` and `all` read as broadcast targets in `msg`.
+ */
+const RESERVED_ALIASES = /^(?:human|user|operator|everyone|all|none|system|claude)$/i;
+
+/**
+ * Validates a name an agent picked for itself, returning the cleaned name or a
+ * reason it was refused.
+ *
+ * STRICTER THAN AN INTENT, because an alias is durable and addressable: peers
+ * type it into `msg`, it is frozen into every message that agent sends, and it
+ * appears on the board after the session is gone. An intent that is wrong is
+ * noise for one session; a name that is wrong misroutes messages.
+ */
+export function validateAlias(raw: string): { ok: true; alias: string } | { ok: false; why: string } {
+  const alias = raw.trim().replace(/\s+/g, " ");
+  if (alias === "") return { ok: false, why: "a name cannot be empty" };
+  if ([...alias].length > ALIAS_MAX) {
+    return { ok: false, why: `a name must be ${ALIAS_MAX} characters or fewer` };
+  }
+  // Letters, digits, and the two separators a name actually wants. Excludes the
+  // quotes and backticks that would break the shell line a peer copies to reply,
+  // and the control characters that would let a name rewrite a roster line.
+  if (!/^[A-Za-z0-9][A-Za-z0-9 _-]*$/.test(alias)) {
+    return { ok: false, why: "letters, digits, spaces, - and _ only, starting with a letter or digit" };
+  }
+  if (RESERVED_ALIASES.test(alias)) return { ok: false, why: `"${alias}" is reserved` };
+  if (SENSITIVE.test(alias)) return { ok: false, why: "that looks like a credential" };
+  return { ok: true, alias };
+}
+
 /**
  * True when a phrase is made entirely of filler — an acknowledgement plus a
  * verb of intention, with no noun naming what is being worked ON.

@@ -100,6 +100,14 @@ export interface Session {
   readonly name: string;
   /** Fallback identity assigned by this system when no real name is known. */
   readonly handle: string;
+  /**
+   * A name the agent chose for itself. Outranks both of the above.
+   *
+   * ITS OWN COLUMN, not a write into `name`: `syncAgents` overwrites `name`
+   * wholesale from `claude agents --json` on every roster read, so a chosen name
+   * stored there would survive until the next `who` and then silently revert.
+   */
+  readonly alias: string;
   /** `idle` / `busy` from Claude Code, or "" when it has not been sampled. */
   readonly status: string;
   /** Why the session is stuck, when it is; "" otherwise. Beats `status`. */
@@ -120,8 +128,20 @@ export interface Session {
   readonly startedMs: number;
 }
 
-/** What a peer is called: the real session name when known, else the handle. */
-export function displayName(s: Pick<Session, "name" | "handle">): string {
+/**
+ * What a peer is called, most-chosen first: a name the agent picked, else the
+ * real session name, else the assigned handle.
+ *
+ * The agent's own choice wins because it is the only one of the three that
+ * carries meaning. `traffic-56` is a process label and `ada` is a slot in a
+ * fixed list — neither says what the agent is for, and a roster of eight
+ * `traffic-XX` rows makes the reader match numbers to windows by hand.
+ */
+export function displayName(s: Pick<Session, "name" | "handle"> & { readonly alias?: string }): string {
+  // `alias` is optional in the SIGNATURE only, because `post` and the claim
+  // helpers pass a narrower shape that never carried one. A `Session` always
+  // has the field.
+  if (s.alias !== undefined && s.alias !== "") return s.alias;
   return s.name !== "" ? s.name : s.handle;
 }
 
@@ -271,6 +291,15 @@ function openDb(dbPath: string): Database {
       ts_ms      INTEGER NOT NULL,
       PRIMARY KEY (path, session_id)
     );
+    -- Names remembered past the roster row that held them. A session id is the
+    -- CONVERSATION uuid (the transcript's filename, and what "claude --resume"
+    -- takes), so it is the same after a restart -- but SessionEnd deletes the
+    -- row on a clean exit, taking the name with it.
+    -- Survives the stale sweep on purpose: it is a preference, not liveness.
+    CREATE TABLE IF NOT EXISTS aliases (
+      session_id TEXT PRIMARY KEY,
+      alias      TEXT NOT NULL
+    );
   `);
   createWorkTables(db);
   // `CREATE TABLE IF NOT EXISTS` leaves an EXISTING table alone, so a column
@@ -283,6 +312,7 @@ function openDb(dbPath: string): Database {
   addColumnIfMissing(db, "sessions", "summary", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(db, "sessions", "summary_ms", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(db, "sessions", "transcript", "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(db, "sessions", "alias", "TEXT NOT NULL DEFAULT ''");
   return db;
 }
 
@@ -314,7 +344,7 @@ export function withStore<T>(dbPath: string, fn: (s: Store) => T): T {
 }
 
 /** The column list every Session query selects, so the two cannot drift apart. */
-const SESSION_COLUMNS = `session_id, handle, name, status, blocked, worktree, branch,
+const SESSION_COLUMNS = `session_id, handle, name, alias, status, blocked, worktree, branch,
                          intent, title, summary, summary_ms, last_seen_ms, started_ms`;
 
 function rowToSession(r: Record<string, string | number>): Session {
@@ -322,6 +352,7 @@ function rowToSession(r: Record<string, string | number>): Session {
     sessionId: String(r["session_id"]),
     handle: String(r["handle"]),
     name: String(r["name"] ?? ""),
+    alias: String(r["alias"] ?? ""),
     status: String(r["status"] ?? ""),
     blocked: String(r["blocked"] ?? ""),
     worktree: String(r["worktree"]),
@@ -455,6 +486,19 @@ export class Store {
    * and it did so for the longest-running sessions, which are the ones with the
    * most work at stake.
    */
+  /**
+   * Registers, then puts back any name this conversation chose before.
+   *
+   * On `register` rather than on the first prompt, so a returning agent is
+   * already under its known name in the roster a peer reads at session start —
+   * a name that appears one turn late has already misidentified it once.
+   */
+  registerAndRestore(sessionId: string, worktree: string, branch: string, nowMs: number): string {
+    const handle = this.register(sessionId, worktree, branch, nowMs);
+    this.restoreAlias(sessionId, nowMs);
+    return handle;
+  }
+
   handleForOrRegister(sessionId: string, worktree: string, branch: string, nowMs: number): string {
     return this.handleFor(sessionId) ?? this.register(sessionId, worktree, branch, nowMs);
   }
@@ -503,9 +547,91 @@ export class Store {
     this.db.query(`UPDATE sessions SET intent = ? WHERE session_id = ?`).run(intent, sessionId);
   }
 
-  /** Claude Code's conversation name, read from the transcript. */
+  /**
+   * Records a name the agent chose for itself.
+   *
+   * Returns the name taken, or null when a LIVE peer already answers to it.
+   * Uniqueness is checked and written in one transaction for the same reason
+   * handle assignment is: two sessions naming themselves at once would both read
+   * "free" before either wrote, and `msg <name>` would then have two recipients.
+   *
+   * A dead session's name is reusable — that is the point of checking only live
+   * ones, and it matches how handles are recycled.
+   */
+  setAlias(sessionId: string, alias: string, nowMs: number): string | null {
+    const claim = this.db.transaction((): string | null => {
+      const taken = this.db
+        .query(
+          `SELECT session_id FROM sessions
+            WHERE last_seen_ms > ? AND session_id != ?
+              AND (LOWER(alias) = LOWER(?) OR (alias = '' AND LOWER(name) = LOWER(?)))`,
+        )
+        .get(nowMs - STALE_MS, sessionId, alias, alias) as { session_id: string } | null;
+      if (taken) return null;
+      this.db.query(`UPDATE sessions SET alias = ? WHERE session_id = ?`).run(alias, sessionId);
+      // Recorded durably HERE as well as on unregister, so a name survives a
+      // terminal that is killed rather than closed — SessionEnd never runs in
+      // that case, and a name that only survives a POLITE exit is the wrong way
+      // round.
+      this.db
+        .query(`INSERT OR REPLACE INTO aliases (session_id, alias) VALUES (?, ?)`)
+        .run(sessionId, alias);
+      return alias;
+    });
+    return claim();
+  }
+
+  /**
+   * Claude Code's conversation name, read from the transcript.
+   *
+   * Also the moment a RESTART can be recognised, so it is where a chosen name is
+   * inherited: see `inheritAlias`.
+   */
   setTitle(sessionId: string, title: string): void {
     this.db.query(`UPDATE sessions SET title = ? WHERE session_id = ?`).run(title, sessionId);
+  }
+
+  /**
+   * Restores a name this conversation chose before it was last closed.
+   *
+   * Keyed on the SESSION ID, which is the conversation uuid rather than a
+   * per-process label — measured on this tool's own conversation: a mid-session
+   * restart moved the display name `traffic-a0` -> `traffic-7c` while the id
+   * stayed `c5ce05bc-…`. So the id alone identifies "this conversation, again",
+   * and no fuzzy matching is needed.
+   *
+   * An earlier version matched on the conversation TITLE. That was wrong twice
+   * over: the title is model-written and gets REWRITTEN as a conversation
+   * develops, so renaming one orphaned its name; and it is empty until the first
+   * title lands.
+   *
+   * Silent when there is nothing to restore, when this session already chose a
+   * name, or when a live peer answers to that name — the last is a second window
+   * on one conversation, and two agents on one name makes `msg` ambiguous.
+   */
+  restoreAlias(sessionId: string, nowMs: number): string | null {
+    const run = this.db.transaction((): string | null => {
+      const self = this.db
+        .query(`SELECT alias FROM sessions WHERE session_id = ?`)
+        .get(sessionId) as { alias: string } | null;
+      if (!self || self.alias !== "") return null;
+      const prior = this.db
+        .query(`SELECT alias FROM aliases WHERE session_id = ?`)
+        .get(sessionId) as { alias: string } | null;
+      if (!prior || prior.alias === "") return null;
+      const held = this.db
+        .query(
+          `SELECT session_id FROM sessions
+            WHERE LOWER(alias) = LOWER(?) AND session_id != ? AND last_seen_ms > ?`,
+        )
+        .get(prior.alias, sessionId, nowMs - STALE_MS) as { session_id: string } | null;
+      if (held) return null;
+      this.db
+        .query(`UPDATE sessions SET alias = ? WHERE session_id = ?`)
+        .run(prior.alias, sessionId);
+      return prior.alias;
+    });
+    return run();
   }
 
   /** Where this session's transcript lives, so a refresh can find it later. */
@@ -585,10 +711,19 @@ export class Store {
   findByName(query: string, nowMs: number): Session | null {
     const live = this.liveSessions(nowMs);
     const q = query.toLowerCase();
+    // The CHOSEN name is matched first and on its own pass, so an agent that
+    // renamed itself is reachable by the name peers actually see. Matching it in
+    // the same pass as `name` would let another session's `traffic-56` win an
+    // exact match over this one's deliberate alias.
+    const named = live.find((s) => s.alias.toLowerCase() === q);
+    if (named) return named;
     const exact = live.find((s) => s.name.toLowerCase() === q || s.handle.toLowerCase() === q);
     if (exact) return exact;
     const prefixed = live.filter(
-      (s) => s.name.toLowerCase().startsWith(q) || s.handle.toLowerCase().startsWith(q),
+      (s) =>
+        s.alias.toLowerCase().startsWith(q) ||
+        s.name.toLowerCase().startsWith(q) ||
+        s.handle.toLowerCase().startsWith(q),
     );
     // Ambiguous is not a match: silently picking one would send to the wrong peer.
     return prefixed.length === 1 ? (prefixed[0] ?? null) : null;
@@ -611,6 +746,19 @@ export class Store {
   }
 
   unregister(sessionId: string): void {
+    // The chosen name is REMEMBERED past the row that held it. A session id is
+    // the conversation uuid — `claude --resume <uuid>` takes the same one — so a
+    // terminal closed with ⌃C comes back as this same id and should come back
+    // under the name the user knows it by. Without this the name survives a
+    // crash (row untouched) but not a clean exit, which is backwards.
+    const row = this.db
+      .query(`SELECT alias FROM sessions WHERE session_id = ? AND alias != ''`)
+      .get(sessionId) as { alias: string } | null;
+    if (row) {
+      this.db
+        .query(`INSERT OR REPLACE INTO aliases (session_id, alias) VALUES (?, ?)`)
+        .run(sessionId, row.alias);
+    }
     this.db.query(`DELETE FROM claims WHERE session_id = ?`).run(sessionId);
     this.db.query(`DELETE FROM tasks WHERE session_id = ?`).run(sessionId);
     this.db.query(`DELETE FROM sessions WHERE session_id = ?`).run(sessionId);
@@ -627,9 +775,12 @@ export class Store {
     nowMs: number,
     to?: { readonly sessionId: string; readonly name: string },
   ): void {
+    // `alias` is selected here or a renamed agent's messages go out under its
+    // old name — and `from_name` is FROZEN at send time, so the log would carry
+    // the wrong sender forever rather than merely displaying it once.
     const from = this.db
-      .query(`SELECT name, handle FROM sessions WHERE handle = ?`)
-      .get(handle) as { name: string; handle: string } | null;
+      .query(`SELECT name, handle, alias FROM sessions WHERE handle = ?`)
+      .get(handle) as { name: string; handle: string; alias: string } | null;
     const fromName = from ? displayName(from) : handle;
     this.db
       .query(
@@ -873,7 +1024,8 @@ export class Store {
   conflictingClaims(sessionId: string, path: string, nowMs: number): Claim[] {
     const rows = this.db
       .query(
-        `SELECT c.session_id AS session_id, s.handle AS handle, s.name AS name,
+        `SELECT c.session_id AS session_id, s.handle AS handle,
+                CASE WHEN s.alias != '' THEN s.alias ELSE s.name END AS name,
                 s.worktree AS worktree, c.path AS path, c.ts_ms AS ts_ms
            FROM claims c JOIN sessions s ON s.session_id = c.session_id
           WHERE c.path = ? AND c.session_id != ? AND s.last_seen_ms > ?
@@ -909,7 +1061,11 @@ export class Store {
   allClaims(nowMs: number): Claim[] {
     const rows = this.db
       .query(
-        `SELECT c.session_id AS session_id, s.handle AS handle, s.name AS name,
+        // The chosen name wins here too, in SQL rather than at each call site:
+        // an overlap warning that calls an agent `traffic-56` while the roster
+        // calls it something else reads as two different agents.
+        `SELECT c.session_id AS session_id, s.handle AS handle,
+                CASE WHEN s.alias != '' THEN s.alias ELSE s.name END AS name,
                 s.worktree AS worktree, c.path AS path, c.ts_ms AS ts_ms
            FROM claims c JOIN sessions s ON s.session_id = c.session_id
           WHERE s.last_seen_ms > ? AND c.ts_ms > ? ORDER BY c.ts_ms ASC`,
