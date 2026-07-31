@@ -193,6 +193,23 @@ looks empty.
   means "look at this"
 - **the branch and worktree only appear when they differ** between agents;
   four agents in one tree don't need `[worktree Traffic] on master` four times
+- **the quoted headline is the conversation's name** — Claude Code's own
+  `ai-title`, the same string its session picker shows, so a roster line and the
+  window it refers to are recognisably the same thing
+- **`doing:` is what that session is working on now**, written by Haiku from its
+  recent output. The title is set from the conversation's opening subject and
+  does not move; this line does
+
+```
+traffic-ca  "Explore cheap agent communication solutions"   · just now
+    doing Wiring transcript titles into the roster
+    editing .claude/hooks/presence/core/transcript.ts, …
+```
+
+**Both are for you, not for the agents.** A title names a window on your screen,
+which is exactly what makes it useful to you and useless to a peer — so neither
+field is injected into any agent's context. That text is on every agent's hot
+path on every turn, and it stays lean.
 
 Colour is a second channel, never the only one: every distinction is also in the
 words. `NO_COLOR`, `FORCE_COLOR` and piping are honoured, so a redirected log is
@@ -238,6 +255,9 @@ replaces `bin/` wholesale so a module that moves cannot leave a stale twin.
 | `topic.ts` | Lossy, credential-rejecting text → one-line roster label. |
 | `colour.ts` | ANSI for the CLI only. Never reaches an agent's context. |
 | `agents.ts` | Reads `claude agents --json` for real names + idle/busy. |
+| `transcript.ts` | Bounded tail read of a session's own JSONL — conversation title, recent prose. |
+| `summary.ts` | Prompts Haiku for a "what is it doing now" line; spawns, never waits. |
+| `summarize-worker.ts` | The detached process that call runs in, so no hook ever blocks on it. |
 
 ### Top level
 
@@ -253,8 +273,15 @@ replaces `bin/` wholesale so a module that moves cannot leave a stale twin.
 
 ```sh
 bun test ./.claude/hooks/presence/test/*.test.ts   # the leading ./ is required
+bunx tsc --noEmit -p .claude/hooks/presence/tsconfig.json   # the other gate
 PRESENCE_TEST_DB=/tmp/x.db bun pre-edit.ts < payload.json   # run a hook safely
 ```
+
+**Typecheck as well as test.** The repo root's tsconfig covers `src/` and does
+not include `.claude/`, so this tool had no type gate at all until it got its
+own — which is how a missing import once shipped, failed open, and left a hook
+exiting 0 having done nothing. The scoped config caught a real error the first
+time it ran.
 
 **`PRESENCE_TEST_DB` redirects every hook to a throwaway db, and anything that
 runs a hook must set it.** Testing a hook means *running* it, and running it
@@ -358,6 +385,7 @@ Hooks are synchronous — every one blocks its agent. Measured 2026-07-31:
 | bare Bun startup | **52 ms** | the floor for every hook |
 | `PostToolBatch`, nothing to deliver | **76 ms** | after each tool batch |
 | `SessionStart` (samples `claude agents --json`) | ~1 s | once per session |
+| reading the transcript title | **0.4 ms** | per prompt |
 | everything else | ~72 ms | rare (per turn, per `cd`, per failure) |
 
 `PostToolBatch` is the only one on a hot path: ~0.3 s per turn over 5 batches,
@@ -368,6 +396,18 @@ Two things were tried and rejected on measurement: `bun build --compile` (85 ms,
 **slower** than the script, for a 98 MB binary per hook), and calling
 `claude agents --json` anywhere per-prompt (950 ms). Caching the git-derived
 project paths took `PostToolBatch` from 93 ms to 76 ms.
+
+Reading the conversation title is 0.4 ms because it never parses the transcript:
+it scans a fixed 256 KB tail with a regex, so the cost is flat in file size —
+measured across 25 real transcripts, the largest 25 MB.
+
+**The `doing:` summary is the one thing here that spends tokens**, at ~8 s of
+Haiku per call, so it never runs on a hook path. `who` spawns a detached worker
+and prints immediately; the result lands for the next `who`. It is throttled to
+one refresh per session per 15 minutes, so a roster you check repeatedly costs
+nothing extra, and an idle session is summarised at most four times an hour.
+Delete `core/summary.ts`'s call site and the rest of the tool is unaffected —
+the title half is free and independent.
 
 ## Known limits
 
