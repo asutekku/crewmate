@@ -240,6 +240,34 @@ Steps are the agent's own decomposition, not a schema we impose. `add` exists
 because a plan written at the start is always wrong by the middle, and an agent
 that cannot record a discovered phase will abandon the checklist instead.
 
+#### The agent decides whether it needs one
+
+*(User ruling, 2026-07-31: ask the agent — "I assume they are smart enough to
+assess the requirement of the task. We can say 'quick checks do not need a
+checklist'".)*
+
+`--plan` is optional. `doing "<subject>"` alone opens an item with no steps, and
+that is a legitimate end state, not a half-filled form. The agent judges whether
+the work has phases worth tracking.
+
+The prompt is one line, at session start beside the roster, phrased as
+permission rather than instruction:
+
+> Work worth tracking across turns can be recorded with
+> `cli.ts doing "<subject>" --plan "a; b; c"`, and peers can read it with
+> `cli.ts board`. **Quick checks and one-off questions do not need a checklist.**
+
+Saying *when not to* is the load-bearing half. A prompt that only says "record
+your work" gets one of two failures: agents dutifully open an item for "what does
+this function do", burying the real ones, or they read it as boilerplate and
+ignore it entirely. Naming the exemption makes it a judgement call, which is what
+an agent is good at.
+
+**This is also the switch for everything strict.** Whether a checklist exists is
+now a real signal — an agent that opened one has declared the work worth
+tracking. That is what makes the graduated strictness in *Optional now, stricter
+later* possible without ever nagging an agent doing a five-minute fix.
+
 ### The idle check — closing the loop
 
 *(User ruling, 2026-07-31: when an agent stops to idle, the hook asks whether it
@@ -270,10 +298,17 @@ You edited 16 files this turn. If a step is done, `cli.ts did 2`; if the plan
 changed, `cli.ts add "<step>"`. If neither, nothing to do.
 ```
 
-**Silent unless it has a question.** It fires only when the agent has an open
-item AND either an unticked step or edits since the last update. An agent with a
-clean record stops with no injection at all — otherwise this becomes noise on
-every turn and gets ignored, taking the genuine warnings with it.
+**Silent unless it has a question.** It fires only when **all three** hold: the
+agent has an open item, that item **has a checklist**, and at least one step is
+unticked. Anything else stops with no injection at all.
+
+The checklist condition is the one that must not be relaxed. An open item with
+no steps is a deliberate end state — the agent judged the work not worth phasing
+— so asking about it would punish exactly the honest use of `doing` for a quick
+fix. "Has edits this turn" is deliberately NOT sufficient on its own for the
+same reason: an agent editing files without a checklist has told us nothing is
+outstanding. It is used only to decide whether the reminder is worth showing for
+an item that already has unticked steps.
 
 Three guards, because a `Stop` hook that continues the turn is the one place
 this tool could genuinely misbehave:
@@ -289,6 +324,45 @@ this tool could genuinely misbehave:
 
 **Cost.** This rides `turn-end.ts`, which already runs on every `Stop`, so it is
 one extra query on a hook that is already open. No new registration.
+
+#### Optional now, stricter later — but only where a checklist exists
+
+*(User ruling, 2026-07-31: optional first, with an easy migration to mandatory
+**if such a checklist exists** — which links back to letting the agent decide
+whether it needs one.)*
+
+The two rulings compose into a rule with a natural gate: **strictness applies
+only to work an agent itself declared worth tracking.** An agent doing a quick
+check opened no item, so no level below ever touches it. That is what makes
+raising the level safe.
+
+The check is therefore built as one function returning a *level*, not as a
+scattered set of conditions:
+
+| Level | Behaviour when steps are outstanding | Applies to |
+|---|---|---|
+| `off` | nothing | — |
+| **`remind`** ← ship here | `additionalContext`; agent may ignore it and stop | items with a checklist |
+| `insist` | `additionalContext` on the first N stops, then let it go | items with a checklist |
+| `require` | `decision: "block"` until every step is ticked or the item is closed | items with a checklist |
+
+Only the level constant changes. Nothing else in the hook needs rewriting,
+because the guards it already needs at `remind` — `stop_hook_active`, once per
+item per turn, a bounded number of asks — are exactly the guards `require`
+needs. Building `remind` without them and adding them later would be a rewrite;
+building them now makes the migration a one-line change.
+
+**Why not ship `require`.** Blocking a stop is the strongest thing a hook can
+do, and the failure mode is bad in a way that reminding is not: an agent that
+cannot tick a step because the step was wrong is stuck against the
+8-continuation cap, and the only escape (`done --abandoned`) is the one command
+it may not think to reach for. Ship `remind`, watch whether agents actually tick
+steps, and raise it only if they do not.
+
+**Two things must exist before `require` is safe**, and both are cheap now:
+`add` (so a discovered phase can be recorded rather than blocking on a stale
+plan) and `done --abandoned` (so a pivot has an exit). Both are already in the
+command list for P0 — they are not there by accident.
 
 ### Delivery: pull, not push
 
@@ -331,7 +405,7 @@ without understanding, or being ignored as noise.
 |---|---|---|
 | **P0** | `work` + `work_steps` + `work_events`; agent key from title with session fallback; `doing --plan`/`did`/`done`/`board`/`mine` | Two items open at once for one agent, both listed with their checklists; closing one leaves the other |
 | **P1** | Hook auto-fill: subject from title, files from claims, lifecycle from existing hooks | An agent that never calls the CLI still has a usable row |
-| **P2** | **The idle check** in `turn-end.ts` — unticked steps + edits since last update, via `additionalContext` | It fires when a step is outstanding, stays silent when the record is clean, and never fires twice for one item in one turn |
+| **P2** | **The idle check** in `turn-end.ts` — unticked steps + edits since last update, via `additionalContext`, behind a `remind`/`insist`/`require` level constant | It fires when a step is outstanding, stays SILENT for an item with no checklist, never fires twice for one item in one turn, and flipping the constant to `require` needs no other edit |
 | **P3** | `PostToolUse` commit detection → `landed` events | Real shas appear with no agent action |
 | **P4** | `breaks`/`needs`; `board --history`; `breaks` delivered to intersecting peers as non-interrupting context | A `breaks` reaches exactly the overlapping agents and ends nobody's turn |
 | **P5** | 7-day prune for closed records; SessionStart shows open items; `who` gains a one-line `▸ status` | Roster stays inside 80 columns; a closed record survives a restart and expires on time |
@@ -361,10 +435,23 @@ week, the agent-facing verbs are not earning their place.
 tool is passive; this asks an agent a question at the moment it is trying to
 finish. Get the silence condition wrong and it fires on every turn, agents learn
 to skim past hook feedback, and it degrades the overlap warnings that already
-work. Hence: silent unless there is genuinely something outstanding, once per
-item per turn, and never blocking. If it still reads as nagging in practice, cut
-it — the checklist is useful without it, and P2 is deliberately early so that
-call can be made cheaply.
+work.
+
+The opt-in gate cuts most of this: an agent that opened no checklist is never
+asked anything, so the blast radius is exactly the work an agent declared worth
+tracking. What remains is an agent that opens a checklist, pivots, and gets
+asked about a plan it abandoned — `done --abandoned` is the answer, and whether
+agents reach for it is the main thing P2 is watching for. If it still reads as
+nagging, cut it; the checklist is useful without it, and P2 is deliberately
+early so that call is cheap.
+
+**Nobody may opt in at all.** The task board's 0 rows is the precedent, and
+`--plan` being optional makes ignoring it the path of least resistance. This is
+the accepted trade for not nagging — and the hook-authored rows (P1) still carry
+subject, files, commits and lifecycle, so the board stays useful even if no agent
+ever writes a step. If after a week no checklists exist, the answer is to look at
+whether the session-start line reads as permission or as boilerplate, not to
+force the feature on.
 
 **`breaks` is only as good as what agents write.** It cannot be derived. The
 evidence says they already write it (18 of 25 broadcasts) — this gives it a
@@ -407,16 +494,21 @@ honest, and makes a forgotten item look like what it is.
    to name which phase is outstanding, and `2/3` has to be derived.
 5. **`board` gains a one-line `▸ status` in `who`.** Confirmed; scheduled for P5
    so the field is known to be populated before it takes roster space.
+6. **The agent decides whether it needs a checklist**, told plainly that quick
+   checks do not need one. `--plan` is optional and an item with no steps is a
+   legitimate end state.
+7. **The idle check ships optional (`remind`) with a one-constant path to
+   mandatory (`require`)**, and strictness applies ONLY to items that have a
+   checklist — so raising the level can never affect an agent doing a quick fix.
 
 ## Open questions
 
-1. **Does the idle check need a per-session opt-out?** An agent doing something
-   genuinely unplanned (a quick review, answering a question) has no checklist to
-   reconcile and will be silent — but an agent that opened an item and then
-   pivoted gets asked about a plan it has abandoned. `done --abandoned` is the
-   honest answer; whether agents will reach for it is unknown until P2 runs.
-2. **Should a ticked step record what actually happened?** `work_steps.note` is
-   in the schema and `did <n> "<what changed>"` accepts it, but nothing yet
-   requires it. It is the difference between "step 2 done" and "step 2 done: 12
-   call sites migrated, 2 needed a different fix" — which is what makes the
-   timeline worth reading later. Suggest optional, and see whether agents fill it.
+1. **Should a ticked step record what actually happened?** `work_steps.note` is
+   in the schema and `did <n> "<what changed>"` accepts it, but nothing requires
+   it. It is the difference between "step 2 done" and "step 2 done: 12 call sites
+   migrated, 2 needed a different fix" — which is what makes the timeline worth
+   reading later. Optional for now; if agents leave it empty, the history is
+   thinner but nothing breaks.
+2. **What is the right N for `insist`?** Only matters if `remind` proves too
+   weak, and the honest answer is that it should be picked from watching how many
+   stops agents take before ticking a step. Not decidable in advance.
