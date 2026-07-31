@@ -31,6 +31,26 @@ const HOW_TO_MESSAGE =
   "`busy` peer is mid-turn and reads it when that turn ends. The channel carries " +
   "findings, warnings about shared files, and questions between agents.";
 
+/**
+ * The work board, phrased as PERMISSION rather than instruction.
+ *
+ * Saying when NOT to is the load-bearing half. A line that only says "record
+ * your work" fails two ways: agents dutifully open an item for "what does this
+ * function do", burying the real ones, or they read it as boilerplate and ignore
+ * it entirely. Naming the exemption makes it a judgement call, which is what an
+ * agent is good at — and whether a checklist exists is the signal that will gate
+ * the planned idle check, so it has to mean something.
+ *
+ * Repeated here as well as in CLAUDE.md because this reaches sessions that never
+ * read one: subagents, and any repo without its own.
+ */
+const HOW_TO_RECORD =
+  "Work worth tracking across turns can be recorded with `cli.ts doing " +
+  '"<subject>" --plan "step a; step b; step c"`, ticked off with `cli.ts did <n> ' +
+  '"<what changed>"`, and closed with `cli.ts done`. `cli.ts board` shows what ' +
+  "every agent is working on. QUICK CHECKS AND ONE-OFF QUESTIONS DO NOT NEED A " +
+  "CHECKLIST — `--plan` is optional and an item with no steps is fine.";
+
 async function main(): Promise<void> {
   const payload = await readPayload();
   const sessionId = payload?.session_id;
@@ -68,6 +88,11 @@ async function main(): Promise<void> {
         "No other agents are active right now. Check the roster before editing a file",
         "another agent has claimed if that changes.",
       );
+      // The BOARD is worth mentioning with no peers around; messaging is not.
+      // A record outlives the session that opened it and is keyed on the
+      // conversation, so work started alone is exactly what a peer arriving in
+      // an hour needs to be able to read.
+      lines.push("", HOW_TO_RECORD);
     } else {
       lines.push(`${peers.length} other agent(s) active:`);
       lines.push(...formatRoster(peers, claims, now, tree, store.taskCounts()));
@@ -76,6 +101,7 @@ async function main(): Promise<void> {
         lines.push(...formatMessages(recent, now));
       }
       lines.push("", HOW_TO_MESSAGE);
+      lines.push("", HOW_TO_RECORD);
       // The trust note only earns its space once there is peer text to mistrust.
       lines.push("", TRUST_NOTE);
     }
