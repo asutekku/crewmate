@@ -34,8 +34,27 @@ const HERE = new URL(".", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$
 async function scriptNames(): Promise<string[]> {
   const { readdirSync } = await import("node:fs");
   return readdirSync(HERE)
-    .filter((f) => f.endsWith(".ts") && f !== "install.ts")
+    .filter((f) => f.endsWith(".ts") && f !== "install.ts" && !f.endsWith(".test.ts"))
     .sort();
+}
+
+/**
+ * A fingerprint of the installed code, so a session can report which version it
+ * is running.
+ *
+ * Sessions load these scripts when they start and keep that copy until they are
+ * restarted, so after an install the roster mixes old and new behaviour with no
+ * way to tell which is which. The user had to infer it from the SHAPE of the
+ * output ("some agents are running on older hooks i believe"); this makes it a
+ * fact the roster states.
+ *
+ * Content-hashed rather than a hand-bumped constant: a version number someone
+ * must remember to raise is a version number that lies.
+ */
+async function codeVersion(names: readonly string[]): Promise<string> {
+  const h = new Bun.CryptoHasher("sha256");
+  for (const n of names) h.update(await Bun.file(`${HERE}${n}`).text());
+  return h.digest("hex").slice(0, 8);
 }
 
 interface HookEntry {
@@ -105,9 +124,14 @@ async function copyScripts(): Promise<void> {
   for (const s of scripts) {
     await Bun.write(`${BIN}/${s}`, Bun.file(`${HERE}${s}`));
   }
+  // Stamped beside the scripts, so a running session can report which build it
+  // loaded. Sessions read these files at start and keep that copy until they
+  // restart, so after an install the roster silently mixes versions.
+  const version = await codeVersion(scripts);
+  await Bun.write(`${BIN}/VERSION`, version);
   // Named, not just counted: a missing module is invisible in a bare number and
   // only surfaces when a hook fails to import it.
-  console.log(`Copied ${scripts.length} scripts to ${BIN}`);
+  console.log(`Copied ${scripts.length} scripts to ${BIN} (build ${version})`);
   console.log(`  ${scripts.join(", ")}`);
 }
 

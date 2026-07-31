@@ -9,7 +9,7 @@
 
 import { displayName, withStore } from "./store.ts";
 import { emit, formatMessages, formatRoster, readPayload, TRUST_NOTE } from "./shared.ts";
-import { currentBranch, resolveProject, worktreeRoot } from "./repo.ts";
+import { currentBranch, installedVersion, resolveProject, worktreeRoot } from "./repo.ts";
 import { listAgents } from "./agents.ts";
 
 /** Enough log to see what the others are up to, short enough to stay skimmable. */
@@ -48,6 +48,10 @@ async function main(): Promise<void> {
     const now = Date.now();
     store.pruneStale(now);
     const handle = store.register(sessionId, tree, currentBranch(cwd), now);
+    // Recorded once, here, because this is the moment the scripts were loaded —
+    // stamping it later would report the version installed by then, not the one
+    // actually running.
+    store.setCodeVersion(sessionId, installedVersion());
     // Registered first, so this session's own name is filled in too.
     if (agents.length > 0) store.syncAgents(agents);
 
@@ -87,6 +91,10 @@ async function main(): Promise<void> {
 
 try {
   await main();
-} catch {
+} catch (err) {
+  // Fail open — but REPORT. A silent catch turns a programmer error into a
+  // hook that exits 0 having done nothing, which is indistinguishable from
+  // "nothing to report" and is exactly how a missing import shipped.
+  console.error(`[presence] ${import.meta.file} failed:`, err);
   // Fail open: coordination is a convenience, never a reason to break a session.
 }

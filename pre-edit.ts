@@ -12,7 +12,7 @@
 
 import { agoText, withStore } from "./store.ts";
 import { emit, readPayload } from "./shared.ts";
-import { relPath, resolveProject, worktreeRoot } from "./repo.ts";
+import { currentBranch, relPath, resolveProject, worktreeRoot } from "./repo.ts";
 
 async function main(): Promise<void> {
   const payload = await readPayload();
@@ -39,6 +39,20 @@ async function main(): Promise<void> {
   const warning = withStore(project.dbPath, (store) => {
     const now = Date.now();
     store.touch(sessionId, now);
+    // The tree is re-read from the cwd of the EDIT, which is the most current
+    // evidence available and the only one that has to be right for the advice
+    // below to be right.
+    //
+    // SessionStart's cwd is where the session was LAUNCHED, and `CwdChanged`
+    // only fires on an actual `cd`, so a session working in a worktree it did
+    // not cd into is recorded in the main tree forever. Observed 2026-07-31: a
+    // session editing files that exist ONLY in .claude/worktrees/… was listed on
+    // master, which inverts the same-tree/cross-worktree classification and made
+    // this hook report a cross-worktree overlap as an on-disk collision.
+    // Only when it actually differs: `currentBranch` is a subprocess (~30 ms)
+    // and this runs on every edit, so the common case — a session that has not
+    // moved — must not pay for it.
+    if (store.worktreeOf(sessionId) !== tree) store.setWorktree(sessionId, tree, currentBranch(cwd));
     const self = store.liveSessions(now).find((s) => s.sessionId === sessionId);
     const handle = self?.handle ?? store.handleFor(sessionId);
     if (!handle) return null;
@@ -89,6 +103,10 @@ async function main(): Promise<void> {
 
 try {
   await main();
-} catch {
+} catch (err) {
+  // Fail open — but REPORT. A silent catch turns a programmer error into a
+  // hook that exits 0 having done nothing, which is indistinguishable from
+  // "nothing to report" and is exactly how a missing import shipped.
+  console.error(`[presence] ${import.meta.file} failed:`, err);
   // Fail open: never block an edit because coordination state is unavailable.
 }

@@ -173,7 +173,11 @@ function openDb(dbPath: string): Database {
       intent       TEXT NOT NULL DEFAULT '',
       last_seen_ms INTEGER NOT NULL,
       started_ms   INTEGER NOT NULL,
-      last_read_id INTEGER NOT NULL DEFAULT 0
+      last_read_id INTEGER NOT NULL DEFAULT 0,
+      -- The build of the hook scripts this session LOADED. A session keeps the
+      -- copy it started with until it restarts, so this is what tells a reader
+      -- that a peer's behaviour is a version behind rather than broken.
+      code_version TEXT NOT NULL DEFAULT ''
     );
     -- Two agents answering to one name makes the whole roster a lie, so the
     -- constraint is enforced by the schema rather than trusted from the code.
@@ -212,7 +216,25 @@ function openDb(dbPath: string): Database {
       PRIMARY KEY (path, session_id)
     );
   `);
+  // `CREATE TABLE IF NOT EXISTS` leaves an EXISTING table alone, so a column
+  // added later never reaches a db that is already live — and this db is live
+  // state that several running sessions are writing to, not a save file that
+  // can be dropped and regenerated (which is what the repo's pre-release
+  // "no migrations" rule is about).
+  addColumnIfMissing(db, "sessions", "code_version", "TEXT NOT NULL DEFAULT ''");
   return db;
+}
+
+/** Idempotent, and silent when the column is already there. */
+function addColumnIfMissing(db: Database, table: string, column: string, decl: string): void {
+  try {
+    const cols = db.query(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (cols.some((c) => c.name === column)) return;
+    db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`);
+  } catch {
+    // A db we cannot alter is one we can still read; the column simply reads
+    // as absent and the roster omits the version.
+  }
 }
 
 /**
@@ -331,6 +353,46 @@ export class Store {
       .query(`SELECT handle FROM sessions WHERE session_id = ?`)
       .get(sessionId) as { handle: string } | null;
     return row ? row.handle : null;
+  }
+
+  /**
+   * Corrects the recorded working tree.
+   *
+   * Separate from `register` because it must NOT touch the handle or the read
+   * cursor: this runs on a hot-ish path (every edit) purely to keep the tree
+   * honest, and re-registering there would be a much bigger hammer.
+   */
+  setWorktree(sessionId: string, worktree: string, branch: string): void {
+    this.db
+      .query(`UPDATE sessions SET worktree = ?, branch = ? WHERE session_id = ?`)
+      .run(worktree, branch, sessionId);
+  }
+
+  /**
+   * Stamps the build this session is running. Kept off the `Session` type on
+   * purpose: only the CLI's roster asks, so threading it through every reader
+   * would cost more than the one query it saves.
+   */
+  setCodeVersion(sessionId: string, version: string): void {
+    this.db
+      .query(`UPDATE sessions SET code_version = ? WHERE session_id = ?`)
+      .run(version, sessionId);
+  }
+
+  /** Session id → the build it loaded, for the roster's skew warning. */
+  codeVersions(): Map<string, string> {
+    const rows = this.db.query(`SELECT session_id, code_version FROM sessions`).all() as Array<
+      Record<string, string>
+    >;
+    return new Map(rows.map((r) => [String(r["session_id"]), String(r["code_version"] ?? "")]));
+  }
+
+  /** The tree currently recorded, so a caller can skip a no-op correction. */
+  worktreeOf(sessionId: string): string | null {
+    const r = this.db
+      .query(`SELECT worktree FROM sessions WHERE session_id = ?`)
+      .get(sessionId) as { worktree: string } | null;
+    return r ? r.worktree : null;
   }
 
   setIntent(sessionId: string, intent: string): void {

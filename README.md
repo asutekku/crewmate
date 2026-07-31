@@ -245,6 +245,28 @@ each filter was too greedy and blanked the field it was meant to protect: an
 intent that says nothing and an intent that says the wrong thing are both
 failures, and a filter is only finished when it is tested from both sides.
 
+## Fail open, but not silently
+
+Every hook ends in `catch { … }` so a locked db or a bad payload can never break
+a session. That guarantee has a trap: **a programmer error looks identical to
+"nothing to report"** — the hook exits 0, prints nothing, and does not do its
+job. A missing import shipped exactly this way on 2026-07-31, and the symptom
+was a correction that simply never happened.
+
+So the catch reports to stderr before returning. The exit code is still 0 and
+nothing is blocked, but the failure is findable. Two consequences worth knowing:
+
+- **Typecheck before `install.ts --force`, every time.** `tsc` catches this
+  class as `TS2304: Cannot find name 'X'`; the install step does not typecheck,
+  and it is what makes the bug live.
+- **A hook exiting 0 is not evidence it worked.** Neither is replaying its logic
+  in-process — that exercises different imports and can pass while the hook
+  fails. Run the deployed script against a real payload and read stderr.
+
+Only the twelve hook entry points report. `agents.ts`, `store.ts` and
+`install.ts` catch *expected* failures on constantly-running paths (a missing
+settings file, a locked db) where reporting would be noise, not signal.
+
 ## Design notes
 
 **One db per project, keyed on the git common dir.** Every worktree of a repo
@@ -346,6 +368,17 @@ project paths took `PostToolBatch` from 93 ms to 76 ms.
   a session's "stated task". A session with no stated task shows **nothing** in
   that column — the `editing` line beneath already names its files, and a summary
   there would be a strict subset of the detail directly below it.
+- **A session's worktree is corrected from the cwd of each edit**, not trusted
+  from session start. `SessionStart`'s cwd is where the session was *launched*
+  and `CwdChanged` only fires on an actual `cd`, so an agent working in a
+  worktree it did not cd into was recorded in the main tree indefinitely.
+  Observed 2026-07-31: a session editing files that exist **only** in
+  `.claude/worktrees/…` was listed on master, which inverts `pre-edit.ts`'s
+  same-tree/cross-worktree classification and made it report a cross-worktree
+  overlap as an on-disk collision. Wrong advice is worse than none.
+- **A session runs the hooks it loaded at start.** `install.ts` stamps a build
+  hash into `bin/VERSION`, recorded per session, and the roster marks any
+  session on an older build `⟲ old hooks` — it needs a restart, not debugging.
 - **Sessions that die uncleanly linger** until they miss the 90-minute staleness
   window (`STALE_MS` in `store.ts`). `cli.ts clear` forces it.
 - **`bun` must be on PATH.** The registered command is `bun`, not an absolute

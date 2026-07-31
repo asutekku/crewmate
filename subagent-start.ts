@@ -63,6 +63,10 @@ async function main(): Promise<void> {
 
 try {
   await main();
-} catch {
+} catch (err) {
+  // Fail open — but REPORT. A silent catch turns a programmer error into a
+  // hook that exits 0 having done nothing, which is indistinguishable from
+  // "nothing to report" and is exactly how a missing import shipped.
+  console.error(`[presence] ${import.meta.file} failed:`, err);
   // Fail open.
 }

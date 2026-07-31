@@ -17,7 +17,7 @@
  */
 
 import { agoText, displayName, withStore } from "./store.ts";
-import { resolveProject } from "./repo.ts";
+import { installedVersion, resolveProject } from "./repo.ts";
 import { listAgents } from "./agents.ts";
 import {
   activityColour,
@@ -85,6 +85,10 @@ function who(): void {
     // name cannot promise that once names are arbitrary (`traffic-12`).
     const palette = rosterColours(sessions, (s) => displayName(s));
     const taskCounts = store.taskCounts();
+    // A session runs the scripts it loaded at start, so an install mid-flight
+    // leaves the roster mixing builds with nothing to tell them apart.
+    const current = installedVersion();
+    const versions = store.codeVersions();
     console.log(bold(`${sessions.length} active agent(s) in ${PROJECT.name}:`));
     for (const s of sessions) {
       const paint = palette.get(displayName(s)) ?? handleColour(s.handle);
@@ -113,13 +117,19 @@ function who(): void {
             : s.status === "idle"
               ? dim(" idle")
               : "";
+      // Only ever a warning, never a version number: the hash is meaningless to
+      // read, and the only actionable fact is "this one is behind — restart it".
+      const ver = versions.get(s.sessionId) ?? "";
+      const stale = current !== "" && ver !== "" && ver !== current ? yellow(" ⟲ old hooks") : "";
       // Assembled from the fields that are actually present, rather than
       // concatenated and then trimmed. A field's colour codes come BEFORE its
       // text, so `.trim()` cannot reach a leading space tucked inside them —
       // an empty task left "master)   [6/6]" with three spaces.
-      const fields = [`${paint(bold(displayName(s)))}${state}${where}${branch}`, task, prog].filter(
-        (f) => f !== "",
-      );
+      const fields = [
+        `${paint(bold(displayName(s)))}${state}${stale}${where}${branch}`,
+        task,
+        prog,
+      ].filter((f) => f !== "");
       console.log(`  ${fields.join("  ")}  ${dim("·")} ${seen}`);
 
       if (mine.length === 0) continue;

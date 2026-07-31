@@ -160,10 +160,62 @@ export function resolveProject(cwd: string): RepoContext {
  * another's. Falls back to cwd outside a repo, where there is only ever one.
  */
 export function worktreeRoot(cwd: string): string {
-  return (
-    git(cwd, ["rev-parse", "--path-format=absolute", "--show-toplevel"]) ??
-    cwd.replace(/\\/g, "/").replace(/\/$/, "")
-  );
+  const cwdNorm = cwd.replace(/\\/g, "/").replace(/\/$/, "");
+  // Cached for the same reason as the project paths: this runs on the per-edit
+  // path, where a `git rev-parse` subprocess dominates the hook's cost (measured
+  // 2026-07-31: pre-edit 157 ms → 106 ms). A directory's working tree cannot
+  // change without the directory changing, so the answer is stable per key.
+  const hit = cachedTree(cwdNorm);
+  if (hit !== null) return hit;
+  const tree = git(cwd, ["rev-parse", "--path-format=absolute", "--show-toplevel"]) ?? cwdNorm;
+  cacheTree(cwdNorm, tree);
+  return tree;
+}
+
+function cachedTree(cwdNorm: string): string | null {
+  try {
+    const map = JSON.parse(readFileSync(`${BASE_DIR}/trees.json`, "utf8")) as Record<string, string>;
+    return map[cwdNorm] ?? null;
+  } catch {
+    // No cache yet, or an unreadable one: recompute. Not a failure.
+    return null;
+  }
+}
+
+function cacheTree(cwdNorm: string, tree: string): void {
+  try {
+    ensureBaseDir();
+    const path = `${BASE_DIR}/trees.json`;
+    let map: Record<string, string> = {};
+    try {
+      map = JSON.parse(readFileSync(path, "utf8")) as Record<string, string>;
+    } catch {
+      map = {};
+    }
+    map[cwdNorm] = tree;
+    writeFileSync(path, JSON.stringify(map));
+  } catch {
+    // A cache that cannot be written is not an error; the next call recomputes.
+  }
+}
+
+/**
+ * The build a session loaded, versus the one now installed.
+ *
+ * A session reads the hook scripts when it starts and keeps that copy until it
+ * restarts, so an install mid-flight leaves the roster mixing old and new
+ * behaviour with nothing to distinguish them. The user had to infer it from the
+ * SHAPE of the output — "some agents are running on older hooks i believe" —
+ * which is a guess the roster should not require.
+ *
+ * Empty when unknown, which is what a pre-stamp build reports.
+ */
+export function installedVersion(): string {
+  try {
+    return readFileSync(`${BASE_DIR}/bin/VERSION`, "utf8").trim();
+  } catch {
+    return "";
+  }
 }
 
 /** Empty outside a repo; the roster simply omits the branch then. */
