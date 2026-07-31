@@ -11,10 +11,12 @@
  * no `claude agents --json` call — a subagent spawn is frequent enough that the
  * ~950 ms sample would be felt.
  *
- * NOTHING TO CLEAN UP AFTERWARDS. Subagents never fire SessionStart, so they
- * never enter the roster; their tool calls carry the PARENT's `session_id`, so
- * claims they make are already attributed to the parent, which is correct — the
- * parent's tree is where the edit lands.
+ * IT ALSO RECORDS THE MINION, so `who` can show what a parent has running.
+ * Subagents never fire SessionStart and never enter the roster; their tool
+ * calls carry the PARENT's `session_id`, so claims they make are already
+ * attributed to the parent, which is correct — the parent's tree is where the
+ * edit lands. The minions table is purely so the operator can see them; it
+ * changes no attribution.
  */
 
 import { claimName, withStore } from "../core/store.ts";
@@ -34,6 +36,14 @@ async function main(): Promise<void> {
 
   const text = withStore(project.dbPath, (store) => {
     const now = Date.now();
+    // Recorded FIRST and unconditionally: the roster line is owed to the
+    // operator whether or not this subagent gets a warning to read. Returning
+    // early on "no claims to report" below would have skipped it.
+    if (payload.agent_id) {
+      store.startMinion(payload.agent_id, sessionId, now, {
+        ...(payload.agent_type !== undefined ? { agentType: payload.agent_type } : {}),
+      });
+    }
     const claims = store.allClaims(now);
     const sessions = store.liveSessions(now);
     const self = sessions.find((s) => s.sessionId === sessionId);

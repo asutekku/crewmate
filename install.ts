@@ -116,6 +116,9 @@ const REGISTRATIONS: ReadonlyArray<readonly [string, unknown]> = [
     { matcher: "permission_prompt", ...(entry("notify.ts") as object) },
   ],
   ["SubagentStart", entry("subagent-start.ts")],
+  // Closes the minion row. Reads no context back to the subagent — it is on the
+  // way out — so it is pure bookkeeping for the operator's roster.
+  ["SubagentStop", entry("subagent-stop.ts")],
   ["PostCompact", entry("compacted.ts")],
   ["CwdChanged", entry("cwd-changed.ts")],
   ["TaskCreated", entry("task-changed.ts")],

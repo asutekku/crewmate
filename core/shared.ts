@@ -76,8 +76,6 @@ export interface HookPayload {
   readonly tool_input?: { readonly file_path?: string };
   /** Stop: true when a hook is already driving a continuation. */
   readonly stop_hook_active?: boolean;
-  /** Stop, v2.1.145+: in-flight work that means "paused", not "finished". */
-  readonly background_tasks?: ReadonlyArray<{ readonly type?: string }>;
   /** StopFailure: why the turn died. */
   readonly error?: string;
   /** PostCompact: the summary that replaced the compacted context. */
@@ -86,6 +84,37 @@ export interface HookPayload {
   readonly new_cwd?: string;
   /** SubagentStart/Stop. */
   readonly agent_type?: string;
+  /**
+   * SubagentStart/Stop: identifies ONE spawned subagent, stable across both.
+   *
+   * `session_id` alongside it is the PARENT's, not the subagent's — measured
+   * 2026-08-01 by probing both events. That is why a subagent's claims and
+   * edits already attribute to its parent with no special handling: the tool
+   * calls it makes carry the parent's id too.
+   */
+  readonly agent_id?: string;
+  /**
+   * SubagentStop only: the subagent's OWN transcript, separate from the
+   * parent's.
+   *
+   * The parent's transcript interleaves subagent output, so a summary built
+   * from it describes a minion's work as the parent's own.
+   */
+  readonly agent_transcript_path?: string;
+  /**
+   * Stop, v2.1.145+: in-flight work that means "paused", not "finished".
+   *
+   * Also present on SubagentStop, where `description` is the string the PARENT
+   * passed when spawning — which is why naming a minion's task needs no model
+   * call and no new convention: the parent already wrote it.
+   */
+  readonly background_tasks?: ReadonlyArray<{
+    readonly id?: string;
+    readonly type?: string;
+    readonly status?: string;
+    readonly description?: string;
+    readonly agent_type?: string;
+  }>;
   /** TaskCreated/TaskCompleted. */
   readonly task_id?: string;
   readonly task_subject?: string;
@@ -135,6 +164,16 @@ export function formatRoster(
    * pays for on every turn — from growing two lines per peer.
    */
   verbose = false,
+  /**
+   * How many subagents each peer has running, by session id.
+   *
+   * Peers are told the COUNT and never the names. A minion cannot be addressed
+   * — only the parent that spawned it can reach one — so naming them would
+   * offer a peer a recipient that `msg` cannot resolve. The count is still
+   * worth saying: it is the difference between "adela is quiet" and "adela has
+   * four subagents in your files right now", and it tells a peer whom to ask.
+   */
+  minionCounts?: ReadonlyMap<string, number>,
 ): string[] {
   // With everyone in one tree there is nothing to distinguish, so the label is
   // pure noise on every line; it earns its place only once trees actually differ.
@@ -169,8 +208,14 @@ export function formatRoster(
     // windows — has no idea who adela is. The name is what an agent TYPES, so it
     // stays first and bare; the role is context in parentheses.
     const role = p.role !== "" ? ` (${p.role})` : "";
+    // Subagents edit under the parent's name, so a file this peer holds may be
+    // being written by something you cannot see or address. Saying so is what
+    // makes "ask the parent" the obvious move rather than a rule to remember.
+    const spawned = minionCounts?.get(p.sessionId) ?? 0;
+    const running =
+      spawned > 0 ? ` [+${spawned} subagent${spawned === 1 ? "" : "s"} working as them]` : "";
     lines.push(
-      `  ${displayName(p)}${role}${where}${branch}${doing}${prog} (${state}last active ${agoText(p.lastSeenMs, nowMs)})`,
+      `  ${displayName(p)}${role}${where}${branch}${doing}${prog}${running} (${state}last active ${agoText(p.lastSeenMs, nowMs)})`,
     );
     // Operator view only. The title identifies the conversation the way the user
     // sees it listed; the summary says what that conversation is doing NOW,

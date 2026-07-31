@@ -52,6 +52,7 @@ import {
 } from "./core/layout.ts";
 import { agentKey, BOARD_OPEN_SHOWN, foldEvents, parsePlan, progress } from "./core/work.ts";
 import { validateAlias, validateRole } from "./core/topic.ts";
+import { minionName } from "./core/names.ts";
 import { dirtyFiles } from "./core/dirty.ts";
 import { agentTally, briefAge, briefAgo, itemLines } from "./core/board.ts";
 import type { BoardPaint } from "./core/board.ts";
@@ -119,6 +120,10 @@ function who(raw: boolean): void {
     if (agents.length > 0) store.syncAgents(agents);
     const sessions = store.liveSessions(now);
     const claims = store.allClaims(now);
+    // Swept here as well as on SubagentStop: a parent that CRASHED never fires
+    // Stop, so its minions would read as running until someone else's did.
+    store.pruneMinions(now);
+    const minions = store.liveMinions(now);
     if (sessions.length === 0) {
       console.log(dim(`No active agents in ${PROJECT.name}.`));
       return;
@@ -268,6 +273,27 @@ function who(raw: boolean): void {
         // What the session is doing NOW, which the title cannot say: a title is
         // set from the opening subject and does not move as the work does.
         if (s.summary !== "") console.log(`${" ".repeat(gutter)}${cyan(fit(s.summary, descW))}`);
+
+        // MINIONS BEFORE FILES, because they are the reason the files are
+        // moving. A parent shows what it has running; the minion itself never
+        // gets a roster row, since it cannot be addressed and would only pad
+        // the count with something nobody can act on.
+        const mySpawn = minions.get(s.sessionId) ?? [];
+        // Sized on the MINION labels, not on `nameW`: these are longer than an
+        // agent name ("Hopper's Minion #12" against "Hopper") and start two
+        // columns further in, so borrowing the roster's width truncated every
+        // one to `hoppe…` — a column that hides the number is worse than no
+        // column, since the number is the only part that differs between them.
+        const labels = mySpawn.map((m) =>
+          raw ? `${displayName(s)}#${m.seq}` : minionName(displayName(s), m.seq),
+        );
+        const labelW = Math.max(0, ...labels.map((l) => [...l].length));
+        for (const [i, m] of mySpawn.entries()) {
+          const what = m.task !== "" ? m.task : m.agentType !== "" ? m.agentType : "(running)";
+          console.log(
+            `${" ".repeat(gutter - 2)}${dim("↳")} ${paint(pad(labels[i] ?? "", labelW))} ${dim(fit(what, Math.max(12, descW - labelW - 1)))}`,
+          );
+        }
 
         const mine = claims.filter((c) => c.handle === s.handle).map((c) => c.path);
         if (mine.length === 0) continue;

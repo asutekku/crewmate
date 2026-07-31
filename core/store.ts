@@ -59,6 +59,17 @@ export const CLAIM_TTL_MS = loadConfig().claimTtlMs;
  */
 export const CLAIM_REANNOUNCE_MS = loadConfig().claimReannounceMs;
 
+/**
+ * How long a minion with no SubagentStop is still believed to be running.
+ *
+ * A parent that dies takes its subagents with it and never reports them
+ * stopped, so without a bound `who` would show ghosts working forever.
+ */
+export const MINION_STALE_MS = loadConfig().minionStaleMs;
+
+/** How long a CLOSED minion row is kept, matching the rest of the edit history. */
+const MINION_KEEP_MS = loadConfig().editKeepMs;
+
 /** Rows kept in the log; old ones are pruned so the file cannot grow forever. */
 const MAX_MESSAGES = 2000;
 
@@ -242,6 +253,31 @@ export interface Claim {
 }
 
 /**
+ * A subagent, owned by the parent that spawned it.
+ *
+ * There is no name field: a minion's name is DERIVED from its parent's current
+ * name and its own sequence number (`minionName`), never stored. That is the
+ * opposite of how message senders and edit rows work, where the name is frozen
+ * at write time — and deliberately so. A frozen sender name keeps a log line
+ * readable after its author is gone; a minion has no independent identity to
+ * preserve, so if the parent is renamed its minions must be renamed with it, or
+ * `who` would show `Tooling's Minion #1` indented under `Hopper`.
+ */
+export interface Minion {
+  /** Claude Code's id for this subagent, stable across its Start and Stop. */
+  readonly agentId: string;
+  /** The PARENT's conversation uuid. Subagents have no session of their own. */
+  readonly sessionId: string;
+  /** 1-based, per parent, never reused. */
+  readonly seq: number;
+  /** What the parent said it was for, when spawning. */
+  readonly task: string;
+  /** `general-purpose`, `Explore`, … — which kind was spawned. */
+  readonly agentType: string;
+  readonly startedMs: number;
+}
+
+/**
  * Answers "is there anything at all for this session?" without opening the
  * write path or building any objects.
  *
@@ -396,6 +432,33 @@ function openDb(dbPath: string): Database {
       -- other direction.
       ts_ms      INTEGER NOT NULL DEFAULT 0
     );
+    -- Subagents. NOT roster rows, and the distinction is the whole design: a
+    -- minion never registers, never takes a name from the pool, and cannot be
+    -- addressed -- only its parent can spawn or reach one, so msg resolving a
+    -- minion name would promise a delivery nothing can make.
+    --
+    -- Everything a minion DOES is already the parent's: its tool calls carry the
+    -- parent's session_id (measured 2026-08-01 by probing both events), so
+    -- claims, edits and blame attribute upward with no special handling. This
+    -- table exists only so the operator can SEE what a parent has running --
+    -- "eight agents on the roster" was hiding twelve more doing the work.
+    --
+    -- seq increments per parent and is never reused, so a minion number is a
+    -- durable reference in a log line after that minion is gone. They are
+    -- disposable; their numbers are not.
+    CREATE TABLE IF NOT EXISTS minions (
+      agent_id   TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      seq        INTEGER NOT NULL,
+      -- The string the PARENT passed when spawning. Free and already written --
+      -- no model call, no new convention for an agent to remember.
+      task       TEXT NOT NULL DEFAULT '',
+      agent_type TEXT NOT NULL DEFAULT '',
+      started_ms INTEGER NOT NULL,
+      -- 0 while alive. A closed row is kept: it is history, like edits.
+      ended_ms   INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS minions_parent ON minions (session_id, ended_ms);
   `);
   createWorkTables(db);
   // `CREATE TABLE IF NOT EXISTS` leaves an EXISTING table alone, so a column
@@ -1300,6 +1363,129 @@ export class Store {
       sessionId: String(r["session_id"]),
       lastMs: Number(r["last_ms"]),
     }));
+  }
+
+  /**
+   * Records a spawned subagent and returns its sequence number.
+   *
+   * IDEMPOTENT on `agent_id`: a hook that fires twice must not consume a
+   * second number, or the same live minion appears under two names.
+   *
+   * The number counts every minion this parent has EVER spawned, alive or not,
+   * so it is never reused — `MAX(seq)` over the parent's whole history rather
+   * than a count of live rows. A reused number would silently repoint a log
+   * line that named "Minion #2" at a different minion.
+   */
+  startMinion(
+    agentId: string,
+    sessionId: string,
+    nowMs: number,
+    opts: { task?: string; agentType?: string } = {},
+  ): number {
+    const claim = this.db.transaction((): number => {
+      const existing = this.db
+        .query(`SELECT seq FROM minions WHERE agent_id = ?`)
+        .get(agentId) as Record<string, number> | null;
+      if (existing) return Number(existing["seq"]);
+
+      const row = this.db
+        .query(`SELECT MAX(seq) AS top FROM minions WHERE session_id = ?`)
+        .get(sessionId) as Record<string, number | null> | null;
+      const seq = Number(row?.["top"] ?? 0) + 1;
+      this.db
+        .query(
+          `INSERT INTO minions (agent_id, session_id, seq, task, agent_type, started_ms)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(agentId, sessionId, seq, opts.task ?? "", opts.agentType ?? "", nowMs);
+      return seq;
+    });
+    // IMMEDIATE for the same reason `register` is: MAX(seq) then INSERT is a
+    // read-then-write, and two minions spawned at once would otherwise both
+    // read the same top and take the same number.
+    return claim.immediate();
+  }
+
+  /**
+   * Closes a minion, keeping the row.
+   *
+   * The row is history — it says the parent ran this and when — so it is closed
+   * rather than deleted, exactly as `edits` keeps what a departed agent touched.
+   * `task` is filled in on close when the spawn never carried one, because
+   * SubagentStop reports a description that SubagentStart sometimes does not.
+   */
+  endMinion(agentId: string, nowMs: number, task?: string): void {
+    if (task !== undefined && task !== "") {
+      this.db
+        .query(
+          `UPDATE minions SET ended_ms = ?, task = CASE WHEN task = '' THEN ? ELSE task END
+            WHERE agent_id = ? AND ended_ms = 0`,
+        )
+        .run(nowMs, task, agentId);
+      return;
+    }
+    this.db
+      .query(`UPDATE minions SET ended_ms = ? WHERE agent_id = ? AND ended_ms = 0`)
+      .run(nowMs, agentId);
+  }
+
+  /**
+   * Minions still running, by parent session id.
+   *
+   * Live ones only: `who` answers "what is happening now", and a parent that
+   * has spawned forty over a session would otherwise bury the roster in
+   * finished work.
+   */
+  liveMinions(nowMs: number): Map<string, Minion[]> {
+    const rows = this.db
+      .query(
+        `SELECT agent_id, session_id, seq, task, agent_type, started_ms
+           FROM minions WHERE ended_ms = 0 AND started_ms > ? ORDER BY seq`,
+      )
+      .all(nowMs - MINION_STALE_MS) as Array<Record<string, string | number>>;
+    const byParent = new Map<string, Minion[]>();
+    for (const r of rows) {
+      const m: Minion = {
+        agentId: String(r["agent_id"]),
+        sessionId: String(r["session_id"]),
+        seq: Number(r["seq"]),
+        task: String(r["task"]),
+        agentType: String(r["agent_type"]),
+        startedMs: Number(r["started_ms"]),
+      };
+      byParent.set(m.sessionId, [...(byParent.get(m.sessionId) ?? []), m]);
+    }
+    return byParent;
+  }
+
+  /**
+   * How many minions each parent has running.
+   *
+   * Counts only, for the peer-facing roster: a minion cannot be addressed, so
+   * a peer given names would have recipients `msg` cannot resolve. `who` uses
+   * `liveMinions` instead, because the operator CAN act on what they name.
+   */
+  minionCounts(nowMs: number): Map<string, number> {
+    const rows = this.db
+      .query(
+        `SELECT session_id, COUNT(*) AS n FROM minions
+          WHERE ended_ms = 0 AND started_ms > ? GROUP BY session_id`,
+      )
+      .all(nowMs - MINION_STALE_MS) as Array<Record<string, string | number>>;
+    return new Map(rows.map((r) => [String(r["session_id"]), Number(r["n"])]));
+  }
+
+  /**
+   * Forgets minions long past. A crashed parent never fires SubagentStop, so
+   * without this an abandoned row would read as "running" forever.
+   */
+  pruneMinions(nowMs: number): void {
+    this.db
+      .query(`UPDATE minions SET ended_ms = ? WHERE ended_ms = 0 AND started_ms <= ?`)
+      .run(nowMs, nowMs - MINION_STALE_MS);
+    this.db
+      .query(`DELETE FROM minions WHERE ended_ms != 0 AND ended_ms < ?`)
+      .run(nowMs - MINION_KEEP_MS);
   }
 
   /**

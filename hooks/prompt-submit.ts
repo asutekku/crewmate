@@ -88,7 +88,9 @@ async function main(): Promise<void> {
     lines.push(...formatMessages(unread, now));
     if (peers.length > 0) {
       lines.push("", "Currently active:");
-      lines.push(...formatRoster(peers, claims, now, tree));
+      lines.push(
+        ...formatRoster(peers, claims, now, tree, undefined, false, store.minionCounts(now)),
+      );
     }
     lines.push("", TRUST_NOTE);
     return { text: lines.join("\n"), count: unread.length };

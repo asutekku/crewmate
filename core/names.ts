@@ -113,6 +113,29 @@ export function pickName(taken: ReadonlySet<string>): string {
  * The suffix is dropped when it would repeat the name, so an agent whose chosen
  * name IS its role does not read as the same word twice.
  */
+/**
+ * What a subagent is called: `Hopper's Minion #1`.
+ *
+ * DERIVED, never stored, so renaming a parent renames its minions with it —
+ * see `Minion` for why that is the right way round.
+ *
+ * The number counts every minion this parent has spawned, so it climbs and
+ * never resets. They are disposable and their numbers are not: a log line
+ * naming `#2` must not later point at a different one.
+ *
+ * READ-ONLY, like `fullName`. Nothing accepts this as input — a minion cannot
+ * be addressed, because only its parent can reach one. An agent that wants
+ * something from a minion asks the PARENT.
+ */
+export function minionName(parent: string, seq: number): string {
+  const owner = titleCase(parent);
+  // `Chris'` rather than `Chris's`, which is the one case where the rule is not
+  // just "add apostrophe-s". Nothing in the pool ends in s today; names can be
+  // chosen freely, so it is handled rather than assumed away.
+  const possessive = owner.endsWith("s") ? `${owner}'` : `${owner}'s`;
+  return `${possessive} Minion #${seq}`;
+}
+
 export function fullName(name: string, role: string, slug: string): string {
   const suffix = role.trim() !== "" ? role.trim() : titleCase(slug);
   const given = titleCase(name);

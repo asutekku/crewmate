@@ -115,7 +115,9 @@ async function main(): Promise<void> {
       lines.push("", HOW_TO_BE_CALLED);
     } else {
       lines.push(`${peers.length} other agent(s) active:`);
-      lines.push(...formatRoster(peers, claims, now, tree, store.taskCounts()));
+      lines.push(
+        ...formatRoster(peers, claims, now, tree, store.taskCounts(), false, store.minionCounts(now)),
+      );
       if (recent.length > 0) {
         lines.push("", "Recent activity:");
         lines.push(...formatMessages(recent, now));

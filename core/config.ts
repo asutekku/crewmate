@@ -39,6 +39,16 @@ export interface PresenceConfig {
    * long, not whether. Set it to a year if you want a year.
    */
   readonly editKeepMs: number;
+  /**
+   * How long a minion with no SubagentStop is still believed to be running.
+   *
+   * MUCH SHORTER than a session's staleness, because the failure it covers is
+   * different: a session that goes quiet is usually still there, while a
+   * subagent that never reported back has almost always died with its parent.
+   * A stuck row reads as "still working" and is worse than forgetting early —
+   * the operator acts on what `who` says is happening NOW.
+   */
+  readonly minionStaleMs: number;
 }
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -50,6 +60,7 @@ export const DEFAULTS: PresenceConfig = {
   nameReuseMs: 60 * 60 * 60 * 1000, // 60 h
   workKeepMs: 7 * DAY,
   editKeepMs: 30 * DAY,
+  minionStaleMs: 60 * 60 * 1000, // 1 h
 };
 
 export function configPath(): string {
@@ -110,5 +121,6 @@ function readConfig(): PresenceConfig {
     nameReuseMs: pick("nameReuseMs"),
     workKeepMs: pick("workKeepMs"),
     editKeepMs: pick("editKeepMs"),
+    minionStaleMs: pick("minionStaleMs"),
   };
 }
