@@ -19,13 +19,20 @@
 
 import type { Database } from "bun:sqlite";
 
+import { loadConfig } from "./config.ts";
+
 /**
- * How long a closed record is kept.
+ * How long a closed record is kept, when no config says otherwise.
  *
  * This is the first thing in the tool that is deliberately HISTORY rather than
  * live state, so it is exempt from the roster's `STALE_MS` sweep and needs its
  * own. Seven days covers "who broke this?" asked the following week; anything
  * longer is an archive nobody reads.
+ *
+ * `pruneWork` reads `loadConfig().workKeepMs`, which defaults to this. Kept as
+ * an export because tests assert against it — but it is the DEFAULT, not the
+ * value in force, and reading it as the latter is what let the config setting
+ * silently do nothing.
  */
 export const WORK_KEEP_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
@@ -398,7 +405,12 @@ export class WorkStore {
    * a count of their own.
    */
   pruneWork(nowMs: number): void {
-    const cutoff = nowMs - WORK_KEEP_MS;
+    // From the CONFIG, not the constant. `workKeepMs` was documented in the
+    // README and validated in config.ts while this line ignored it — a setting
+    // that silently did nothing. The config tests missed it because they only
+    // compared DEFAULTS to each other and never asserted that a config FILE is
+    // honoured, which is the "test stubbed above the bug" shape exactly.
+    const cutoff = nowMs - loadConfig().workKeepMs;
     const dead = `(SELECT work_id FROM work WHERE closed_ms > 0 AND closed_ms <= ?)`;
     const run = this.db.transaction(() => {
       this.db.query(`DELETE FROM work_steps WHERE work_id IN ${dead}`).run(cutoff);

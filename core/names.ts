@@ -99,8 +99,10 @@ export function pickName(taken: ReadonlySet<string>): string {
  * attached; a dash separates them so neither reads as part of the other.
  *
  * READ-ONLY, and that is load-bearing. `msg` takes the bare name; a peer that
- * copied this string would be quoting three words at a command whose whole
- * validation rests on names having no spaces. Nothing accepts this as input.
+ * copied this string would be quoting three words at a command that expects one.
+ * (A name MAY contain a space — `validateAlias` permits it — but the em-dash and
+ * the role are not part of it, so the composed string does not resolve.)
+ * Nothing accepts this as input.
  *
  * `slug` is a self-chosen name standing in when no role is set — `Turing —
  * Water Dynamic` — which keeps what those slugs were already good at: saying

@@ -67,7 +67,30 @@ export function configPath(): string {
  * delete everything on its next run, and reading `"7 days"` as `NaN` would make
  * every comparison false and nothing ever expire.
  */
+/**
+ * Read once per process, so every caller sees the same numbers.
+ *
+ * Not an optimisation — 0.1 ms against Bun's ~52 ms startup floor. It is a
+ * CONSISTENCY guarantee: `STALE_MS` and friends are initialised at module load,
+ * while `register` and `pruneStale` call this again later, so an edit to the
+ * file between those two points gave one process two different configs. A hook
+ * lives for milliseconds, so caching cannot make a change take long to land —
+ * the next hook, seconds away, reads the new file.
+ */
+let cached: PresenceConfig | null = null;
+
 export function loadConfig(): PresenceConfig {
+  if (cached !== null) return cached;
+  cached = readConfig();
+  return cached;
+}
+
+/** Test seam: forget the cached config so a fixture can write a new one. */
+export function clearConfigCache(): void {
+  cached = null;
+}
+
+function readConfig(): PresenceConfig {
   let raw: unknown;
   try {
     raw = JSON.parse(readFileSync(configPath(), "utf8"));

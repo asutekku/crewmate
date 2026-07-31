@@ -166,8 +166,8 @@ export function displayName(s: Pick<Session, "name" | "handle"> & { readonly ali
  *
  * Separate from `displayName` because the two have different audiences and
  * different rules. This is READ-ONLY — `msg` takes the bare name, and a peer
- * that copied this three-word string would be quoting it at a command whose
- * validation rests on names having no spaces.
+ * that copied this three-word string would be naming an agent that does not
+ * exist, because the em-dash and the role are not part of anyone's name.
  */
 /**
  * Names for the OPERATOR, resolved from whatever the caller has to hand.
@@ -386,7 +386,12 @@ function openDb(dbPath: string): Database {
     -- Survives the stale sweep on purpose: it is a preference, not liveness.
     CREATE TABLE IF NOT EXISTS aliases (
       session_id TEXT PRIMARY KEY,
-      alias      TEXT NOT NULL
+      alias      TEXT NOT NULL,
+      -- When the name was last in use. Without it the reservation was
+      -- UNBOUNDED: a name remembered here was held against the pool forever,
+      -- which is the same failure the 60 h hold exists to prevent, from the
+      -- other direction.
+      ts_ms      INTEGER NOT NULL DEFAULT 0
     );
   `);
   createWorkTables(db);
@@ -402,6 +407,7 @@ function openDb(dbPath: string): Database {
   addColumnIfMissing(db, "sessions", "transcript", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(db, "sessions", "alias", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(db, "sessions", "role", "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(db, "aliases", "ts_ms", "INTEGER NOT NULL DEFAULT 0");
   return db;
 }
 
@@ -513,29 +519,66 @@ export class Store {
         return existing.handle;
       }
 
-      // A name is held for far longer than a session lives. Three sources, and
-      // all three are needed: rows currently in the table (the UNIQUE index
-      // would reject a reuse), names REMEMBERED against a departed conversation
-      // so a returning agent gets its own back, and any name seen in the last
-      // `nameReuseMs` — 60 hours by default, so a name cannot come back as
-      // within the same working day and quietly rewrite what the log means.
+      // A name is held for far longer than a session lives, and FOUR sources are
+      // needed to make that true. The fourth — `edits` — is the one that
+      // actually holds, and it was missing: an agent that edited files and left
+      // lost its reservation immediately, because `sessions` deletes its row on
+      // exit, `aliases` is empty unless a name was chosen by hand, and
+      // `messages` self-prunes at MAX_MESSAGES, which on a busy day evicts a
+      // name within hours rather than the 60 the comment promised.
+      //
+      // The consequence was not cosmetic. A fresh conversation took a departed
+      // agent's name, and `operatorNames` then mapped that agent's frozen log
+      // lines onto the LIVE holder — so `files adela` listed a stranger's files
+      // under the name an overlap warning had just given you, and `msg adela`
+      // reached somebody else. `edits` is append-only and pruned on its own
+      // 30-day clock, so it is the only source that survives the hold.
       const taken = new Set<string>();
+      const heldSince = nowMs - loadConfig().nameReuseMs;
       for (const r of this.db.query(`SELECT handle FROM sessions`).all() as Array<{
         handle: string;
       }>) {
         taken.add(r.handle);
       }
-      for (const r of this.db.query(`SELECT alias FROM aliases`).all() as Array<{
-        alias: string;
-      }>) {
+      for (const r of this.db
+        .query(`SELECT alias FROM aliases WHERE ts_ms > ?`)
+        .all(heldSince) as Array<{ alias: string }>) {
         if (r.alias !== "") taken.add(r.alias.toLowerCase());
       }
       for (const r of this.db
+        .query(`SELECT DISTINCT agent FROM edits WHERE ts_ms > ? AND agent != ''`)
+        .all(heldSince) as Array<{ agent: string }>) {
+        taken.add(r.agent.toLowerCase());
+      }
+      for (const r of this.db
         .query(`SELECT handle FROM messages WHERE ts_ms > ?`)
-        .all(nowMs - loadConfig().nameReuseMs) as Array<{ handle: string }>) {
+        .all(heldSince) as Array<{ handle: string }>) {
         taken.add(r.handle);
       }
-      const handle = pickName(taken);
+      // A CONVERSATION COMING BACK KEEPS ITS NAME. `SessionEnd` deletes the row
+      // on a clean exit, so `--continue` and a relaunch arrive here as if new —
+      // and handing out a fresh name is exactly the moving label the given name
+      // exists to replace. Observed live: `adela` returned as `akira` mid-work.
+      //
+      // Taken by another LIVE session wins over the reservation: two agents on
+      // one name makes every `msg` to it ambiguous, and the newcomer having a
+      // prior claim to it does not change that.
+      // Bounded by the SAME hold as everything else: a conversation resumed
+      // within `nameReuseMs` keeps its name, one resumed next week takes a
+      // fresh one. Unbounded, a name could never return to the pool, which is
+      // the failure the hold exists to prevent from the other direction.
+      const remembered = this.db
+        .query(`SELECT alias FROM aliases WHERE session_id = ?`)
+        .get(sessionId) as { alias: string } | null;
+      const mine = taken.has((remembered?.alias ?? "").toLowerCase()) ? remembered!.alias : "";
+      const stillFree =
+        mine !== "" &&
+        (this.db
+          .query(
+            `SELECT 1 AS hit FROM sessions WHERE LOWER(handle) = LOWER(?) OR LOWER(alias) = LOWER(?)`,
+          )
+          .get(mine, mine) as { hit: number } | null) === null;
+      const handle = stillFree ? mine : pickName(taken);
       this.db
         .query(
           `INSERT INTO sessions
@@ -679,8 +722,8 @@ export class Store {
       // that case, and a name that only survives a POLITE exit is the wrong way
       // round.
       this.db
-        .query(`INSERT OR REPLACE INTO aliases (session_id, alias) VALUES (?, ?)`)
-        .run(sessionId, alias);
+        .query(`INSERT OR REPLACE INTO aliases (session_id, alias, ts_ms) VALUES (?, ?, ?)`)
+        .run(sessionId, alias, nowMs);
       return alias;
     });
     return claim();
@@ -862,13 +905,27 @@ export class Store {
     // terminal closed with ⌃C comes back as this same id and should come back
     // under the name the user knows it by. Without this the name survives a
     // crash (row untouched) but not a clean exit, which is backwards.
+    // THE GIVEN NAME IS REMEMBERED TOO, not just a chosen alias. Only an alias
+    // was, and the result was that a `--continue` renamed anyone who had never
+    // renamed themselves: SessionEnd deletes the row, the relaunch re-registers
+    // the SAME session id, `restoreAlias` finds no alias to put back, and
+    // `pickName` hands out a fresh name. Observed live — `adela` came back as
+    // `akira` mid-conversation, which is precisely the moving label the given
+    // name exists to replace.
+    //
+    // The alias wins when both exist, matching `displayName`'s precedence.
     const row = this.db
-      .query(`SELECT alias FROM sessions WHERE session_id = ? AND alias != ''`)
-      .get(sessionId) as { alias: string } | null;
-    if (row) {
+      .query(`SELECT handle, alias FROM sessions WHERE session_id = ?`)
+      .get(sessionId) as { handle: string; alias: string } | null;
+    const remembered = row ? (row.alias !== "" ? row.alias : row.handle) : "";
+    if (remembered !== "") {
       this.db
-        .query(`INSERT OR REPLACE INTO aliases (session_id, alias) VALUES (?, ?)`)
-        .run(sessionId, row.alias);
+        // `Date.now()` because `unregister` takes no clock — every other method
+        // here does, and a test that backdates one cannot backdate this. That is
+        // acceptable: a session ending is always NOW, and the only cost is that
+        // a fixture cannot age this row without ageing the whole test.
+        .query(`INSERT OR REPLACE INTO aliases (session_id, alias, ts_ms) VALUES (?, ?, ?)`)
+        .run(sessionId, remembered, Date.now());
     }
     this.db.query(`DELETE FROM claims WHERE session_id = ?`).run(sessionId);
     this.db.query(`DELETE FROM tasks WHERE session_id = ?`).run(sessionId);

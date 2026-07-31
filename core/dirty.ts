@@ -36,7 +36,11 @@ const cache = new Map<string, ReadonlySet<string>>();
 export function dirtyFiles(tree: string): ReadonlySet<string> | null {
   const hit = cache.get(tree);
   if (hit !== undefined) return hit;
-  const r = spawnSync("git", ["status", "--porcelain", "--untracked-files=all"], {
+  // `--ignored` as well as `--untracked-files=all`: without it a gitignored file
+  // an agent is actively editing reports CLEAN, and the overlap warning for it
+  // is suppressed. In this repo that covers `.claude/settings.local.json`,
+  // `dist/`, and every `*.shots/` — files agents do edit.
+  const r = spawnSync("git", ["status", "--porcelain", "--untracked-files=all", "--ignored"], {
     cwd: tree,
     encoding: "utf8",
     windowsHide: true,

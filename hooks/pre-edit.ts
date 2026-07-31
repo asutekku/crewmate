@@ -16,6 +16,17 @@ import { emit, readPayload } from "../core/shared.ts";
 import { currentBranch, relPath, resolveProject, worktreeRoot } from "../core/repo.ts";
 import { dirtyFiles } from "../core/dirty.ts";
 
+/**
+ * How recent a claim must be to count as "they are mid-edit, leave it alone".
+ *
+ * `pre-edit` is a PreToolUse hook: it records the claim before the Edit tool
+ * touches disk, so between those two moments a peer's file is claimed and still
+ * clean. Deleting the row in that window removes the warning for the very edit
+ * that needed it. Ten seconds is far longer than the gap (milliseconds) and far
+ * shorter than a stale claim (minutes to hours).
+ */
+const MID_EDIT_GRACE_MS = 10_000;
+
 /** One notice per peer, however many claim rows they hold on the path. */
 function dedupeBySession(claims: readonly Claim[]): Claim[] {
   const seen = new Map<string, Claim>();
@@ -77,34 +88,54 @@ async function main(): Promise<void> {
     store.claim(sessionId, path, now, { tool: payload.tool_name ?? "", worktree: tree });
     if (claimed.length === 0) return null;
 
-    // A COMMITTED FILE IS NOT A COLLISION. A claim is released by nothing but a
-    // 2-hour timer, so an agent that edited a file, committed it and moved on
-    // still holds it. Measured on the live roster: 38 of 42 claims were on files
-    // with NO uncommitted changes — 90% of this channel pointing at conflicts
-    // that a commit had already resolved, with peers replying "that's committed"
-    // and the operator reading the exchange.
-    //
-    // This is why the check runs HERE and not on every edit: `git status` is
-    // ~40 ms, and by this line a conflicting claim already exists, which is rare.
-    // A null answer means git could not tell us — every warning stands, because
-    // "no dirty files" and "we do not know" must not look the same.
-    const others = claimed.filter((o) => {
-      const dirty = dirtyFiles(o.worktree !== "" ? o.worktree : tree);
-      return dirty === null || dirty.has(o.path);
-    });
-    if (others.length === 0) {
-      // The claim is stale, not merely quiet: drop it so the next agent through
-      // this file does not pay for the same git call to reach the same answer.
-      for (const o of claimed) store.releaseClaim(o.sessionId, o.path);
-      return null;
-    }
-
     // Same tree means their edits are literally in these files right now; a
     // separate worktree is an independent checkout, so the risk is a merge later
     // rather than an overwrite now. The two need different advice, so they are
     // reported separately instead of averaged into one vague warning.
-    const here = others.filter((o) => !o.worktree || o.worktree === tree);
-    const away = others.filter((o) => o.worktree && o.worktree !== tree);
+    //
+    // THE SPLIT COMES FIRST, because only one half may be filtered.
+    const sameTree = claimed.filter((o) => !o.worktree || o.worktree === tree);
+    const away = claimed.filter((o) => o.worktree && o.worktree !== tree);
+
+    // A COMMITTED FILE IS NOT A COLLISION — IN THIS TREE. A claim is released by
+    // nothing but a 2-hour timer, so an agent that edited a file here, committed
+    // it and moved on still holds it, and the warning points at a conflict the
+    // commit already resolved.
+    //
+    // THIS MUST NOT BE APPLIED TO A CROSS-WORKTREE CLAIM, and an earlier version
+    // did, which quietly disabled half this hook. A peer in another worktree who
+    // commits goes clean instantly — but for them a commit is when the merge risk
+    // STARTS, not when it ends, and CLAUDE.md tells every agent to commit as soon
+    // as tests pass. So filtering `away` made the warning unreachable for exactly
+    // the disciplined peers it exists to warn about. Demonstrated: two worktrees
+    // editing one line, peer commits, warning suppressed, `git merge` conflicts.
+    //
+    // The 38-of-42 measurement that motivated the filter counted cross-worktree
+    // claims as false positives. They were not.
+    //
+    // `git status` is ~40 ms, so this runs only once a conflicting claim exists.
+    // A null answer means git could not tell us — the warning stands, because
+    // "no dirty files" and "we do not know" must not look the same.
+    const here = sameTree.filter((o) => {
+      const dirty = dirtyFiles(o.worktree !== "" ? o.worktree : tree);
+      return dirty === null || dirty.has(o.path);
+    });
+    const others = [...here, ...away];
+    if (others.length === 0) {
+      // Only the claims actually PROVED stale are dropped — those in this tree
+      // whose file is clean. Dropping `claimed` wholesale would delete a
+      // cross-worktree peer's row on evidence that says nothing about them.
+      //
+      // A claim is written in PreToolUse, BEFORE the edit reaches disk, so a peer
+      // that has just claimed a file it is about to write looks clean for a few
+      // hundred milliseconds. Deleting its row in that window destroys the one
+      // warning that mattered, so the drop is limited to claims older than that
+      // window — a claim made seconds ago is a peer mid-edit, not a stale row.
+      for (const o of sameTree) {
+        if (now - o.tsMs > MID_EDIT_GRACE_MS) store.releaseClaim(o.sessionId, o.path);
+      }
+      return null;
+    }
 
     // Announce the overlap to the log too, so the other agent learns about it on
     // its next turn rather than only at commit time.
