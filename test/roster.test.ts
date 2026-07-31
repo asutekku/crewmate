@@ -22,6 +22,7 @@ function session(over: Partial<Session> = {}): Session {
     handle: "ada",
     name: "traffic-4b",
     alias: "",
+    role: "",
     status: "busy",
     blocked: "",
     worktree: "I:/Projects/Traffic",
@@ -94,30 +95,35 @@ describe("formatRoster layout", () => {
     expect(head).toContain("fix the lane solver");
   });
 
-  test("names sessions the way the user does, never by internal handle", () => {
-    // Handles (`knuth`, `turing`, `lovelace`) are an allocation detail. Showing
-    // them next to Claude's own `traffic-NN` names forced the user to map the
-    // two by hand — "Why's there agent names & claude names mixed?"
+  test("names every session ONE way, so the reader never maps two labels", () => {
+    // The original complaint — "Why's there agent names & claude names mixed?"
+    // — was about MIXING, and it still holds. What changed is which one wins.
+    //
+    // `traffic-NN` used to win because it was the label on the user's screen.
+    // It is not stable: one conversation was relabelled traffic-a0 -> traffic-7c
+    // -> traffic-56 in a single afternoon, which made every frozen log line and
+    // every peer reference a moving target. The GIVEN NAME (`luna`) is assigned
+    // once and held for 60 hours, so it wins now.
     const lines = formatRoster(
-      [session({ name: "traffic-07", handle: "knuth" })],
-      [claim("src/config.ts", "knuth", "traffic-07")],
+      [session({ name: "traffic-07", handle: "luna" })],
+      [claim("src/config.ts", "luna", "traffic-07")],
       2_000,
       "I:/Projects/Traffic",
     ).map(plain);
     const all = lines.join("\n");
-    expect(all).toContain("traffic-07");
-    expect(all).not.toContain("knuth");
+    expect(all).toContain("luna");
+    expect(all).not.toContain("traffic-07");
   });
 
-  test("falls back to the handle when a session has no name yet", () => {
+  test("falls back to Claude's own name when there is no given name", () => {
     const [head] = formatRoster(
-      [session({ name: "", handle: "knuth" })],
+      [session({ name: "traffic-07", handle: "" })],
       [],
       2_000,
       "I:/Projects/Traffic",
     ).map(plain);
-    // A blank sender is worse than an internal one.
-    expect(head).toContain("knuth");
+    // A blank sender is worse than either.
+    expect(head).toContain("traffic-07");
   });
 
   test("keeps the conversation title OUT of what peers are shown", () => {

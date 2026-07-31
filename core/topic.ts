@@ -78,6 +78,37 @@ export function validateAlias(raw: string): { ok: true; alias: string } | { ok: 
   return { ok: true, alias };
 }
 
+/** A role shares the roster line with a name and an age, so it stays short. */
+const ROLE_MAX = 28;
+
+/**
+ * Validates what an agent IS — "Tooling Master", "Keeper of Wet Things".
+ *
+ * LOOSER THAN A NAME on purpose. A name is typed at `msg`, so it cannot carry a
+ * space or a quote; a role is only ever read, so apostrophes and ampersands are
+ * fine and the interesting ones need them. What is still refused is what would
+ * corrupt the line it is printed on, or leak a secret into the roster.
+ */
+export function validateRole(raw: string): { ok: true; role: string } | { ok: false; why: string } {
+  const role = raw.trim().replace(/\s+/g, " ");
+  if (role === "") return { ok: false, why: "a role cannot be empty" };
+  if ([...role].length > ROLE_MAX) {
+    return { ok: false, why: `a role must be ${ROLE_MAX} characters or fewer` };
+  }
+  // Control characters could rewrite a roster row; everything printable is fine.
+  // Scanned by CODE POINT rather than written as a literal range: a literal ESC
+  // in the source is invisible in a diff, makes grep call the file binary, and
+  // cannot be matched by a pattern typed as an escape.
+  for (const ch of role) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code < 0x20 || code === 0x7f) {
+      return { ok: false, why: "a role cannot contain control characters" };
+    }
+  }
+  if (SENSITIVE.test(role)) return { ok: false, why: "that looks like a credential" };
+  return { ok: true, role };
+}
+
 /**
  * True when a phrase is made entirely of filler — an acknowledgement plus a
  * verb of intention, with no noun naming what is being worked ON.

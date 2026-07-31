@@ -102,15 +102,18 @@ describe("validateAlias", () => {
 });
 
 describe("displayName precedence", () => {
-  test("a chosen name outranks both the session name and the handle", () => {
-    expect(displayName({ alias: "tooling", name: "traffic-56", handle: "ada" })).toBe("tooling");
-    expect(displayName({ alias: "", name: "traffic-56", handle: "ada" })).toBe("traffic-56");
-    expect(displayName({ alias: "", name: "", handle: "ada" })).toBe("ada");
+  test("chosen name, then given name, then Claude's own label", () => {
+    // Claude's `traffic-NN` is LAST because it is the only one that moves: one
+    // conversation carried traffic-a0, traffic-7c and traffic-56 in an
+    // afternoon. Both names above it are fixed for the life of the conversation.
+    expect(displayName({ alias: "tooling", name: "traffic-56", handle: "luna" })).toBe("tooling");
+    expect(displayName({ alias: "", name: "traffic-56", handle: "luna" })).toBe("luna");
+    expect(displayName({ alias: "", name: "traffic-56", handle: "" })).toBe("traffic-56");
   });
 
   test("a caller that passes no alias field still resolves", () => {
     // `post` and the claim helpers pass a narrower shape; they must not crash.
-    expect(displayName({ name: "traffic-56", handle: "ada" })).toBe("traffic-56");
+    expect(displayName({ name: "traffic-56", handle: "luna" })).toBe("luna");
   });
 });
 

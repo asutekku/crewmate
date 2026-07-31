@@ -11,7 +11,7 @@ import { unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, test } from "bun:test";
 
-import { STALE_MS, withStore } from "../core/store.ts";
+import { displayName, STALE_MS, withStore } from "../core/store.ts";
 
 let n = 0;
 const paths: string[] = [];
@@ -179,15 +179,21 @@ describe("identity", () => {
   });
 
   test("display names are frozen at send time so the log survives the sender", () => {
+    // The subject here is FREEZING, not which name wins: resolving a sender at
+    // read time would blank out every historical line once that session exits,
+    // and the log's job is to still make sense afterwards.
     fresh((store) => {
       const now = Date.now();
       store.register("me", "/t", "main", now);
       store.register("peer", "/t", "main", now);
       const peer = store.findBySession("peer")!;
+      const sender = displayName(peer);
       store.syncAgents([{ sessionId: "peer", name: "traffic-99", status: "busy" }]);
       store.post(peer.handle, "say", "hello", now, { sessionId: "me", name: "me" });
       store.unregister("peer");
-      expect(store.recent(10)[0]?.from).toBe("traffic-99");
+      expect(store.recent(10)[0]?.from).toBe(sender);
+      // And it is a real name, not an empty string standing in for a dead row.
+      expect(sender).not.toBe("");
     });
   });
 });

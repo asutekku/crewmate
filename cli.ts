@@ -27,7 +27,7 @@
  * times. It posts under a fixed handle so agents can tell it from a peer.
  */
 
-import { agoText, claimName, displayName, withStore } from "./core/store.ts";
+import { agoText, claimName, displayName, rosterName, withStore } from "./core/store.ts";
 import { installedVersion, resolveProject } from "./core/repo.ts";
 import { listAgents } from "./core/agents.ts";
 import { refreshSummary, SUMMARY_TTL_MS } from "./core/summary.ts";
@@ -41,7 +41,8 @@ import {
   terminalWidth,
 } from "./core/layout.ts";
 import { agentKey, BOARD_OPEN_SHOWN, foldEvents, parsePlan, progress } from "./core/work.ts";
-import { validateAlias } from "./core/topic.ts";
+import { validateAlias, validateRole } from "./core/topic.ts";
+import { titleCase } from "./core/names.ts";
 import { agentTally, briefAge, briefAgo, itemLines } from "./core/board.ts";
 import type { BoardPaint } from "./core/board.ts";
 import {
@@ -167,7 +168,11 @@ function who(): void {
     const width = terminalWidth();
     // One column wide enough for the longest name, capped so a single verbose
     // name cannot squeeze the description column to nothing.
-    const nameW = Math.min(24, Math.max(...ordered.map((s) => [...displayName(s)].length)));
+    // Measured on the ROSTER name ("Tooling Master Luna"), which is what this
+    // column prints — not on the bare name peers type. Cap raised to suit:
+    // "Keeper of Wet Things Luna" is 25, and truncating the role to fit would
+    // remove exactly the part that makes an agent recognisable at a glance.
+    const nameW = Math.min(30, Math.max(...ordered.map((s) => [...rosterName(s)].length)));
     const AGE_W = 4;
     // Where the description starts, and where every continuation line aligns:
     // "  " + mark + " " + name + " " + age + "  "
@@ -215,7 +220,7 @@ function who(): void {
           headline !== ""
             ? fit(headline, descW - [...prog].length)
             : dim(fit("(no stated task)", descW));
-        console.log(`  ${mark} ${paint(bold(pad(displayName(s), nameW)))} ${seen}  ${desc}${prog}`);
+        console.log(`  ${mark} ${paint(bold(pad(fit(rosterName(s), nameW), nameW)))} ${seen}  ${desc}${prog}`);
 
         // A blocked session is the one that wants attention, so it gets its own
         // line in red rather than a word buried in the row above.
@@ -436,16 +441,36 @@ function where(): void {
 }
 
 /**
- * Lets an agent name itself.
+ * Sets what an agent IS — its role, in words.
  *
- * `traffic-56` is a process label and `ada` is a slot in a fixed list; neither
- * says what the agent is for, and a roster of eight `traffic-XX` rows makes a
- * reader match numbers to windows by hand. A name the agent picked is the only
- * one of the three that carries meaning.
+ * The given name stays put while this moves, which is the whole point:
+ * "Tooling Master Luna" becoming "Tooling Intern Luna" reads as a demotion
+ * rather than as a stranger appearing on the roster.
+ */
+function callYou(role: string, target: string): void {
+  const check = validateRole(role);
+  if (!check.ok) {
+    console.error(`${red("✗")} ${check.why}`);
+    process.exitCode = 1;
+    return;
+  }
+  withStore(PROJECT.dbPath, (store) => {
+    const now = Date.now();
+    const self = resolveSelf(store, target, now, "`call-you`");
+    if (!self) return;
+    store.setRole(self.sessionId, check.role);
+    const name = displayName(self);
+    console.log(`${green("✓")} ${bold(handleColour(name)(`${check.role} ${titleCase(name)}`))}`);
+    console.log(dim(`  Peers still reach them at \`${name}\` — the role is for you to read.`));
+  });
+}
+
+/**
+ * Renames an agent.
  *
- * The operator can rename an agent too, with `--agent <name>` — you are the one
- * looking at eight windows, and an agent that has not thought to name itself is
- * exactly the one worth naming.
+ * A given name is assigned at registration and is usually fine; this is for
+ * when it isn't — an agent that wants to be `tooling`, or an operator who finds
+ * one name easier to remember than another.
  */
 function callMe(name: string, target: string): void {
   const check = validateAlias(name);
@@ -456,21 +481,8 @@ function callMe(name: string, target: string): void {
   }
   withStore(PROJECT.dbPath, (store) => {
     const now = Date.now();
-    const self =
-      target !== ""
-        ? store.findByName(target, now)
-        : ENV_SESSION !== ""
-          ? store.findBySession(ENV_SESSION)
-          : null;
-    if (!self) {
-      if (target !== "") console.error(`no agent named ${bold(target)} in ${PROJECT.name}`);
-      else {
-        console.error("`call-me` renames the agent that runs it.");
-        console.error(dim("  From a plain terminal, name one with `call-me <name> --agent <who>`."));
-      }
-      process.exitCode = 1;
-      return;
-    }
+    const self = resolveSelf(store, target, now, "`call-me`");
+    if (!self) return;
     const was = displayName(self);
     if (store.setAlias(self.sessionId, check.alias, now) === null) {
       console.error(`${red("✗")} another live agent already answers to ${bold(check.alias)}`);
@@ -480,6 +492,30 @@ function callMe(name: string, target: string): void {
     console.log(`${green("✓")} ${dim(was)} ${dim("→")} ${bold(handleColour(check.alias)(check.alias))}`);
     console.log(dim(`  Peers reach you at this name; \`msg ${check.alias} "…"\` works now.`));
   });
+}
+
+/** The agent a naming command acts on: a named one, else the caller. */
+function resolveSelf(
+  store: StoreHandle,
+  target: string,
+  nowMs: number,
+  verb: string,
+): ReturnType<StoreHandle["findBySession"]> {
+  const self =
+    target !== ""
+      ? store.findByName(target, nowMs)
+      : ENV_SESSION !== ""
+        ? store.findBySession(ENV_SESSION)
+        : null;
+  if (!self) {
+    if (target !== "") console.error(`no agent named ${bold(target)} in ${PROJECT.name}`);
+    else {
+      console.error(`${verb} acts on the agent that runs it.`);
+      console.error(dim("  From a plain terminal, pass `--agent <who>`."));
+    }
+    process.exitCode = 1;
+  }
+  return self;
 }
 
 /**
@@ -950,6 +986,18 @@ switch (cmd) {
       process.exit(1);
     }
     callMe(name, target);
+    break;
+  }
+  case "call-you":
+  case "role": {
+    const args = [...rest];
+    const target = takeFlag(args, "--agent");
+    const role = args.join(" ").trim();
+    if (!role) {
+      console.error('usage: cli.ts call-you "<role>" [--agent <who>]');
+      process.exit(1);
+    }
+    callYou(role, target);
     break;
   }
   case "clear":

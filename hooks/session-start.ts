@@ -51,6 +51,21 @@ const HOW_TO_RECORD =
   "every agent is working on. QUICK CHECKS AND ONE-OFF QUESTIONS DO NOT NEED A " +
   "CHECKLIST — `--plan` is optional and an item with no steps is fine.";
 
+/**
+ * The name is stated as a fact, the role offered as a choice.
+ *
+ * An agent that is not TOLD its name keeps referring to itself by whatever
+ * label it can see — before sender identity existed, one typed "traffic-4b:"
+ * into a message body by hand to say who it was. An assigned name nobody is
+ * told is just a database column.
+ */
+const HOW_TO_BE_CALLED =
+  "The name above is what peers type at `msg`, and it survives a restart. You " +
+  'can say what you ARE with `cli.ts call-you "<role>"` — "Tooling Master", ' +
+  '"Keeper of Wet Things" — which the operator reads on the roster; or take a ' +
+  'different name with `cli.ts call-me "<name>"`. Both optional. Your name stays ' +
+  "put while the role changes, so a role that moves still reads as the same agent.";
+
 async function main(): Promise<void> {
   const payload = await readPayload();
   const sessionId = payload?.session_id;
@@ -93,6 +108,7 @@ async function main(): Promise<void> {
       // conversation, so work started alone is exactly what a peer arriving in
       // an hour needs to be able to read.
       lines.push("", HOW_TO_RECORD);
+      lines.push("", HOW_TO_BE_CALLED);
     } else {
       lines.push(`${peers.length} other agent(s) active:`);
       lines.push(...formatRoster(peers, claims, now, tree, store.taskCounts()));
@@ -102,6 +118,7 @@ async function main(): Promise<void> {
       }
       lines.push("", HOW_TO_MESSAGE);
       lines.push("", HOW_TO_RECORD);
+      lines.push("", HOW_TO_BE_CALLED);
       // The trust note only earns its space once there is peer text to mistrust.
       lines.push("", TRUST_NOTE);
     }

@@ -357,18 +357,42 @@ one is kept 7 days (`board --all`) and then pruned with its steps and events.
 
 ## Naming an agent
 
-`traffic-56` is a label Claude Code hands out, and `ada` is a slot in a fixed
-list. Neither says what an agent is *for*, and a roster of eight `traffic-XX`
-rows makes you match numbers to windows by hand.
+Every agent gets a **given name** at registration — `luna`, `vega`, `rowan` —
+drawn from a pool of 280 and held for 60 hours after it was last seen. That is
+what peers type (`msg luna`), and it is stated to the agent at session start,
+because a name nobody is told is just a database column.
 
-```sh
-cli.ts call-me tooling              # an agent names itself
-cli.ts call-me tooling --agent ada  # you name one that hasn't
+Beside it sits a **role**: what the agent is *for*.
+
+```
+Tooling Master Luna       Keeper of Wet Things Vega       Terrain Whisperer Rowan
 ```
 
-The chosen name outranks both others everywhere a name is shown — roster, board,
-overlap warnings, and the sender on every message — and peers address it with
-`msg tooling "…"`.
+```sh
+cli.ts call-you "Tooling Master"   # what I am — changes as the work does
+cli.ts call-me  tooling            # a different name, if the assigned one won't do
+cli.ts call-you "…" --agent luna   # the operator setting either, for any agent
+```
+
+**Two fields, because they want opposite things.** A name is *typed*: short,
+unique, no spaces to quote. A role is *read*: evocative, several words, free to
+change. Collapsing them forces `msg "Tooling Master Luna"`, which is miserable to
+type and breaks the quoting rules names are validated against.
+
+Keeping the name fixed while the role moves is the point — `Tooling Master Luna`
+becoming `Tooling Intern Luna` reads as a demotion rather than as a stranger
+appearing on the roster. Roles need not be unique: two agents can share a job
+title the way two people can, and only the name has to identify.
+
+**Why the given name outranks Claude Code's `traffic-XX`.** That label *moves* —
+this tool's own conversation was relabelled `traffic-a0` → `traffic-7c` →
+`traffic-56` in one afternoon, which made every frozen log line and every peer
+reference a moving target. A given name is assigned once. `traffic-XX` is still
+the last fallback, for a session with no given name at all.
+
+The chosen name and role are shown everywhere a name is — roster, board, overlap
+warnings, and the sender frozen into every message. The three-word form is
+**read-only**: `msg` takes the bare name.
 
 **It survives a restart.** The name is remembered against the conversation uuid,
 both when it is chosen and again when `SessionEnd` fires, so it comes back

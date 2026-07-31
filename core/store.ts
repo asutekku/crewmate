@@ -25,6 +25,7 @@ import { Database } from "bun:sqlite";
 
 import { ensureBaseDir } from "./repo.ts";
 import { createWorkTables, WorkStore } from "./work.ts";
+import { fullName, GIVEN_NAMES, NAME_REUSE_MS, pickName } from "./names.ts";
 
 /**
  * A session with no heartbeat for this long is treated as gone. Sessions die by
@@ -61,20 +62,13 @@ export const CLAIM_REANNOUNCE_MS = 30 * 60 * 1000; // 30 min
 const MAX_MESSAGES = 2000;
 
 /**
- * Handles are for humans reading a roster, so they are short and pronounceable.
- * ORDER IS LOAD-BEARING: `colour.ts` colours an agent by its index here, so
- * reordering this list reshuffles every agent's colour.
+ * The pool an agent's given name is drawn from — see `core/names.ts`.
+ *
+ * Re-exported here because this is where callers already look for it, and
+ * because `colour.ts` colours an agent by its index in this list. ORDER IS
+ * THEREFORE LOAD-BEARING: reordering it reshuffles every agent's colour.
  */
-export const HANDLES = [
-  "ada",
-  "turing",
-  "hopper",
-  "lovelace",
-  "knuth",
-  "dijkstra",
-  "ritchie",
-  "thompson",
-] as const;
+export const HANDLES = GIVEN_NAMES;
 
 /**
  * Who authored the text, which is NOT the same as which agent it came through.
@@ -98,8 +92,25 @@ export interface Session {
    * windows agree.
    */
   readonly name: string;
-  /** Fallback identity assigned by this system when no real name is known. */
+  /**
+   * The agent's GIVEN NAME, assigned from a pool at first registration and held
+   * for 60 hours after it was last seen. This is what peers type (`msg luna`).
+   *
+   * It outranks Claude Code's own `traffic-XX` deliberately: that label MOVES —
+   * measured, one conversation was relabelled `traffic-a0` -> `traffic-7c` ->
+   * `traffic-56` in an afternoon — and a name that changes under a reader is
+   * worse than one that never meant anything.
+   */
   readonly handle: string;
+  /**
+   * What the agent is FOR, in words: "Tooling Master", "Keeper of Wet Things".
+   * Set by the agent or by the operator, changes freely as the work does.
+   *
+   * OPERATOR-FACING ONLY. It is never injected into a peer's context, because
+   * "Terrain Whisperer" is a claim of authority and a peer reading it may weight
+   * that agent's messages more heavily than it should.
+   */
+  readonly role: string;
   /**
    * A name the agent chose for itself. Outranks both of the above.
    *
@@ -129,20 +140,43 @@ export interface Session {
 }
 
 /**
- * What a peer is called, most-chosen first: a name the agent picked, else the
- * real session name, else the assigned handle.
+ * What an agent is CALLED — the single word peers type at `msg`.
  *
- * The agent's own choice wins because it is the only one of the three that
- * carries meaning. `traffic-56` is a process label and `ada` is a slot in a
- * fixed list — neither says what the agent is for, and a roster of eight
- * `traffic-XX` rows makes the reader match numbers to windows by hand.
+ * Precedence: a name the agent chose, else its given name, else Claude Code's
+ * own label. Both of the first two are stable for the life of the conversation;
+ * the third is not, which is why it is last.
  */
 export function displayName(s: Pick<Session, "name" | "handle"> & { readonly alias?: string }): string {
   // `alias` is optional in the SIGNATURE only, because `post` and the claim
   // helpers pass a narrower shape that never carried one. A `Session` always
   // has the field.
   if (s.alias !== undefined && s.alias !== "") return s.alias;
-  return s.name !== "" ? s.name : s.handle;
+  // The GIVEN NAME beats Claude Code's `traffic-XX`, which is the reverse of
+  // what this did before. That label is not stable — one conversation carried
+  // three of them in an afternoon — so preferring it made every peer reference
+  // and every frozen log line a moving target.
+  return s.handle !== "" ? s.handle : s.name;
+}
+
+/**
+ * What the OPERATOR sees: "Tooling Master Luna".
+ *
+ * Separate from `displayName` because the two have different audiences and
+ * different rules. This is READ-ONLY — `msg` takes the bare name, and a peer
+ * that copied this three-word string would be quoting it at a command whose
+ * validation rests on names having no spaces.
+ */
+export function rosterName(s: Session): string {
+  // THE GIVEN NAME IS ALWAYS THE NAME, even when the agent has chosen another —
+  // otherwise a self-named agent reads "Tooling Master Tooling", the same word
+  // twice. A chosen name stands in FRONT, as the role does, because that is what
+  // it actually is: a statement of what this agent is for.
+  //
+  // The prefix is never Claude Code's `traffic-a9`: that label is the unstable
+  // thing this design moved away from, and using it produced "Traffic A9
+  // Terrain Perf" — a role nobody chose.
+  const given = s.handle !== "" ? s.handle : displayName(s);
+  return fullName(given, s.role, s.alias);
 }
 
 export interface Message {
@@ -313,6 +347,7 @@ function openDb(dbPath: string): Database {
   addColumnIfMissing(db, "sessions", "summary_ms", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(db, "sessions", "transcript", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(db, "sessions", "alias", "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(db, "sessions", "role", "TEXT NOT NULL DEFAULT ''");
   return db;
 }
 
@@ -344,7 +379,7 @@ export function withStore<T>(dbPath: string, fn: (s: Store) => T): T {
 }
 
 /** The column list every Session query selects, so the two cannot drift apart. */
-const SESSION_COLUMNS = `session_id, handle, name, alias, status, blocked, worktree, branch,
+const SESSION_COLUMNS = `session_id, handle, name, alias, role, status, blocked, worktree, branch,
                          intent, title, summary, summary_ms, last_seen_ms, started_ms`;
 
 function rowToSession(r: Record<string, string | number>): Session {
@@ -353,6 +388,7 @@ function rowToSession(r: Record<string, string | number>): Session {
     handle: String(r["handle"]),
     name: String(r["name"] ?? ""),
     alias: String(r["alias"] ?? ""),
+    role: String(r["role"] ?? ""),
     status: String(r["status"] ?? ""),
     blocked: String(r["blocked"] ?? ""),
     worktree: String(r["worktree"]),
@@ -423,14 +459,29 @@ export class Store {
         return existing.handle;
       }
 
-      // Every handle in the table, not just live ones: a stale row still owns
-      // its name until pruned, and the UNIQUE index would reject a reuse.
-      const taken = new Set(
-        (this.db.query(`SELECT handle FROM sessions`).all() as Array<{ handle: string }>).map(
-          (r) => r.handle,
-        ),
-      );
-      const handle = HANDLES.find((h) => !taken.has(h)) ?? `agent-${sessionId.slice(0, 6)}`;
+      // A name is held for far longer than a session lives. Three sources, and
+      // all three are needed: rows currently in the table (the UNIQUE index
+      // would reject a reuse), names REMEMBERED against a departed conversation
+      // so a returning agent gets its own back, and any name seen in the last
+      // NAME_REUSE_MS — 60 hours, so `luna` cannot come back as somebody else
+      // within the same working day and quietly rewrite what the log means.
+      const taken = new Set<string>();
+      for (const r of this.db.query(`SELECT handle FROM sessions`).all() as Array<{
+        handle: string;
+      }>) {
+        taken.add(r.handle);
+      }
+      for (const r of this.db.query(`SELECT alias FROM aliases`).all() as Array<{
+        alias: string;
+      }>) {
+        if (r.alias !== "") taken.add(r.alias.toLowerCase());
+      }
+      for (const r of this.db
+        .query(`SELECT handle FROM messages WHERE ts_ms > ?`)
+        .all(nowMs - NAME_REUSE_MS) as Array<{ handle: string }>) {
+        taken.add(r.handle);
+      }
+      const handle = pickName(taken);
       this.db
         .query(
           `INSERT INTO sessions
@@ -582,11 +633,17 @@ export class Store {
   }
 
   /**
-   * Claude Code's conversation name, read from the transcript.
+   * Sets what the agent is FOR — "Tooling Master", "Keeper of Wet Things".
    *
-   * Also the moment a RESTART can be recognised, so it is where a chosen name is
-   * inherited: see `inheritAlias`.
+   * Not unique, and deliberately so: two agents can share a job title the way
+   * two people can, and only the NAME has to identify anything. That is the
+   * whole reason this is a second field rather than a longer name.
    */
+  setRole(sessionId: string, role: string): void {
+    this.db.query(`UPDATE sessions SET role = ? WHERE session_id = ?`).run(role, sessionId);
+  }
+
+  /** Claude Code's conversation name, read from the transcript. */
   setTitle(sessionId: string, title: string): void {
     this.db.query(`UPDATE sessions SET title = ? WHERE session_id = ?`).run(title, sessionId);
   }
