@@ -45,6 +45,17 @@ export const STALE_MS = 90 * 60 * 1000; // 90 min
  */
 export const CLAIM_TTL_MS = 2 * 60 * 60 * 1000; // 2 h
 
+/**
+ * How long an overlap announcement stays "already said".
+ *
+ * `pre-edit` fires on EVERY edit, so an agent working through a contested file
+ * posted an identical `claim` line each time — six of them in one log view,
+ * burying the actual conversation between the two agents who were resolving it.
+ * The first announcement is news; the tenth is noise about a fact the log
+ * already carries.
+ */
+export const CLAIM_REANNOUNCE_MS = 30 * 60 * 1000; // 30 min
+
 /** Rows kept in the log; old ones are pruned so the file cannot grow forever. */
 const MAX_MESSAGES = 2000;
 
@@ -740,6 +751,27 @@ export class Store {
     return Math.max(Number(r?.t ?? 0), sinceMs);
   }
 
+  /**
+   * True when this session already announced an overlap on `path` recently.
+   *
+   * Matched on the path inside the body rather than a separate column: the
+   * message log is the record of what was said, and "did I already say this"
+   * is a question about that record.
+   */
+  announcedOverlapRecently(handle: string, path: string, nowMs: number): boolean {
+    const r = this.db
+      .query(
+        `SELECT 1 AS hit FROM messages
+          WHERE handle = ? AND kind = 'claim' AND ts_ms > ?
+            AND body LIKE ? ESCAPE '\\'
+          LIMIT 1`,
+      )
+      .get(handle, nowMs - CLAIM_REANNOUNCE_MS, `also editing ${likeEscape(path)} %`) as {
+      hit: number;
+    } | null;
+    return r !== null;
+  }
+
   claim(sessionId: string, path: string, nowMs: number): void {
     this.db
       .query(
@@ -827,6 +859,15 @@ function toMessage(r: Record<string, string | number>): Message {
     kind: String(r["kind"]) as MessageKind,
     body: String(r["body"]),
   };
+}
+
+/**
+ * Escapes LIKE's wildcards. Real paths contain both — `_` in `waterTexture_2.ts`
+ * and `%` in an encoded name — and an unescaped `_` matches any character, so a
+ * lookup for one file would answer for its neighbour.
+ */
+function likeEscape(s: string): string {
+  return s.replace(/[\\%_]/g, (c) => `\\${c}`);
 }
 
 function toClaim(r: Record<string, string | number>): Claim {

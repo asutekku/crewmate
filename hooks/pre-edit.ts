@@ -65,19 +65,37 @@ async function main(): Promise<void> {
     store.claim(sessionId, path, now);
     if (others.length === 0) return null;
 
-    // Announce the overlap to the log too, so the other agent learns about it on
-    // its next turn rather than only at commit time.
-    // Session names, not handles: this text is read by an agent that may go on
-    // to message the peer, and `cli.ts msg knuth` works only by luck.
-    const who = others.map((o) => claimName(o)).join(", ");
-    store.post(handle, "claim", `also editing ${path} (already claimed by ${who})`, now);
-
     // Same tree means their edits are literally in these files right now; a
     // separate worktree is an independent checkout, so the risk is a merge later
     // rather than an overwrite now. The two need different advice, so they are
     // reported separately instead of averaged into one vague warning.
     const here = others.filter((o) => !o.worktree || o.worktree === tree);
     const away = others.filter((o) => o.worktree && o.worktree !== tree);
+
+    // Announce the overlap to the log too, so the other agent learns about it on
+    // its next turn rather than only at commit time.
+    //
+    // THE LOG LINE CARRIES THE SAME/OTHER-TREE DISTINCTION, which it used to
+    // drop — the split above was computed for the injected warning and thrown
+    // away here. That made a harmless cross-checkout overlap indistinguishable
+    // from a real one: two agents editing waterTexture.ts, one on master and one
+    // in a worktree, produced a line reading exactly like an on-disk collision,
+    // and the reader could not tell which it was without querying the db.
+    //
+    // Session names, not handles: this text is read by an agent that may go on
+    // to message the peer, and `cli.ts msg knuth` works only by luck.
+    const label = (cs: typeof others, where: string): string =>
+      cs.length > 0 ? `${cs.map((o) => claimName(o)).join(", ")}${where}` : "";
+    const parts = [label(here, " in this tree"), label(away, " in another worktree")].filter(
+      (p) => p !== "",
+    );
+    // Announced once per file per window, not once per edit. The WARNING below
+    // still fires every time — this session needs it before each edit — but the
+    // shared log does not need the same sentence ten times while an agent works
+    // through a contested file.
+    if (!store.announcedOverlapRecently(handle, path, now)) {
+      store.post(handle, "claim", `also editing ${path} (held by ${parts.join("; ")})`, now);
+    }
     const names = (cs: typeof others): string =>
       cs.map((o) => `${claimName(o)} (claimed ${agoText(o.tsMs, now)})`).join(", ");
 

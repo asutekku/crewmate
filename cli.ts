@@ -134,10 +134,12 @@ function who(): void {
 
       if (mine.length === 0) continue;
       const shown = mine.slice(0, 6).map((c) => {
-        // Red marks a path another live agent also holds — the one thing in this
-        // view that wants action, so it is the only red.
-        const shared = (counts.get(c.path) ?? 0) > 1;
-        return shared ? red(`${c.path} ⚠`) : dim(c.path);
+        // Red is reserved for a path held twice IN ONE TREE — the only case
+        // where uncommitted work is about to be lost. The same path in two
+        // worktrees is two different files and stays quiet.
+        const holders = claims.filter((k) => k.path === c.path);
+        const clash = holders.length > 1 && new Set(holders.map((k) => k.worktree)).size === 1;
+        return clash ? red(`${c.path} ⚠`) : dim(c.path);
       });
       const more = mine.length > shown.length ? dim(` +${mine.length - shown.length} more`) : "";
       // A PLAIN separator. Colouring it wraps the comma and space in reset codes
@@ -146,19 +148,42 @@ function who(): void {
       console.log(`      ${dim("editing")} ${shown.join(", ")}${more}`);
     }
 
-    const contested = [...counts].filter(([, n]) => n > 1);
-    if (contested.length > 0) {
-      console.log();
-      console.log(red(`⚠ ${contested.length} file(s) claimed by more than one agent:`));
-      for (const [path, n] of contested) {
-        // The session name, not the internal handle: `knuth` means nothing to
-        // someone whose terminals are all called `traffic-NN`, and the roster
-        // three lines above already resolved it.
-        const who = claims
-          .filter((c) => c.path === path)
-          .map((c) => handleColour(c.handle)(claimName(c)));
-        console.log(`    ${path} ${dim("—")} ${who.join(dim(", "))} ${dim(`(${n} agents)`)}`);
+    // ONE TREE OR TWO is the whole question. Two agents editing one path in one
+    // checkout are about to overwrite each other; two agents editing it in
+    // separate worktrees are editing different files that merge later, which is
+    // ordinary parallel work. Colouring both red made the warning meaningless —
+    // a master session and a worktree session on `waterTexture.ts` read exactly
+    // like an imminent clobber.
+    const contested = [...counts]
+      .filter(([, n]) => n > 1)
+      .map(([path]) => {
+        const holders = claims.filter((c) => c.path === path);
+        const trees = new Set(holders.map((c) => c.worktree));
+        return { path, holders, sameTree: trees.size === 1 };
+      });
+    const sameTree = contested.filter((c) => c.sameTree);
+    const crossTree = contested.filter((c) => !c.sameTree);
+
+    const show = (
+      group: typeof contested,
+      paint: (s: string) => string,
+      note: string,
+    ): void => {
+      for (const { path, holders } of group) {
+        const who = holders.map((c) => handleColour(c.handle)(claimName(c)));
+        console.log(`    ${paint(path)} ${dim("—")} ${who.join(dim(", "))} ${dim(note)}`);
       }
+    };
+
+    if (sameTree.length > 0) {
+      console.log();
+      console.log(red(`⚠ ${sameTree.length} file(s) held by two agents in ONE tree:`));
+      show(sameTree, (s) => s, "(uncommitted work would collide)");
+    }
+    if (crossTree.length > 0) {
+      console.log();
+      console.log(dim(`${crossTree.length} file(s) edited in separate worktrees:`));
+      show(crossTree, dim, "(different checkouts — merge later)");
     }
   });
 }

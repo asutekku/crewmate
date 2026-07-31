@@ -204,6 +204,49 @@ describe("claims", () => {
     });
   });
 
+  test("an overlap is announced once per window, not once per edit", () => {
+    // `pre-edit` fires on every edit, so an agent working through a contested
+    // file posted an identical claim line each time — six in one log view,
+    // burying the conversation between the two agents resolving it.
+    fresh((store) => {
+      const now = Date.now();
+      const me = store.register("me", "/t", "main", now);
+      expect(store.announcedOverlapRecently(me, "src/x.ts", now)).toBe(false);
+      store.post(me, "claim", "also editing src/x.ts (held by peer in this tree)", now);
+      expect(store.announcedOverlapRecently(me, "src/x.ts", now)).toBe(true);
+      // A DIFFERENT file is still news.
+      expect(store.announcedOverlapRecently(me, "src/y.ts", now)).toBe(false);
+    });
+  });
+
+  test("the announcement window does not treat `_` in a path as a wildcard", () => {
+    // LIKE's `_` matches any character, so an unescaped lookup for one file
+    // would answer for its neighbour and suppress a real announcement.
+    fresh((store) => {
+      const now = Date.now();
+      const me = store.register("me", "/t", "main", now);
+      store.post(me, "claim", "also editing src/a_b.ts (held by peer in this tree)", now);
+      expect(store.announcedOverlapRecently(me, "src/a_b.ts", now)).toBe(true);
+      expect(store.announcedOverlapRecently(me, "src/axb.ts", now)).toBe(false);
+    });
+  });
+
+  test("claims carry the worktree, so same-tree and cross-tree are separable", () => {
+    // Two agents on one path in ONE checkout are about to overwrite each other;
+    // in two worktrees they are editing different files. Reporting both the
+    // same way made the warning meaningless.
+    fresh((store) => {
+      const now = Date.now();
+      store.register("main", "/repo", "master", now);
+      store.register("wt", "/repo/.claude/worktrees/x", "feature", now);
+      store.claim("main", "src/x.ts", now);
+      store.claim("wt", "src/x.ts", now);
+      const holders = store.allClaims(now).filter((c) => c.path === "src/x.ts");
+      expect(holders).toHaveLength(2);
+      expect(new Set(holders.map((c) => c.worktree)).size).toBe(2);
+    });
+  });
+
   test("a dead session's claims stop being reported", () => {
     fresh((store) => {
       const now = Date.now();
