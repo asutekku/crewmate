@@ -11,9 +11,9 @@
  * rare: a handful of firings per session at most.
  */
 
-import { withStore } from "./store.ts";
-import { readPayload } from "./shared.ts";
-import { currentBranch, resolveProject, worktreeRoot } from "./repo.ts";
+import { withStore } from "../core/store.ts";
+import { readPayload } from "../core/shared.ts";
+import { currentBranch, resolveProject, worktreeRoot } from "../core/repo.ts";
 
 async function main(): Promise<void> {
   const payload = await readPayload();

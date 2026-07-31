@@ -12,10 +12,10 @@
  * says nothing to its own session. Peers read it at their next delivery point.
  */
 
-import { withStore } from "./store.ts";
-import { readPayload } from "./shared.ts";
-import { resolveProject } from "./repo.ts";
-import { summarize } from "./topic.ts";
+import { withStore } from "../core/store.ts";
+import { readPayload } from "../core/shared.ts";
+import { resolveProject } from "../core/repo.ts";
+import { summarize } from "../core/topic.ts";
 
 /** Enough to tell a rate limit from an auth failure; not a stack trace. */
 const ERROR_MAX = 80;

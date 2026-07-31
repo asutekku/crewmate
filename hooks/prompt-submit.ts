@@ -12,10 +12,10 @@
  * design leans on the Stop hook to catch news at the end of a turn instead.
  */
 
-import { withStore } from "./store.ts";
-import { emit, formatMessages, formatRoster, readPayload, TRUST_NOTE } from "./shared.ts";
-import { currentBranch, resolveProject, worktreeRoot } from "./repo.ts";
-import { topicOf } from "./topic.ts";
+import { withStore } from "../core/store.ts";
+import { emit, formatMessages, formatRoster, readPayload, TRUST_NOTE } from "../core/shared.ts";
+import { currentBranch, resolveProject, worktreeRoot } from "../core/repo.ts";
+import { topicOf } from "../core/topic.ts";
 
 
 async function main(): Promise<void> {

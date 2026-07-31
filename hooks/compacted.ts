@@ -17,10 +17,10 @@
  * contained anything.
  */
 
-import { withStore } from "./store.ts";
-import { readPayload } from "./shared.ts";
-import { resolveProject } from "./repo.ts";
-import { topicOf } from "./topic.ts";
+import { withStore } from "../core/store.ts";
+import { readPayload } from "../core/shared.ts";
+import { resolveProject } from "../core/repo.ts";
+import { topicOf } from "../core/topic.ts";
 
 async function main(): Promise<void> {
   const payload = await readPayload();

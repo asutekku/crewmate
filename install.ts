@@ -16,7 +16,7 @@
  * them; the repo copy is the source of truth.
  */
 
-import { mkdirSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -30,17 +30,27 @@ const SETTINGS = `${HOME}/.claude/settings.json`;
 const HERE = `${dirname(fileURLToPath(import.meta.url)).replace(/\\/g, "/")}/`;
 
 /**
- * Everything except this installer, which has no business running as a hook.
+ * Every module to deploy, as a path RELATIVE to this directory — so `core/…`
+ * and `hooks/…` keep their folders in `bin/` and the relative imports that ship
+ * resolve exactly as they do in source.
  *
  * DISCOVERED, NOT LISTED: a hardcoded list silently drops a newly added module,
  * and the failure lands at hook-run time as "Cannot find module" rather than at
  * install time — which is exactly how `colour.ts` shipped broken once.
+ *
+ * `test/` is skipped wholesale: tests are not hooks, and copying them would put
+ * `bun:test` imports in the deployed tree.
  */
 async function scriptNames(): Promise<string[]> {
   const { readdirSync } = await import("node:fs");
-  return readdirSync(HERE)
-    .filter((f) => f.endsWith(".ts") && f !== "install.ts" && !f.endsWith(".test.ts"))
-    .sort();
+  const walk = (rel: string): string[] =>
+    readdirSync(`${HERE}${rel}`, { withFileTypes: true }).flatMap((e) => {
+      const path = rel === "" ? e.name : `${rel}/${e.name}`;
+      if (e.isDirectory()) return e.name === "test" ? [] : walk(path);
+      if (!e.name.endsWith(".ts") || e.name.endsWith(".test.ts")) return [];
+      return path === "install.ts" ? [] : [path];
+    });
+  return walk("").sort();
 }
 
 /**
@@ -83,7 +93,9 @@ interface HookEntry {
 function entry(script: string, extra: Record<string, unknown> = {}): unknown {
   return {
     hooks: [
-      { type: "command", command: "bun", args: [`${BIN}/${script}`], timeout: 15, ...extra },
+      // Every registered script is a hook entry point, so the folder is added
+      // here rather than repeated at thirteen call sites where one could drift.
+      { type: "command", command: "bun", args: [`${BIN}/hooks/${script}`], timeout: 15, ...extra },
     ],
   };
 }
@@ -112,10 +124,24 @@ const REGISTRATIONS: ReadonlyArray<readonly [string, unknown]> = [
   ["SessionEnd", entry("session-end.ts", { timeout: 5 })],
 ];
 
-/** Identifies OUR hook entries, so removal never touches anyone else's. */
+/**
+ * Identifies OUR hook entries, so removal never touches anyone else's: ours iff
+ * the path points into our bin, wherever in the entry it appears.
+ *
+ * Under EXEC FORM the path lives in `args` and `command` is just `bun`, so
+ * checking `command` alone stopped recognising our own registrations the moment
+ * exec form shipped — leaving `--remove` unable to clean up and re-registration
+ * duplicating entries. Both fields are checked so either form is matched.
+ */
 function isOurs(e: unknown): boolean {
   const hooks = (e as HookEntry | null)?.hooks;
-  return Array.isArray(hooks) && hooks.some((h) => (h.command ?? "").includes("agent-presence/bin"));
+  if (!Array.isArray(hooks)) return false;
+  return hooks.some((h) => {
+    const args = Array.isArray((h as { args?: unknown }).args)
+      ? ((h as { args: unknown[] }).args as unknown[]).join(" ")
+      : "";
+    return `${h.command ?? ""} ${args}`.includes("agent-presence/bin");
+  });
 }
 
 async function readSettings(): Promise<Record<string, unknown>> {
@@ -135,8 +161,13 @@ async function writeSettings(s: Record<string, unknown>, backup: string | null):
 }
 
 async function copyScripts(): Promise<void> {
-  mkdirSync(BIN, { recursive: true });
   const scripts = await scriptNames();
+  // Replaced, not merged: a module that moved or was deleted would otherwise
+  // linger in `bin/` forever. After the source was split into core/ and hooks/,
+  // the previous flat copies sat beside the new ones — same names, older code,
+  // and nothing to say which a reader was looking at.
+  rmSync(BIN, { recursive: true, force: true });
+  mkdirSync(BIN, { recursive: true });
   for (const s of scripts) {
     await Bun.write(`${BIN}/${s}`, Bun.file(`${HERE}${s}`));
   }

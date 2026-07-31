@@ -203,35 +203,56 @@ where escape codes cost tokens and buy nothing.
 
 ## Files
 
-| File | Role |
+Three folders by role: `hooks/` is the event surface, `core/` is everything they
+share, `test/` never ships. Only `cli.ts` and `install.ts` sit at the top,
+because they are the two things you run by hand.
+
+**`bin/` mirrors this layout**, so the relative imports that ship resolve exactly
+as they do here — `install.ts` walks the tree rather than flattening it, and
+replaces `bin/` wholesale so a module that moves cannot leave a stale twin.
+
+### `hooks/` — one file per event, each fails open
+
+| File | Event |
 |---|---|
-| `repo.ts` | Project identity + db path (cached — a `git rev-parse` costs 31 ms). |
-| `agents.ts` | Reads `claude agents --json` for real names + idle/busy. |
-| `topic.ts` | Lossy, credential-rejecting text → one-line roster label. |
-| `colour.ts` | ANSI for the CLI only. Never reaches an agent's context. |
+| `session-start.ts` | **SessionStart** — register; inject the roster. |
+| `prompt-submit.ts` | **UserPromptSubmit** — heartbeat; deliver unread; record the stated task. |
+| `pre-edit.ts` | **PreToolUse** — claim the path; warn on peer overlap. |
 | `tool-batch.ts` | **PostToolBatch** — mid-turn delivery. |
+| `turn-end.ts` | **Stop** — publish the turn's files; deliver directed mail. |
 | `turn-failed.ts` | **StopFailure** — a dead turn stops reading as "still working". |
 | `notify.ts` | **Notification** — records "waiting for permission". |
 | `subagent-start.ts` | **SubagentStart** — tells a subagent what peers hold. |
 | `compacted.ts` | **PostCompact** — refreshes intent from the compaction summary. |
 | `cwd-changed.ts` | **CwdChanged** — keeps worktree/branch true after a `cd`. |
 | `task-changed.ts` | **TaskCreated/Completed** — mirrors per-session tasks to a shared board. |
+| `session-end.ts` | **SessionEnd** — deregister on clean exit. |
+
+### `core/` — shared by every hook and the CLI
+
+| File | Role |
+|---|---|
 | `store.ts` | SQLite schema + all state access. The only file that knows SQL. |
+| `repo.ts` | Project identity, worktree, db path (cached — a `git rev-parse` costs 31 ms). |
 | `shared.ts` | Payload reading, report formatting, `emit`. |
-| `session-start.ts` | Register; inject roster. |
-| `prompt-submit.ts` | Heartbeat; deliver unread; record stated task. |
-| `pre-edit.ts` | Claim path; warn on peer overlap. |
-| `turn-end.ts` | Publish turn completion; deliver mid-turn news. |
-| `session-end.ts` | Deregister on clean exit. |
+| `topic.ts` | Lossy, credential-rejecting text → one-line roster label. |
+| `colour.ts` | ANSI for the CLI only. Never reaches an agent's context. |
+| `agents.ts` | Reads `claude agents --json` for real names + idle/busy. |
+
+### Top level
+
+| File | Role |
+|---|---|
 | `cli.ts` | Human inspection + broadcast. |
 | `install.ts` | Copy to `~/.claude/agent-presence/bin/`, register hooks. |
-| `topic.test.ts` | What may become a roster label, and what may not. |
-| `roster.test.ts` | Roster layout, asserted with colour codes stripped. |
+| `test/store.test.ts` | Delivery + identity, against a real throwaway db. |
+| `test/topic.test.ts` | What may become a roster label, and what may not. |
+| `test/roster.test.ts` | Roster layout, asserted with colour codes stripped. |
 
 ## Tests
 
 ```sh
-bun test ./.claude/hooks/presence/*.test.ts        # the leading ./ is required
+bun test ./.claude/hooks/presence/test/*.test.ts   # the leading ./ is required
 PRESENCE_TEST_DB=/tmp/x.db bun pre-edit.ts < payload.json   # run a hook safely
 ```
 
@@ -243,10 +264,10 @@ as a real session with real claims and real log lines. That happened on
 warning naming a session on a file it never edited, which the user had to read
 past and which made a fake collision look real.
 
-**The path must be explicit.** `bun test` skips dot-directories, so this file is
-invisible to the repo-wide sweep and a bare `bun test .claude/...` matches
+**The path must be explicit.** `bun test` skips dot-directories, so these files
+are invisible to the repo-wide sweep and a bare `bun test .claude/...` matches
 nothing — it reports "0 files searched" rather than failing, which reads exactly
-like a pass. It is run by hand after touching `topic.ts`.
+like a pass. Run them by hand after touching anything in `core/`.
 
 Every rejection case in it is a string that actually reached the roster and
 described nothing. The acceptance cases are there because the first version of

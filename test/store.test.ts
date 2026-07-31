@@ -11,7 +11,7 @@ import { unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, test } from "bun:test";
 
-import { STALE_MS, withStore } from "./store.ts";
+import { STALE_MS, withStore } from "../core/store.ts";
 
 let n = 0;
 const paths: string[] = [];

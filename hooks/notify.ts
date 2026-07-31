@@ -14,9 +14,9 @@
  * worth recording; the rest (auth, elicitation) are not coordination facts.
  */
 
-import { withStore } from "./store.ts";
-import { readPayload } from "./shared.ts";
-import { resolveProject } from "./repo.ts";
+import { withStore } from "../core/store.ts";
+import { readPayload } from "../core/shared.ts";
+import { resolveProject } from "../core/repo.ts";
 
 async function main(): Promise<void> {
   const payload = await readPayload();

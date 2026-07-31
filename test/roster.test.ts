@@ -9,8 +9,8 @@
 
 import { describe, expect, test } from "bun:test";
 
-import type { Claim, Session } from "./store.ts";
-import { formatRoster } from "./shared.ts";
+import type { Claim, Session } from "../core/store.ts";
+import { formatRoster } from "../core/shared.ts";
 
 const ESC = String.fromCharCode(27);
 /** Strips SGR sequences so an assertion sees layout rather than colour. */

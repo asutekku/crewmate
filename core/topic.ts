@@ -78,9 +78,6 @@ const PASTED_OUTPUT = new RegExp(
   ].join("|"),
 );
 
-/** A line count past which this is a document being shown, not a task stated. */
-const PASTE_LINES = 4;
-
 export function summarize(text: string, maxLen: number): string {
   const flat = text.replace(/\s+/g, " ").trim();
   if (flat.length <= maxLen) return flat;
@@ -95,8 +92,14 @@ export function summarize(text: string, maxLen: number): string {
 export function topicOf(text: string): string {
   // Tested against the RAW text, before whitespace is flattened: the marks of a
   // paste are its line structure, and collapsing newlines destroys the evidence.
+  //
+  // STRUCTURAL MARKS ONLY — no line-count rule. A ">4 lines means a document"
+  // heuristic rejected an ordinary five-line instruction (a file path, a blank
+  // line, two short paragraphs) on 2026-07-31, leaving a working session blank
+  // in the roster until the user asked why it was missing. Length is not
+  // evidence of pasted output; a shell prompt or a stack frame is, and those
+  // catch the real cases without costing a normal multi-paragraph request.
   if (PASTED_OUTPUT.test(text)) return "";
-  if (text.split("\n").length > PASTE_LINES) return "";
 
   const flat = text.replace(/\s+/g, " ").trim();
   if (flat === "" || SENSITIVE.test(flat)) return "";
@@ -106,13 +109,41 @@ export function topicOf(text: string): string {
   // leaves a one-word head that then fails the length gate, so a perfectly good
   // prompt yields nothing. When the head is too short to be a topic, the text
   // AFTER the separator is the topic.
-  const parts = flat.split(/(?<=[.!?])\s|[:;\n]/).filter((s) => s.trim() !== "");
+  //
+  // THE COLON MUST NOT BE INSIDE A PATH OR URL. `i:\Projects\…` and `https://…`
+  // both contain one, and splitting there left the head "We have i" — which then
+  // read as filler and rejected the whole prompt. Observed live 2026-07-31: an
+  // agent started with a real, detailed instruction sat blank in the roster
+  // because that instruction happened to open with a Windows path. A colon only
+  // separates a clause when what follows it is whitespace.
+  const parts = flat.split(/(?<=[.!?])\s|:\s|[;\n]/).filter((s) => s.trim() !== "");
   const head = (parts[0] ?? flat).trim();
-  const usable = head.split(/\s+/).length >= 3 ? head : (parts.slice(1).join(" ").trim() || head);
+  // A long file path or URL is dropped from the label rather than allowed to
+  // consume it. "We have i:\Projects\…\WATER_HOT_FUNCTIONS.md Your task is to
+  // optimize…" is one clause — the path carries no meaning at roster width and
+  // would eat the whole 60 characters, hiding the sentence that says what the
+  // session is for.
+  const dropPaths = (s: string): string =>
+    s
+      .split(/\s+/)
+      .filter((w) => !(w.length >= 20 && /[\\/]/.test(w)))
+      .join(" ")
+      .trim();
+  const headClean = dropPaths(head);
+  const usable =
+    headClean.split(/\s+/).length >= 3
+      ? headClean
+      : (parts.map(dropPaths).find((p) => p.split(/\s+/).length >= 3) ?? (headClean || head));
   const short = summarize(usable, INTENT_MAX);
-  if (short.split(/\s+/).length < 3) return "";
   // A phrase of pure filler is worse than no phrase: it looks like a stated task
   // and outranks every honest fallback the roster could show instead.
+  //
+  // CONTENT, NOT LENGTH. This used to also require three words, which threw away
+  // real two-word tasks to catch continuations the filler test already catches:
+  // "water optimizations", "refactor derive" and "fix lanes" were rejected
+  // alongside "go ahead". Observed live 2026-07-31 — a session started for water
+  // optimization work sat blank in the roster and the user asked why it was
+  // missing. One word that is not filler is a topic; "go" and "yes" have none.
   if (isContentless(short)) return "";
   return short;
 }

@@ -7,10 +7,10 @@
  * the first turn does not also replay them.
  */
 
-import { displayName, withStore } from "./store.ts";
-import { emit, formatMessages, formatRoster, readPayload, TRUST_NOTE } from "./shared.ts";
-import { currentBranch, installedVersion, resolveProject, worktreeRoot } from "./repo.ts";
-import { listAgents } from "./agents.ts";
+import { displayName, withStore } from "../core/store.ts";
+import { emit, formatMessages, formatRoster, readPayload, TRUST_NOTE } from "../core/shared.ts";
+import { currentBranch, installedVersion, resolveProject, worktreeRoot } from "../core/repo.ts";
+import { listAgents } from "../core/agents.ts";
 
 /** Enough log to see what the others are up to, short enough to stay skimmable. */
 const RECENT_LINES = 8;

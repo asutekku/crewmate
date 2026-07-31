@@ -10,7 +10,7 @@
 
 import { describe, expect, test } from "bun:test";
 
-import { topicOf } from "./topic.ts";
+import { topicOf } from "../core/topic.ts";
 
 describe("topicOf rejects", () => {
   test.each([
@@ -24,7 +24,10 @@ describe("topicOf rejects", () => {
     ["a stack frame", "it crashes\n    at Object.<anonymous> (/app/x.ts:12:9)\n  more"],
     ["a diff hunk", "review this\n@@ -1,4 +1,9 @@\n-old\n+new"],
     ["a log timestamp", "see the log\n12:04:31 ERROR something failed\nwhy?"],
-    ["anything long enough to be a document", "here\nl1\nl2\nl3\nl4\nl5\nl6"],
+    // A pasted document is caught by its STRUCTURE — a prompt, a stack frame, a
+    // timestamp — not by its length. A line-count rule rejected ordinary
+    // multi-paragraph instructions, so this case now carries a real mark.
+    ["a pasted log with timestamps", "output was\n12:04:31 step one\n12:04:33 step two\n12:04:35 done"],
     // All three live sessions carried filler of exactly this shape, because a
     // RESUMED session's opening prompt acknowledges a conversation the roster
     // never saw. Under the old rule the first one latched for the session's life.
@@ -59,6 +62,26 @@ describe("topicOf keeps", () => {
     ["a short list", "do these:\nfix lanes\nfix ramps\nfix signals"],
     // Filler at the START is normal speech, not a contentless prompt.
     ["a task opening with filler", "Ok great, now fix the waterTexture channel packing"],
+    // A Windows path contains a colon, and splitting clauses on it left the head
+    // "We have i" — filler, so the WHOLE prompt was rejected. A real session
+    // started with this exact instruction sat blank in the roster for minutes.
+    [
+      "an instruction opening with a Windows path",
+      String.raw`We have i:\Projects\Traffic\audit_reports\terrain-water\WATER_HOT_FUNCTIONS.md
+
+Your task is to optimize each of the functions to the absolute minimum. Do this with benchmarks.`,
+    ],
+    ["a prompt mentioning a URL", "see https://example.com/x for the spec"],
+    // Ordinary multi-paragraph prompts were rejected by a ">4 lines is a
+    // pasted document" rule. Length is not evidence of a paste.
+    [
+      "a prompt of several paragraphs",
+      "Optimize the water simulation hot functions.\n\nUse benchmarks for each change.\n\nRecord the results in a table.",
+    ],
+    // Two-word tasks were rejected by a word-count floor that the filler test
+    // already covers properly.
+    ["a two-word task", "water optimizations"],
+    ["another two-word task", "refactor derive"],
     // The guard against an over-eager FILLER list: each of these is mostly
     // common words, and every one of them is a real instruction. One noun is
     // enough to make a phrase worth showing.
@@ -82,5 +105,15 @@ describe("topicOf shape", () => {
 
   test("collapses whitespace rather than carrying layout into the roster", () => {
     expect(topicOf("fix   the\t\tlane   solver")).toBe("fix the lane solver");
+  });
+
+  test("drops a long path from the label instead of letting it consume it", () => {
+    // A path is one token and eats the whole 60-character budget, hiding the
+    // sentence that actually says what the session is for.
+    const out = topicOf(
+      String.raw`We have i:\Projects\Traffic\audit_reports\terrain-water\WATER_HOT_FUNCTIONS.md Your task is to optimize each of the functions.`,
+    );
+    expect(out).not.toContain("WATER_HOT_FUNCTIONS");
+    expect(out).toContain("optimize");
   });
 });

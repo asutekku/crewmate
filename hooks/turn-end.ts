@@ -22,9 +22,9 @@
  * not ask for.
  */
 
-import { withStore } from "./store.ts";
-import { emit, formatMessages, readPayload, TRUST_NOTE } from "./shared.ts";
-import { currentBranch, resolveProject, worktreeRoot } from "./repo.ts";
+import { withStore } from "../core/store.ts";
+import { emit, formatMessages, readPayload, TRUST_NOTE } from "../core/shared.ts";
+import { currentBranch, resolveProject, worktreeRoot } from "../core/repo.ts";
 
 async function main(): Promise<void> {
   const payload = await readPayload();

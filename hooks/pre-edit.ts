@@ -10,9 +10,9 @@
  * rather than by luck.
  */
 
-import { agoText, claimName, withStore } from "./store.ts";
-import { emit, readPayload } from "./shared.ts";
-import { currentBranch, relPath, resolveProject, worktreeRoot } from "./repo.ts";
+import { agoText, claimName, withStore } from "../core/store.ts";
+import { emit, readPayload } from "../core/shared.ts";
+import { currentBranch, relPath, resolveProject, worktreeRoot } from "../core/repo.ts";
 
 async function main(): Promise<void> {
   const payload = await readPayload();

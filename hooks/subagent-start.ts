@@ -17,9 +17,9 @@
  * parent's tree is where the edit lands.
  */
 
-import { claimName, withStore } from "./store.ts";
-import { emit, readPayload } from "./shared.ts";
-import { resolveProject } from "./repo.ts";
+import { claimName, withStore } from "../core/store.ts";
+import { emit, readPayload } from "../core/shared.ts";
+import { resolveProject } from "../core/repo.ts";
 
 /** Enough to spot a collision; a full list would crowd a fresh context. */
 const MAX_PATHS = 10;

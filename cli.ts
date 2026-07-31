@@ -16,9 +16,9 @@
  * times. It posts under a fixed handle so agents can tell it from a peer.
  */
 
-import { agoText, claimName, displayName, withStore } from "./store.ts";
-import { installedVersion, resolveProject } from "./repo.ts";
-import { listAgents } from "./agents.ts";
+import { agoText, claimName, displayName, withStore } from "./core/store.ts";
+import { installedVersion, resolveProject } from "./core/repo.ts";
+import { listAgents } from "./core/agents.ts";
 import {
   activityColour,
   bold,
@@ -28,7 +28,7 @@ import {
   red,
   rosterColours,
   yellow,
-} from "./colour.ts";
+} from "./core/colour.ts";
 
 const HUMAN_HANDLE = "human";
 

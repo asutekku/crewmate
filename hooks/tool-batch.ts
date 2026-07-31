@@ -33,9 +33,9 @@
  * message. Only `additionalContext` is used.
  */
 
-import { hasUnread, withStore } from "./store.ts";
-import { emit, formatMessages, readPayload, TRUST_NOTE } from "./shared.ts";
-import { resolveProject } from "./repo.ts";
+import { hasUnread, withStore } from "../core/store.ts";
+import { emit, formatMessages, readPayload, TRUST_NOTE } from "../core/shared.ts";
+import { resolveProject } from "../core/repo.ts";
 
 async function main(): Promise<void> {
   const payload = await readPayload();
