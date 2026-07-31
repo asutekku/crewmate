@@ -70,7 +70,10 @@ async function main(): Promise<void> {
     // Read peers' claims BEFORE recording our own, so this session's claim
     // cannot appear in its own conflict list.
     const others = store.conflictingClaims(sessionId, path, now);
-    store.claim(sessionId, path, now);
+    // The tool is recorded because a Write is a whole-file replacement and an
+    // Edit is a hunk — reading "Write" against a file two agents share is worth
+    // more alarm than reading "Edit".
+    store.claim(sessionId, path, now, { tool: payload.tool_name ?? "", worktree: tree });
     if (others.length === 0) return null;
 
     // Same tree means their edits are literally in these files right now; a
@@ -149,10 +152,19 @@ async function main(): Promise<void> {
     // stating it once at session start is too far from the moment it is needed.
     if (others.length > 0) {
       const first = claimName(others[0] as Claim);
+      // LOOK BEFORE ASKING. This warning names ONE file — the one about to be
+      // edited — and the question that follows is always "what else are they
+      // in?". `files` answers it from the record without spending a peer's turn,
+      // and it keeps answering after that peer's session has ended, which is
+      // when a live claim would already have vanished. Asking is the fallback,
+      // not the first move.
       lines.push(
-        `Reaching them: \`bun ~/.claude/agent-presence/bin/cli.ts msg ${first} "<text>"\`. ` +
-          `What each of you is changing, and which parts are load-bearing, is ` +
-          `knowledge the other cannot derive from the file.`,
+        `Before asking, look: \`bun ~/.claude/agent-presence/bin/cli.ts files ${first}\` ` +
+          `lists every file they have touched and what they say they are doing; ` +
+          `\`cli.ts blame ${path}\` shows who has been in this one. If that leaves a ` +
+          `real question, \`cli.ts msg ${first} "<text>"\` reaches them — what each of ` +
+          `you is changing, and which parts are load-bearing, is knowledge the ` +
+          `other cannot derive from the file.`,
       );
     }
     return lines.join("\n");

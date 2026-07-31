@@ -36,7 +36,8 @@ export interface RepoContext {
   readonly dbPath: string;
 }
 
-const BASE_DIR = `${homedir().replace(/\\/g, "/")}/.claude/agent-presence`;
+/** Where every project's db, and the optional config file, live. */
+export const BASE_DIR = `${homedir().replace(/\\/g, "/")}/.claude/agent-presence`;
 
 function git(cwd: string, args: readonly string[]): string | null {
   try {

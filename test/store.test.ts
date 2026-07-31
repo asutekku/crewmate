@@ -42,6 +42,39 @@ afterEach(() => {
   }
 });
 
+describe("source hygiene", () => {
+  test("no SQL comment contains a backtick", async () => {
+    // COST FOUR ROUND TRIPS BEFORE THIS EXISTED. The schema lives in a JS
+    // template literal, so a backtick in a `-- comment` terminates the string
+    // and the file stops parsing — with an error pointing at the comment rather
+    // than at the cause. Markdown habits make it an easy thing to type.
+    for (const file of ["../core/store.ts", "../core/work.ts"]) {
+      const text = await Bun.file(new URL(file, import.meta.url)).text();
+      const offenders = text
+        .split("\n")
+        .map((line, i) => ({ line, n: i + 1 }))
+        .filter(({ line }) => /^\s*--/.test(line) && line.includes("`"));
+      expect(offenders.map((o) => `${file}:${o.n}`)).toEqual([]);
+    }
+  });
+
+  test("no source file contains a raw control character", async () => {
+    // Same class: a literal ESC or BEL in the source is invisible in a diff,
+    // makes grep report the file as binary, and cannot be matched by an edit
+    // whose pattern is typed as an escape. Both traps cost real time today.
+    for (const file of ["../core/topic.ts", "../core/names.ts", "../core/store.ts"]) {
+      const text = await Bun.file(new URL(file, import.meta.url)).text();
+      const bad: number[] = [];
+      for (let i = 0; i < text.length; i++) {
+        const c = text.charCodeAt(i);
+        // Tab, LF and CR are the only control characters source may contain.
+        if (c < 0x20 && c !== 9 && c !== 10 && c !== 13) bad.push(i);
+      }
+      expect({ file, bad }).toEqual({ file, bad: [] });
+    }
+  });
+});
+
 describe("delivery", () => {
   test("a broadcast interleaved before a directed message is not lost", () => {
     // A single monotonic cursor cannot say "delivered 7 but not 6", so a Stop

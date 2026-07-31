@@ -264,6 +264,74 @@ plain text.
 **Hook output is never colourised** — it goes into an agent's context window,
 where escape codes cost tokens and buy nothing.
 
+## Who touched what
+
+```sh
+cli.ts files terrain-perf          # every file that agent has touched  [--hours 24]
+cli.ts blame src/gen/terrain.ts    # who has been in this file, newest first
+```
+
+```
+$ cli.ts files terrain-perf
+terrain-perf — 6 file(s) in 24h  (session ended — this is history)
+  ▸ terrain gen perf: dedup shore field, fix erode wrap  1/3
+    now  fix the horizontal wrap in erode
+     8m ago  src/gen/terrain.ts ×3
+    12m ago  test/unit/gen/terrain.test.ts
+    15m ago  docs/systems/terrain-water.md
+
+$ cli.ts blame src/gen/terrain.ts
+src/gen/terrain.ts
+     9m ago  terrain-perf   Edit [Traffic]
+    19m ago  water-dynamic  Edit [water-sim-timberborn]
+    23m ago  terrain-perf   Edit [Traffic]
+```
+
+**Git cannot answer this.** 95 commits landed in this repo in one day, every one
+authored by the same person — `git blame` names the human and never which of ten
+agents wrote the line. The `edits` table is the only place the two are
+distinguishable, and the interleaving above is the thing you actually want to
+see.
+
+**It is a different table from `claims`, deliberately.** Claims are live state
+and are deleted with their session — right for "who is in this file *now*",
+useless for "who was in it", which is asked precisely once a session has gone.
+Measured: an agent ended its session mid-conversation here and its six claims
+vanished, leaving no record it had ever been in the file. So `edits` is
+append-only, survives `unregister` and the stale sweep, and freezes the agent's
+name at write time.
+
+Two limits worth knowing. It is **file-level, not line-level**: `pre-edit` runs
+*before* the edit and sees a path, not a diff — getting lines would mean a
+`git diff` per edit, measured at 40 ms on the hottest hook there is. And it
+records **intent, not outcome**: the row is written before the edit, so a failed
+or reverted edit still leaves one.
+
+Reading it off disk instead was measured and rejected: `git status` across this
+repo's 36 worktrees costs **2321 ms** against **7.5 ms** for the same answer from
+the store, and it reports all 5239 uncommitted files rather than the 39 an agent
+deliberately touched.
+
+## Configuration
+
+Optional, at `~/.claude/agent-presence/config.json`. Every value has a default
+that applies when the file is missing, unreadable, or malformed — it is read on
+hook paths, so a typo must degrade rather than take a session's edit with it,
+and defaults apply **per field** so one bad line cannot revert the rest.
+
+| Key | Default | What it bounds |
+|---|---|---|
+| `staleMs` | 90 min | a session with no heartbeat is treated as gone |
+| `claimTtlMs` | 2 h | how long a claim means "I am working on this" |
+| `claimReannounceMs` | 30 min | how long an overlap announcement stays "already said" |
+| `nameReuseMs` | 60 h | how long a given name is held after last use |
+| `workKeepMs` | 7 days | how long a **closed** work record is kept |
+| `editKeepMs` | 30 days | how long edit history is kept |
+
+`editKeepMs` is the longest because it is the only one answering a question about
+the past. There is no "off": an append-only table on a repo with 36 worktrees is
+how this gets slow, and the honest knob is *how long*, not *whether*.
+
 ## The work board
 
 A durable record per unit of work — several open at once, each with a checklist

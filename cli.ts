@@ -8,6 +8,9 @@
  *   bun cli.ts clear             # wipe roster
  *   bun cli.ts where             # which project/db this directory maps to
  *   bun cli.ts call-me <name>    # name yourself  [--agent <who>] to rename another
+ *   bun cli.ts call-you "<role>" # what you ARE, for the operator's roster
+ *   bun cli.ts files <agent>     # every file they have touched  [--hours 24]
+ *   bun cli.ts blame <path>      # who has been in this file, newest first
  *
  * And the work board — what each agent is doing, as a timeline:
  *
@@ -438,6 +441,97 @@ function where(): void {
   console.log(`${dim("key:    ")} ${cyan(PROJECT.key)}${note}`);
   console.log(`${dim("root:   ")} ${PROJECT.root}`);
   console.log(`${dim("db:     ")} ${PROJECT.dbPath}`);
+}
+
+/**
+ * Every file an agent has touched — the context behind an overlap warning.
+ *
+ * The warning names ONE file, which is the one you were about to edit. This
+ * answers the question that follows: what else are they in, and is my change
+ * going to meet theirs somewhere I have not looked yet?
+ *
+ * Reads the edit HISTORY, not live claims, so it still answers after that agent
+ * has exited — measured: a session ended mid-conversation here and its six
+ * claims vanished with it, leaving no record it had been in the file at all.
+ */
+function filesOf(target: string, hours: number): void {
+  withStore(PROJECT.dbPath, (store) => {
+    const now = Date.now();
+    const sinceMs = now - hours * 60 * 60 * 1000;
+    // A live session first, then anyone in the edit history — an agent that has
+    // GONE is exactly the one you want to ask about, and it has no roster row.
+    const live = store.findByName(target, now);
+    const past = store.editAgents(sinceMs);
+    const q = target.toLowerCase();
+    const historical = past.find(
+      (a) => a.agent.toLowerCase() === q || a.agent.toLowerCase().startsWith(q),
+    );
+    const sessionId = live?.sessionId ?? historical?.sessionId ?? "";
+    const name = live ? displayName(live) : (historical?.agent ?? "");
+    if (sessionId === "") {
+      console.error(`no agent named ${bold(target)} has edited anything in ${hours}h`);
+      const seen = [...new Set(past.map((a) => a.agent))].slice(0, 8);
+      if (seen.length > 0) console.error(dim(`  seen recently: ${seen.join(", ")}`));
+      process.exitCode = 1;
+      return;
+    }
+    const edits = store.editsBy(sessionId, sinceMs);
+    if (edits.length === 0) {
+      console.log(dim(`${name} has edited nothing in the last ${hours}h.`));
+      return;
+    }
+
+    const width = terminalWidth();
+    const gone = live === null ? dim("  (session ended — this is history)") : "";
+    console.log(`${bold(handleColour(name)(name))} ${dim(`— ${edits.length} file(s) in ${hours}h`)}${gone}`);
+    // Their open work says WHY, which is the half a file list cannot carry.
+    for (const item of store.work.openItems(agentKey("", sessionId))) {
+      const p = progress(store.work.steps(item.workId));
+      const count = p.total > 0 ? ` ${p.done}/${p.total}` : "";
+      console.log(`  ${cyan("▸")} ${item.subject}${dim(count)}`);
+      if (p.current) console.log(`    ${dim("now")}  ${p.current.text}`);
+    }
+    const trees = new Set(edits.map((e) => e.worktree).filter((w) => w !== ""));
+    for (const e of edits) {
+      const when = dim(briefAgo(e.tsMs, now).padStart(9));
+      const times = e.count > 1 ? dim(` ×${e.count}`) : "";
+      // The tree is only worth printing when they worked in more than one.
+      const tree = trees.size > 1 && e.worktree !== "" ? dim(` [${e.worktree.split("/").pop()}]`) : "";
+      console.log(`  ${when}  ${fit(e.path, width - 26)}${times}${tree}`);
+    }
+  });
+}
+
+/**
+ * Who has touched a file — blame at file granularity.
+ *
+ * Git cannot answer this: 95 commits landed in this repo in one day and every
+ * one is authored by the same person, so `git blame` names the human and never
+ * the agent. This names the agent, and the commit correlation that would turn it
+ * into line granularity is P3 of the work-records plan.
+ */
+function blame(path: string): void {
+  withStore(PROJECT.dbPath, (store) => {
+    const now = Date.now();
+    // Accept an absolute path, a repo-relative one, or a suffix — you will
+    // usually paste whatever your editor gave you.
+    const rel = path.replace(/\\/g, "/").replace(`${PROJECT.root}/`, "");
+    const rows = store.editsOf(rel);
+    if (rows.length === 0) {
+      console.log(dim(`No recorded edits to ${rel}.`));
+      console.log(dim("  Only files edited through Claude Code's tools are tracked."));
+      return;
+    }
+    console.log(bold(rel));
+    const width = terminalWidth();
+    for (const r of rows) {
+      const when = dim(briefAgo(r.tsMs, now).padStart(9));
+      const tree = r.worktree !== "" ? dim(` [${r.worktree.split("/").pop()}]`) : "";
+      const tool = r.tool !== "" ? dim(` ${r.tool}`) : "";
+      const who = r.agent !== "" ? r.agent : dim(r.sessionId.slice(0, 8));
+      console.log(`  ${when}  ${fit(handleColour(who)(who), width - 30)}${tool}${tree}`);
+    }
+  });
 }
 
 /**
@@ -986,6 +1080,26 @@ switch (cmd) {
       process.exit(1);
     }
     callMe(name, target);
+    break;
+  }
+  case "files": {
+    const args = [...rest];
+    const hours = Number(takeFlag(args, "--hours")) || 24;
+    const target = args.join(" ").trim();
+    if (!target) {
+      console.error("usage: cli.ts files <agent> [--hours 24]");
+      process.exit(1);
+    }
+    filesOf(target, hours);
+    break;
+  }
+  case "blame": {
+    const path = rest.join(" ").trim();
+    if (!path) {
+      console.error("usage: cli.ts blame <path>");
+      process.exit(1);
+    }
+    blame(path);
     break;
   }
   case "call-you":

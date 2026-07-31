@@ -25,7 +25,8 @@ import { Database } from "bun:sqlite";
 
 import { ensureBaseDir } from "./repo.ts";
 import { createWorkTables, WorkStore } from "./work.ts";
-import { fullName, GIVEN_NAMES, NAME_REUSE_MS, pickName } from "./names.ts";
+import { fullName, GIVEN_NAMES, pickName } from "./names.ts";
+import { loadConfig } from "./config.ts";
 
 /**
  * A session with no heartbeat for this long is treated as gone. Sessions die by
@@ -33,7 +34,7 @@ import { fullName, GIVEN_NAMES, NAME_REUSE_MS, pickName } from "./names.ts";
  * hook cannot be the only way a row disappears — without a timeout the roster
  * fills with ghosts and stops being worth reading.
  */
-export const STALE_MS = 90 * 60 * 1000; // 90 min
+export const STALE_MS = loadConfig().staleMs;
 
 /**
  * How long a claim keeps meaning "I am working on this".
@@ -45,7 +46,7 @@ export const STALE_MS = 90 * 60 * 1000; // 90 min
  * buried among a dozen that do not. Two hours is longer than any single edit
  * session on one file and far shorter than a working day.
  */
-export const CLAIM_TTL_MS = 2 * 60 * 60 * 1000; // 2 h
+export const CLAIM_TTL_MS = loadConfig().claimTtlMs;
 
 /**
  * How long an overlap announcement stays "already said".
@@ -56,7 +57,7 @@ export const CLAIM_TTL_MS = 2 * 60 * 60 * 1000; // 2 h
  * The first announcement is news; the tenth is noise about a fact the log
  * already carries.
  */
-export const CLAIM_REANNOUNCE_MS = 30 * 60 * 1000; // 30 min
+export const CLAIM_REANNOUNCE_MS = loadConfig().claimReannounceMs;
 
 /** Rows kept in the log; old ones are pruned so the file cannot grow forever. */
 const MAX_MESSAGES = 2000;
@@ -325,6 +326,30 @@ function openDb(dbPath: string): Database {
       ts_ms      INTEGER NOT NULL,
       PRIMARY KEY (path, session_id)
     );
+    -- APPEND-ONLY history of who touched what. Distinct from the claims table,
+    -- which is live state and is DELETED with its session: 95 commits landed in
+    -- this repo in one day, every one authored by the same person, so git can
+    -- say which line changed but never which agent changed it. This is the only
+    -- table that can, and it is worthless if it is lossy -- hence its own table
+    -- rather than a longer TTL on claims.
+    --
+    -- Attribution is FROZEN at write time, exactly as message sender names are:
+    -- resolving an agent later would blank out every historical row the moment
+    -- that session exits, which is precisely when blame is asked for.
+    CREATE TABLE IF NOT EXISTS edits (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts_ms      INTEGER NOT NULL,
+      path       TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      agent      TEXT NOT NULL DEFAULT '',
+      worktree   TEXT NOT NULL DEFAULT '',
+      branch     TEXT NOT NULL DEFAULT '',
+      -- Edit / Write / NotebookEdit. A Write is a whole-file replacement and a
+      -- far bigger deal than an Edit, so the two are worth telling apart.
+      tool       TEXT NOT NULL DEFAULT ''
+    );
+    CREATE INDEX IF NOT EXISTS edits_path ON edits (path, id);
+    CREATE INDEX IF NOT EXISTS edits_agent ON edits (session_id, id);
     -- Names remembered past the roster row that held them. A session id is the
     -- CONVERSATION uuid (the transcript's filename, and what "claude --resume"
     -- takes), so it is the same after a restart -- but SessionEnd deletes the
@@ -463,7 +488,7 @@ export class Store {
       // all three are needed: rows currently in the table (the UNIQUE index
       // would reject a reuse), names REMEMBERED against a departed conversation
       // so a returning agent gets its own back, and any name seen in the last
-      // NAME_REUSE_MS — 60 hours, so `luna` cannot come back as somebody else
+      // `nameReuseMs` — 60 hours by default, so a name cannot come back as
       // within the same working day and quietly rewrite what the log means.
       const taken = new Set<string>();
       for (const r of this.db.query(`SELECT handle FROM sessions`).all() as Array<{
@@ -478,7 +503,7 @@ export class Store {
       }
       for (const r of this.db
         .query(`SELECT handle FROM messages WHERE ts_ms > ?`)
-        .all(nowMs - NAME_REUSE_MS) as Array<{ handle: string }>) {
+        .all(nowMs - loadConfig().nameReuseMs) as Array<{ handle: string }>) {
         taken.add(r.handle);
       }
       const handle = pickName(taken);
@@ -819,6 +844,10 @@ export class Store {
     this.db.query(`DELETE FROM claims WHERE session_id = ?`).run(sessionId);
     this.db.query(`DELETE FROM tasks WHERE session_id = ?`).run(sessionId);
     this.db.query(`DELETE FROM sessions WHERE session_id = ?`).run(sessionId);
+    // `edits` IS NOT TOUCHED. It is history, and the moment a session ends is
+    // exactly when someone starts asking what it changed — measured: an agent
+    // ended its session mid-conversation here and its 6 claims vanished with it,
+    // leaving no record that it had been in `src/gen/terrain.ts` at all.
   }
 
   /**
@@ -1068,13 +1097,120 @@ export class Store {
     return r !== null;
   }
 
-  claim(sessionId: string, path: string, nowMs: number): void {
-    this.db
+  /**
+   * Records an edit: the live claim, and the permanent history row.
+   *
+   * BOTH FROM ONE CALL, so the two cannot drift — a claim written without its
+   * history row is an edit that blame will never see, and there is no way to
+   * notice that afterwards.
+   *
+   * The `tool`/`worktree` arguments are optional so the older two-argument form
+   * still works; a caller that omits them loses only detail, never the row.
+   */
+  claim(
+    sessionId: string,
+    path: string,
+    nowMs: number,
+    detail?: { readonly tool?: string; readonly worktree?: string; readonly branch?: string },
+  ): void {
+    const run = this.db.transaction(() => {
+      this.db
+        .query(
+          `INSERT INTO claims (path, session_id, ts_ms) VALUES (?, ?, ?)
+             ON CONFLICT (path, session_id) DO UPDATE SET ts_ms = excluded.ts_ms`,
+        )
+        .run(path, sessionId, nowMs);
+      // Resolved NOW and stored, not joined at read time: this row has to still
+      // name its author after the session row is gone.
+      const s = this.db
+        .query(`SELECT ${SESSION_COLUMNS} FROM sessions WHERE session_id = ?`)
+        .get(sessionId) as Record<string, string | number> | null;
+      const who = s ? displayName(rowToSession(s)) : "";
+      this.db
+        .query(
+          `INSERT INTO edits (ts_ms, path, session_id, agent, worktree, branch, tool)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          nowMs,
+          path,
+          sessionId,
+          who,
+          detail?.worktree ?? String(s?.["worktree"] ?? ""),
+          detail?.branch ?? String(s?.["branch"] ?? ""),
+          detail?.tool ?? "",
+        );
+    });
+    run();
+  }
+
+  /**
+   * Every file an agent has touched, most recent first — the answer to "what
+   * else is this peer in?" without reading the log backwards.
+   *
+   * Deduplicated by path, keeping the LATEST touch, because a file edited
+   * fifteen times is one fact about what that agent is working on, not fifteen.
+   */
+  editsBy(
+    sessionId: string,
+    sinceMs: number,
+    limit = 200,
+  ): Array<{ path: string; tsMs: number; worktree: string; tool: string; count: number }> {
+    const rows = this.db
       .query(
-        `INSERT INTO claims (path, session_id, ts_ms) VALUES (?, ?, ?)
-           ON CONFLICT (path, session_id) DO UPDATE SET ts_ms = excluded.ts_ms`,
+        `SELECT path, MAX(ts_ms) AS ts_ms, worktree, tool, COUNT(*) AS n
+           FROM edits WHERE session_id = ? AND ts_ms > ?
+          GROUP BY path ORDER BY MAX(ts_ms) DESC LIMIT ?`,
       )
-      .run(path, sessionId, nowMs);
+      .all(sessionId, sinceMs, limit) as Array<Record<string, string | number>>;
+    return rows.map((r) => ({
+      path: String(r["path"]),
+      tsMs: Number(r["ts_ms"]),
+      worktree: String(r["worktree"] ?? ""),
+      tool: String(r["tool"] ?? ""),
+      count: Number(r["n"] ?? 1),
+    }));
+  }
+
+  /**
+   * Who has touched a path, most recent first — blame, at file granularity.
+   *
+   * NOT deduplicated: the whole question is the sequence, and two agents
+   * alternating on one file is exactly the thing worth seeing.
+   */
+  editsOf(
+    path: string,
+    limit = 50,
+  ): Array<{ agent: string; sessionId: string; tsMs: number; worktree: string; tool: string }> {
+    // BY TIMESTAMP, not by rowid. Rows normally arrive in time order, so the
+    // two agree — until they do not, and then blame reads as a jumble with no
+    // hint that it is wrong. `id` breaks ties so two edits in the same
+    // millisecond still have a stable order.
+    const rows = this.db
+      .query(`SELECT * FROM edits WHERE path = ? ORDER BY ts_ms DESC, id DESC LIMIT ?`)
+      .all(path, limit) as Array<Record<string, string | number>>;
+    return rows.map((r) => ({
+      agent: String(r["agent"] ?? ""),
+      sessionId: String(r["session_id"]),
+      tsMs: Number(r["ts_ms"]),
+      worktree: String(r["worktree"] ?? ""),
+      tool: String(r["tool"] ?? ""),
+    }));
+  }
+
+  /** Agents seen in the edit history, for resolving a name to a session id. */
+  editAgents(sinceMs: number): Array<{ agent: string; sessionId: string; lastMs: number }> {
+    const rows = this.db
+      .query(
+        `SELECT agent, session_id, MAX(ts_ms) AS last_ms FROM edits
+          WHERE ts_ms > ? AND agent != '' GROUP BY session_id ORDER BY MAX(ts_ms) DESC`,
+      )
+      .all(sinceMs) as Array<Record<string, string | number>>;
+    return rows.map((r) => ({
+      agent: String(r["agent"]),
+      sessionId: String(r["session_id"]),
+      lastMs: Number(r["last_ms"]),
+    }));
   }
 
   /** Claims on `path` held by OTHER live sessions. */
@@ -1145,6 +1281,10 @@ export class Store {
     this.db.query(`DELETE FROM claims WHERE session_id IN ${dead}`).run(cutoff);
     this.db.query(`DELETE FROM tasks WHERE session_id IN ${dead}`).run(cutoff);
     this.db.query(`DELETE FROM sessions WHERE last_seen_ms <= ?`).run(cutoff);
+    // Edit history outlives everything else here — it is the only table that
+    // answers a question about the PAST, and its horizon is configurable
+    // (`editKeepMs`) because thirty days is a guess and someone's audit is not.
+    this.db.query(`DELETE FROM edits WHERE ts_ms <= ?`).run(nowMs - loadConfig().editKeepMs);
     // WORK RECORDS ARE NOT SWEPT WITH THE SESSION. They are keyed on the agent
     // precisely so they outlive the terminal that opened them — a record that
     // evaporated when a session went stale could not answer "who moved the

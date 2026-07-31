@@ -71,6 +71,8 @@ export interface HookPayload {
   readonly source?: string;
   readonly reason?: string;
   readonly last_assistant_message?: string;
+  /** Which tool is about to run: `Edit`, `Write`, `NotebookEdit`. */
+  readonly tool_name?: string;
   readonly tool_input?: { readonly file_path?: string };
   /** Stop: true when a hook is already driving a continuation. */
   readonly stop_hook_active?: boolean;
