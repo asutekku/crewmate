@@ -23,8 +23,35 @@ import {
 } from "./shared.ts";
 import { resolveProject, worktreeRoot } from "./repo.ts";
 
-/** Intent is a roster label, not a description; one short line is the point. */
-const INTENT_MAX = 120;
+/** A roster label, not a description — short enough to scan a column of them. */
+const INTENT_MAX = 60;
+
+/**
+ * Anything that looks like a secret. Not a scrubber — a REJECTER: if a prompt
+ * trips one of these the topic is dropped entirely rather than published with
+ * the interesting part removed, because a redacted secret still reveals that a
+ * secret was pasted and often what kind.
+ */
+const SENSITIVE =
+  /(?:api[_-]?key|secret|token|password|passwd|credential|bearer|authorization|ssh-rsa|BEGIN [A-Z ]*PRIVATE KEY|\.env|[A-Za-z0-9_-]{32,})/i;
+
+/**
+ * A coarse topic for the roster, derived from the user's first prompt.
+ *
+ * Deliberately LOSSY. It takes the opening clause only, drops anything that
+ * smells like a credential, and caps hard — a peer needs "roughly what is this
+ * session for", not the user's words. Anything richer is the session's own to
+ * share, via an explicit `say`.
+ */
+function topicOf(prompt: string): string {
+  const flat = prompt.replace(/\s+/g, " ").trim();
+  if (flat === "" || SENSITIVE.test(flat)) return "";
+  // First sentence or clause: later ones are usually detail and caveats.
+  const head = flat.split(/(?<=[.!?])\s|[:;\n]/)[0] ?? flat;
+  const short = summarize(head, INTENT_MAX);
+  // A bare continuation ("go", "yes", "now fix it") describes nothing.
+  return short.split(/\s+/).length < 3 ? "" : short;
+}
 
 /**
  * The first prompt of a session is treated as its stated task. Later prompts do
@@ -53,13 +80,13 @@ async function main(): Promise<void> {
     if (!handle) return null;
 
     if (self && shouldSetIntent(self.intent) && payload.prompt) {
-      // This is the USER's wording, not the agent's. It is published because it
-      // is the earliest and most accurate statement of what the session is for,
-      // but it is marked `tasked` and quoted so no reader mistakes a peer's
-      // instructions for a peer's own claim about its work.
-      const intent = summarize(payload.prompt, INTENT_MAX);
-      store.setIntent(sessionId, intent);
-      store.post(handle, "tasked", `"${intent}"`, now);
+      // The roster gets a SHORT, NON-VERBATIM label and nothing is posted to the
+      // log. Publishing prompts word-for-word sent whatever the user typed —
+      // credentials, client names, a pasted stack trace — to every peer in the
+      // repo, and produced lines like `turing was asked by its user: "go"` that
+      // carried no information at all. A peer needs to know roughly what a
+      // session is for; it does not need the transcript.
+      store.setIntent(sessionId, topicOf(payload.prompt));
     }
 
     const unread = store.drainUnread(sessionId);

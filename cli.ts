@@ -1,11 +1,12 @@
 /**
  * Human-facing view of the presence store, and a way to post into it by hand.
  *
- *   bun cli.ts who          # roster + claims
- *   bun cli.ts log [n]      # recent messages
- *   bun cli.ts say <text>   # post as "human"
- *   bun cli.ts clear        # wipe roster
- *   bun cli.ts where        # which project/db this directory maps to
+ *   bun cli.ts who               # roster + claims
+ *   bun cli.ts log [n]           # recent messages
+ *   bun cli.ts msg <name> "..."  # send to ONE agent  [--from <name>]
+ *   bun cli.ts say <text>        # broadcast to every agent
+ *   bun cli.ts clear             # wipe roster
+ *   bun cli.ts where             # which project/db this directory maps to
  *
  * The project is resolved from the CWD exactly as the hooks resolve it, so
  * running this from any worktree reads that repo's roster.
@@ -15,9 +16,19 @@
  * times. It posts under a fixed handle so agents can tell it from a peer.
  */
 
-import { agoText, withStore } from "./store.ts";
+import { agoText, displayName, withStore } from "./store.ts";
 import { resolveProject } from "./repo.ts";
-import { activityColour, bold, cyan, dim, handleColour, red, yellow } from "./colour.ts";
+import { listAgents } from "./agents.ts";
+import {
+  activityColour,
+  bold,
+  cyan,
+  dim,
+  handleColour,
+  red,
+  rosterColours,
+  yellow,
+} from "./colour.ts";
 
 const HUMAN_HANDLE = "human";
 
@@ -31,14 +42,18 @@ const PROJECT = resolveProject(process.cwd());
  * The roster, built for a terminal rather than for an agent's context.
  *
  * This does NOT colourise `formatRoster`'s output: the two audiences want
- * different text. An agent needs the trust framing ("asked to:") on every line;
- * a human scanning four sessions wants density, and gets the same distinctions
- * from colour. Both read the same store, so they cannot disagree on the facts.
+ * different text. An agent needs the framing spelled out in words; a human
+ * scanning eight sessions wants density, and gets the same distinctions from
+ * colour. Both read the same store, so they cannot disagree on the facts.
  */
 function who(): void {
+  // Refreshed on every `who`: you are asking precisely because you want the
+  // current picture, and ~950 ms is fine for a command you typed.
+  const agents = listAgents();
   withStore(PROJECT.dbPath, (store) => {
     const now = Date.now();
     store.pruneStale(now);
+    if (agents.length > 0) store.syncAgents(agents);
     const sessions = store.liveSessions(now);
     const claims = store.allClaims(now);
     if (sessions.length === 0) {
@@ -53,15 +68,23 @@ function who(): void {
     const counts = new Map<string, number>();
     for (const c of claims) counts.set(c.path, (counts.get(c.path) ?? 0) + 1);
 
+    // Assigned across the roster so no two agents share a colour — hashing a
+    // name cannot promise that once names are arbitrary (`traffic-12`).
+    const palette = rosterColours(sessions, (s) => displayName(s));
     console.log(bold(`${sessions.length} active agent(s) in ${PROJECT.name}:`));
     for (const s of sessions) {
-      const paint = handleColour(s.handle);
+      const paint = palette.get(displayName(s)) ?? handleColour(s.handle);
       const age = now - s.lastSeenMs;
       const where = showTree && s.worktree !== "" ? dim(` ${s.worktree.split("/").pop() ?? ""}`) : "";
       const branch = s.branch !== "" ? dim(` (${s.branch})`) : "";
       const seen = activityColour(age)(agoText(s.lastSeenMs, now));
-      const task = s.intent !== "" ? `"${s.intent}"` : dim("(no stated task yet)");
-      console.log(`  ${paint(bold(s.handle))}${where}${branch}  ${task}  ${dim("·")} ${seen}`);
+      const task = s.intent !== "" ? s.intent : dim("(no stated task yet)");
+      // busy is the one state worth colouring: it explains why a message has not
+      // landed yet, and why the roster line may be about to change.
+      const state = s.status === "busy" ? yellow(" busy") : s.status === "idle" ? dim(" idle") : "";
+      console.log(
+        `  ${paint(bold(displayName(s)))}${state}${where}${branch}  ${task}  ${dim("·")} ${seen}`,
+      );
 
       const mine = claims.filter((c) => c.handle === s.handle);
       if (mine.length === 0) continue;
@@ -88,9 +111,9 @@ function who(): void {
 }
 
 /**
- * The message log. Human words (`tasked`, `note`) are shown in full colour and
- * attributed; agent chatter is dimmed, because when you are scanning for what
- * you or another user asked for, the agent's own bookkeeping is the background.
+ * The message log. Deliberate messages (`say`, `note`) are shown in full colour
+ * with a `from → to` arrow; the agents' own bookkeeping is dimmed, because when
+ * you are scanning for what was actually said, claims are background.
  */
 function log(limit: number): void {
   withStore(PROJECT.dbPath, (store) => {
@@ -104,15 +127,17 @@ function log(limit: number): void {
       // Right-aligned and bracket-free: `[1m ago]` reads as a stray ANSI code
       // (ESC[1m is bold), which is genuinely confusing in a colourised log.
       const when = dim(agoText(m.tsMs, now).padStart(9));
-      const paint = handleColour(m.handle);
-      if (m.kind === "tasked") {
-        console.log(`${when} ${paint(m.handle)} ${dim("was asked by its user:")} ${m.body}`);
-      } else if (m.kind === "note") {
-        console.log(`${when} ${yellow(bold("the user broadcast to everyone:"))} ${m.body}`);
+      const paint = handleColour(m.from);
+      if (m.kind === "note") {
+        console.log(`${when} ${yellow(bold("you → everyone"))}: ${m.body}`);
+      } else if (m.kind === "say") {
+        // The arrow is the point of this view: who spoke, and to whom.
+        const to = m.to !== "" ? bold(handleColour(m.to)(m.to)) : dim("everyone");
+        console.log(`${when} ${paint(bold(m.from))} ${dim("→")} ${to}: ${m.body}`);
       } else if (m.kind === "claim") {
-        console.log(`${when} ${paint(m.handle)} ${red("claim")} ${dim(m.body)}`);
+        console.log(`${when} ${paint(m.from)} ${red("claim")} ${dim(m.body)}`);
       } else {
-        console.log(`${when} ${paint(m.handle)} ${dim(`${m.kind}: ${m.body}`)}`);
+        console.log(`${when} ${paint(m.from)} ${dim(`${m.kind}: ${m.body}`)}`);
       }
     }
   });
@@ -124,6 +149,45 @@ function say(text: string): void {
   });
   console.log(`${yellow("broadcast")} to ${bold(PROJECT.name)}: ${text}`);
   console.log(dim("Every agent sees this on its next turn, marked as from you."));
+}
+
+/**
+ * Sends to ONE agent. `--from <name>` lets a session send as itself; without it
+ * the message is from you, the operator.
+ *
+ * Delivery is scoped, not secret: only the recipient is SHOWN the message, but
+ * every agent can read the db file directly. Good for keeping contexts clean;
+ * not a channel for anything you would not want all your sessions to see.
+ */
+function msg(target: string, text: string, from: string | undefined): void {
+  const result = withStore(PROJECT.dbPath, (store) => {
+    const now = Date.now();
+    const to = store.findByName(target, now);
+    if (!to) return { ok: false as const, live: store.liveSessions(now) };
+
+    let handle = HUMAN_HANDLE;
+    let fromLabel = "you";
+    if (from !== undefined) {
+      const sender = store.findByName(from, now);
+      if (!sender) return { ok: false as const, live: store.liveSessions(now), badFrom: true };
+      handle = sender.handle;
+      fromLabel = displayName(sender);
+    }
+    store.post(handle, "say", text, now, { sessionId: to.sessionId, name: displayName(to) });
+    return { ok: true as const, to, fromLabel };
+  });
+
+  if (!result.ok) {
+    const what = result.badFrom ? `sender "${from}"` : `agent "${target}"`;
+    console.error(red(`No live ${what} in ${PROJECT.name}.`));
+    if (result.live.length > 0) {
+      console.error(dim("Live agents: ") + result.live.map((s) => displayName(s)).join(", "));
+    }
+    process.exit(1);
+  }
+  const state = result.to.status === "busy" ? " (busy — will see it after this turn)" : "";
+  console.log(`${cyan(result.fromLabel)} ${dim("→")} ${bold(displayName(result.to))}: ${text}`);
+  console.log(dim(`Delivered on their next turn${state}.`));
 }
 
 function clear(): void {
@@ -161,6 +225,24 @@ switch (cmd) {
     say(text);
     break;
   }
+  case "msg": {
+    // `--from <name>` anywhere in the args; an agent uses it to send as itself.
+    const args = [...rest];
+    let from: string | undefined;
+    const fi = args.indexOf("--from");
+    if (fi >= 0) {
+      from = args[fi + 1];
+      args.splice(fi, 2);
+    }
+    const target = args.shift();
+    const text = args.join(" ").trim();
+    if (!target || !text) {
+      console.error('usage: cli.ts msg <name> "<text>" [--from <name>]');
+      process.exit(1);
+    }
+    msg(target, text, from);
+    break;
+  }
   case "clear":
     clear();
     break;
@@ -168,6 +250,9 @@ switch (cmd) {
     where();
     break;
   default:
-    console.error(`unknown command: ${cmd}\nusage: who | log [n] | say <text> | clear | where`);
+    console.error(
+      `unknown command: ${cmd}\n` +
+        'usage: who | log [n] | msg <name> "<text>" [--from <name>] | say <text> | clear | where',
+    );
     process.exit(1);
 }

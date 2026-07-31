@@ -63,14 +63,30 @@ const HANDLE_COLOURS = [cyan, green, yellow, magenta, blue] as const;
 export function handleColour(handle: string): (s: string) => string {
   // Imported, not duplicated: two lists that must agree will eventually not.
   const i = (HANDLES as readonly string[]).indexOf(handle);
-  // An overflow handle (`agent-<id>`) is outside the pool; hash it so it still
-  // gets a stable colour rather than defaulting to one already in use.
+  // A real Claude session name (`traffic-12`) is outside the pool; hash it so it
+  // still gets a stable colour rather than defaulting to one already in use.
   if (i < 0) {
     let h = 0;
     for (let k = 0; k < handle.length; k++) h = (h * 131 + handle.charCodeAt(k)) >>> 0;
     return HANDLE_COLOURS[h % HANDLE_COLOURS.length] ?? cyan;
   }
   return HANDLE_COLOURS[i % HANDLE_COLOURS.length] ?? cyan;
+}
+
+/**
+ * Colours a whole roster so no two members share one, which index-by-name alone
+ * cannot promise once names are arbitrary. Assignment follows roster order, and
+ * only wraps when there are more agents than colours.
+ */
+export function rosterColours<T>(
+  items: readonly T[],
+  nameOf: (t: T) => string,
+): Map<string, (s: string) => string> {
+  const out = new Map<string, (s: string) => string>();
+  items.forEach((item, i) => {
+    out.set(nameOf(item), HANDLE_COLOURS[i % HANDLE_COLOURS.length] ?? cyan);
+  });
+  return out;
 }
 
 /** Older than this and a session is likely a ghost rather than a busy peer. */

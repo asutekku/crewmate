@@ -55,16 +55,29 @@ export const HANDLES = [
 /**
  * Who authored the text, which is NOT the same as which agent it came through.
  *
- * `tasked` and `note` carry human words verbatim; the rest are the agent's own.
- * Collapsing the two would let one session's instructions read as another
- * agent's claim — and a relayed question ("what should we do next?") read as if
- * it were addressed to the reader.
+ * `say` and `note` carry human words; the rest are the agent's own. Collapsing
+ * the two would let one session's instructions read as another agent's claim.
+ *
+ * There is deliberately NO kind for "a session's prompt". Publishing prompts
+ * verbatim leaked whatever the user typed — credentials, client names — to every
+ * peer, and produced lines like `turing was asked by its user: "go"` that say
+ * nothing. A session's task now reaches peers only as its own short `intent`.
  */
-export type MessageKind = "tasked" | "claim" | "release" | "done" | "note";
+export type MessageKind = "say" | "claim" | "release" | "done" | "note";
 
 export interface Session {
   readonly sessionId: string;
+  /**
+   * Claude Code's own name for the session (`traffic-12`, `water-sim-f7`), when
+   * known. Preferred over `handle` everywhere a human or agent reads a name: it
+   * is the label you already see in your terminal, so the roster and your
+   * windows agree.
+   */
+  readonly name: string;
+  /** Fallback identity assigned by this system when no real name is known. */
   readonly handle: string;
+  /** `idle` / `busy` from Claude Code, or "" when it has not been sampled. */
+  readonly status: string;
   /** The session's working tree — differs per worktree within one repo. */
   readonly worktree: string;
   readonly branch: string;
@@ -73,10 +86,18 @@ export interface Session {
   readonly startedMs: number;
 }
 
+/** What a peer is called: the real session name when known, else the handle. */
+export function displayName(s: Pick<Session, "name" | "handle">): string {
+  return s.name !== "" ? s.name : s.handle;
+}
+
 export interface Message {
   readonly id: number;
   readonly tsMs: number;
-  readonly handle: string;
+  /** Sender's display name at send time — frozen so history stays readable. */
+  readonly from: string;
+  /** Recipient's display name, or "" for a broadcast. */
+  readonly to: string;
   readonly kind: MessageKind;
   readonly body: string;
 }
@@ -102,6 +123,8 @@ function openDb(dbPath: string): Database {
     CREATE TABLE IF NOT EXISTS sessions (
       session_id   TEXT PRIMARY KEY,
       handle       TEXT NOT NULL,
+      name         TEXT NOT NULL DEFAULT '',
+      status       TEXT NOT NULL DEFAULT '',
       worktree     TEXT NOT NULL,
       branch       TEXT NOT NULL DEFAULT '',
       intent       TEXT NOT NULL DEFAULT '',
@@ -117,7 +140,16 @@ function openDb(dbPath: string): Database {
       ts_ms     INTEGER NOT NULL,
       handle    TEXT NOT NULL,
       kind      TEXT NOT NULL,
-      body      TEXT NOT NULL
+      body      TEXT NOT NULL,
+      -- Empty means broadcast. A session id here means ONLY that session is
+      -- shown the row (see drainUnread). Delivery scoping, not secrecy: every
+      -- agent can read this file directly.
+      to_session TEXT NOT NULL DEFAULT '',
+      -- Display names FROZEN at send time. Resolving them at read time would
+      -- blank out every historical line once a session exits, and the log's job
+      -- is to still make sense afterwards.
+      from_name  TEXT NOT NULL DEFAULT '',
+      to_name    TEXT NOT NULL DEFAULT ''
     );
     CREATE TABLE IF NOT EXISTS claims (
       path       TEXT NOT NULL,
@@ -151,13 +183,16 @@ export class Store {
   liveSessions(nowMs: number): Session[] {
     const rows = this.db
       .query(
-        `SELECT session_id, handle, worktree, branch, intent, last_seen_ms, started_ms
+        `SELECT session_id, handle, name, status, worktree, branch, intent,
+                last_seen_ms, started_ms
            FROM sessions WHERE last_seen_ms > ? ORDER BY started_ms ASC`,
       )
       .all(nowMs - STALE_MS) as Array<Record<string, string | number>>;
     return rows.map((r) => ({
       sessionId: String(r["session_id"]),
       handle: String(r["handle"]),
+      name: String(r["name"] ?? ""),
+      status: String(r["status"] ?? ""),
       worktree: String(r["worktree"]),
       branch: String(r["branch"]),
       intent: String(r["intent"]),
@@ -240,15 +275,64 @@ export class Store {
     this.db.query(`UPDATE sessions SET intent = ? WHERE session_id = ?`).run(intent, sessionId);
   }
 
+  /**
+   * Folds in Claude Code's own view of the live sessions: its names
+   * (`traffic-12`) and `idle`/`busy`. Only rows we already track are updated —
+   * a session that never ran the hooks has no presence state to attach to.
+   */
+  syncAgents(agents: ReadonlyArray<{ sessionId: string; name: string; status: string }>): void {
+    const upd = this.db.prepare(
+      `UPDATE sessions SET name = ?, status = ? WHERE session_id = ?`,
+    );
+    const run = this.db.transaction(() => {
+      for (const a of agents) upd.run(a.name, a.status, a.sessionId);
+    });
+    run();
+  }
+
+  /**
+   * Finds a live session by the name a human would type. Matches the real
+   * session name first, then the fallback handle, then a unique prefix — so
+   * `msg traffic-12`, `msg ada` and `msg foot` all work.
+   */
+  findByName(query: string, nowMs: number): Session | null {
+    const live = this.liveSessions(nowMs);
+    const q = query.toLowerCase();
+    const exact = live.find((s) => s.name.toLowerCase() === q || s.handle.toLowerCase() === q);
+    if (exact) return exact;
+    const prefixed = live.filter(
+      (s) => s.name.toLowerCase().startsWith(q) || s.handle.toLowerCase().startsWith(q),
+    );
+    // Ambiguous is not a match: silently picking one would send to the wrong peer.
+    return prefixed.length === 1 ? (prefixed[0] ?? null) : null;
+  }
+
   unregister(sessionId: string): void {
     this.db.query(`DELETE FROM claims WHERE session_id = ?`).run(sessionId);
     this.db.query(`DELETE FROM sessions WHERE session_id = ?`).run(sessionId);
   }
 
-  post(handle: string, kind: MessageKind, body: string, nowMs: number): void {
+  /**
+   * Appends a message. `to` scopes delivery to one session; omit it to
+   * broadcast. Display names are captured now, not resolved later.
+   */
+  post(
+    handle: string,
+    kind: MessageKind,
+    body: string,
+    nowMs: number,
+    to?: { readonly sessionId: string; readonly name: string },
+  ): void {
+    const from = this.db
+      .query(`SELECT name, handle FROM sessions WHERE handle = ?`)
+      .get(handle) as { name: string; handle: string } | null;
+    const fromName = from ? displayName(from) : handle;
     this.db
-      .query(`INSERT INTO messages (ts_ms, handle, kind, body) VALUES (?, ?, ?, ?)`)
-      .run(nowMs, handle, kind, body);
+      .query(
+        `INSERT INTO messages (ts_ms, handle, kind, body, to_session, from_name, to_name)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(nowMs, handle, kind, body, to?.sessionId ?? "", fromName, to?.name ?? "");
     this.db
       .query(
         `DELETE FROM messages WHERE id <= (SELECT MAX(id) - ? FROM messages)`,
@@ -269,12 +353,20 @@ export class Store {
         .query(`SELECT handle, last_read_id FROM sessions WHERE session_id = ?`)
         .get(sessionId) as { handle: string; last_read_id: number } | null;
       if (!cur) return [];
+      // A directed message reaches ONLY its recipient; a broadcast reaches
+      // everyone but its sender. Filtering here rather than at render time is
+      // what makes "directed" real: an unaddressed peer never receives the row.
       const rows = this.db
         .query(
-          `SELECT id, ts_ms, handle, kind, body FROM messages
-             WHERE id > ? AND handle != ? ORDER BY id ASC`,
+          `SELECT id, ts_ms, handle, kind, body, to_session, from_name, to_name
+             FROM messages
+            WHERE id > ? AND handle != ?
+              AND (to_session = '' OR to_session = ?)
+            ORDER BY id ASC`,
         )
-        .all(cur.last_read_id, cur.handle) as Array<Record<string, string | number>>;
+        .all(cur.last_read_id, cur.handle, sessionId) as Array<
+        Record<string, string | number>
+      >;
       // Advance past every message in the range, including this session's own
       // filtered-out lines, or they are re-scanned on every turn forever.
       const maxId = this.db.query(`SELECT COALESCE(MAX(id), 0) AS m FROM messages`).get() as {
@@ -283,31 +375,30 @@ export class Store {
       this.db
         .query(`UPDATE sessions SET last_read_id = ? WHERE session_id = ?`)
         .run(maxId.m, sessionId);
-      return rows.map((r) => ({
-        id: Number(r["id"]),
-        tsMs: Number(r["ts_ms"]),
-        handle: String(r["handle"]),
-        kind: String(r["kind"]) as MessageKind,
-        body: String(r["body"]),
-      }));
+      return rows.map(toMessage);
     });
     return drain();
   }
 
-  /** Last few log lines regardless of cursor — the joining-a-room summary. */
-  recent(limit: number): Message[] {
+  /**
+   * Last few log lines regardless of cursor — the joining-a-room summary.
+   *
+   * `forSession` scopes it the same way `drainUnread` does, so a joining agent
+   * is not handed history addressed to someone else. Omit it for the CLI, where
+   * you are the operator and want the whole picture.
+   */
+  recent(limit: number, forSession?: string): Message[] {
+    // Bound, never interpolated: a session id reaching SQL as source text is a
+    // habit that eventually meets a value that isn't a UUID.
     const rows = this.db
-      .query(`SELECT id, ts_ms, handle, kind, body FROM messages ORDER BY id DESC LIMIT ?`)
-      .all(limit) as Array<Record<string, string | number>>;
-    return rows
-      .map((r) => ({
-        id: Number(r["id"]),
-        tsMs: Number(r["ts_ms"]),
-        handle: String(r["handle"]),
-        kind: String(r["kind"]) as MessageKind,
-        body: String(r["body"]),
-      }))
-      .reverse();
+      .query(
+        `SELECT id, ts_ms, handle, kind, body, to_session, from_name, to_name
+           FROM messages
+          WHERE ?1 IS NULL OR to_session = '' OR to_session = ?1
+          ORDER BY id DESC LIMIT ?2`,
+      )
+      .all(forSession ?? null, limit) as Array<Record<string, string | number>>;
+    return rows.map(toMessage).reverse();
   }
 
   claim(sessionId: string, path: string, nowMs: number): void {
@@ -354,6 +445,20 @@ export class Store {
       .run(cutoff);
     this.db.query(`DELETE FROM sessions WHERE last_seen_ms <= ?`).run(cutoff);
   }
+}
+
+function toMessage(r: Record<string, string | number>): Message {
+  // `from_name` is empty on rows written before names existed; the handle is the
+  // honest fallback rather than a blank sender.
+  const from = String(r["from_name"] ?? "");
+  return {
+    id: Number(r["id"]),
+    tsMs: Number(r["ts_ms"]),
+    from: from !== "" ? from : String(r["handle"]),
+    to: String(r["to_name"] ?? ""),
+    kind: String(r["kind"]) as MessageKind,
+    body: String(r["body"]),
+  };
 }
 
 function toClaim(r: Record<string, string | number>): Claim {
