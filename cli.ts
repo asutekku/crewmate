@@ -21,10 +21,19 @@ import { installedVersion, resolveProject } from "./core/repo.ts";
 import { listAgents } from "./core/agents.ts";
 import { refreshSummary, SUMMARY_TTL_MS } from "./core/summary.ts";
 import {
+  fit,
+  pad,
+  renderFileLine,
+  shortAge,
+  summarizeFiles,
+  terminalWidth,
+} from "./core/layout.ts";
+import {
   activityColour,
   bold,
   cyan,
   dim,
+  green,
   handleColour,
   red,
   rosterColours,
@@ -110,80 +119,106 @@ function who(): void {
     for (const stale of store.staleSummarySessions(now, SUMMARY_TTL_MS)) {
       refreshSummary(summaryWorkerPath(), stale.sessionId, stale.path, PROJECT.dbPath);
     }
-    console.log(bold(`${sessions.length} active agent(s) in ${PROJECT.name}:`));
-    for (const s of sessions) {
-      const paint = palette.get(displayName(s)) ?? handleColour(s.handle);
-      const age = now - s.lastSeenMs;
-      const where = showTree && s.worktree !== "" ? dim(` ${s.worktree.split("/").pop() ?? ""}`) : "";
-      const branch = s.branch !== "" ? dim(` (${s.branch})`) : "";
-      const seen = activityColour(age)(agoText(s.lastSeenMs, now));
-      const mine = claims.filter((c) => c.handle === s.handle);
-      // BEST AVAILABLE SOURCE, not all of them. The title and the summary below
-      // are both better descriptions than `intent`, which is guessed from a
-      // single prompt and gets it wrong in ways the other two cannot: a
-      // compaction summary took the slot on one live session, listing it as
-      // "<analysis> Let me chronologically work through this convers…". Where a
-      // title exists it carries the line, and `intent` is left to sessions that
-      // have none.
-      //
-      // With no stated task, nothing goes here: the `editing` line directly
-      // below already lists these exact files, so a summary would be a strict
-      // subset of the detail beneath it. Only a session holding NO files needs
-      // the explicit "(no stated task yet)".
-      const stated = s.title !== "" ? "" : s.intent;
-      const task = stated !== "" ? stated : mine.length > 0 ? "" : dim("(no stated task yet)");
-      const t = taskCounts.get(s.sessionId);
-      // No leading space: the separator between fields is added when the line is
-      // assembled, so a field that is present cannot smuggle in spacing that a
-      // field that is absent leaves behind.
-      const prog = t && t.open + t.done > 0 ? dim(`[${t.done}/${t.open + t.done}]`) : "";
-      // A blocked session is the one that wants your attention, so it reads red
-      // and outranks idle/busy — those describe the symptom, this the cause.
-      const state =
-        s.blocked !== ""
-          ? red(` ${s.blocked}`)
-          : s.status === "busy"
-            ? yellow(" busy")
-            : s.status === "idle"
-              ? dim(" idle")
-              : "";
-      // Only ever a warning, never a version number: the hash is meaningless to
-      // read, and the only actionable fact is "this one is behind — restart it".
-      const ver = versions.get(s.sessionId) ?? "";
-      const stale = current !== "" && ver !== "" && ver !== current ? yellow(" ⟲ old hooks") : "";
-      // Assembled from the fields that are actually present, rather than
-      // concatenated and then trimmed. A field's colour codes come BEFORE its
-      // text, so `.trim()` cannot reach a leading space tucked inside them —
-      // an empty task left "master)   [6/6]" with three spaces.
-      // Claude Code's own name for the conversation, on the headline where the
-      // guessed intent used to be — it is the label the user sees in their
-      // session list, so the roster and their windows agree. Quoted to mark it
-      // as a title rather than another status field.
-      const headline = s.title !== "" ? dim(`"${s.title}"`) : task;
-      const fields = [
-        `${paint(bold(displayName(s)))}${state}${stale}${where}${branch}`,
-        headline,
-        prog,
-      ].filter((f) => f !== "");
-      console.log(`  ${fields.join("  ")}  ${dim("·")} ${seen}`);
-      // What the session is doing NOW, which the title cannot say: a title is
-      // set from the opening subject and does not move as the work does.
-      if (s.summary !== "") console.log(`      ${cyan("doing")} ${s.summary}`);
+    // Paths held by two agents at once — needed per-row below, so the whole
+    // contested set is computed once rather than re-scanned inside the loop.
+    const contestedPaths = new Set([...counts].filter(([, n]) => n > 1).map(([p]) => p));
 
-      if (mine.length === 0) continue;
-      const shown = mine.slice(0, 6).map((c) => {
-        // Red is reserved for a path held twice IN ONE TREE — the only case
-        // where uncommitted work is about to be lost. The same path in two
-        // worktrees is two different files and stays quiet.
-        const holders = claims.filter((k) => k.path === c.path);
-        const clash = holders.length > 1 && new Set(holders.map((k) => k.worktree)).size === 1;
-        return clash ? red(`${c.path} ⚠`) : dim(c.path);
-      });
-      const more = mine.length > shown.length ? dim(` +${mine.length - shown.length} more`) : "";
-      // A PLAIN separator. Colouring it wraps the comma and space in reset codes
-      // between two already-coloured paths, and a terminal that folds the line
-      // there can eat the space — the observed symptom was "topic.ts,.claude/…".
-      console.log(`      ${dim("editing")} ${shown.join(", ")}${more}`);
+    // MOST RECENTLY ACTIVE FIRST. Start order put whoever launched first at the
+    // top, which is never the one you are looking for; the agents doing
+    // something right now are.
+    const ordered = [...sessions].sort((a, b) => b.lastSeenMs - a.lastSeenMs);
+    // Grouped by tree, main tree first, so a worktree is labelled ONCE in a
+    // heading instead of repeating "Traffic (master)" on every row. Only the
+    // exception needs naming — and the old all-or-nothing `showTree` printed the
+    // main tree on all six same-tree rows the moment a single worktree existed.
+    // The MAIN tree is the one the most agents are in, not the one this command
+    // happens to be run from: grouping against the caller's cwd would relabel
+    // every row depending on which terminal typed `who`, so the same roster
+    // would read differently from a worktree than from the checkout.
+    const treeCounts = new Map<string, number>();
+    for (const s of ordered) treeCounts.set(s.worktree, (treeCounts.get(s.worktree) ?? 0) + 1);
+    const mainTree = [...treeCounts].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
+
+    const groups = new Map<string, typeof ordered>();
+    for (const s of ordered) {
+      const key = showTree && s.worktree !== mainTree ? s.worktree : "";
+      const group = groups.get(key);
+      if (group) group.push(s);
+      else groups.set(key, [s]);
+    }
+    const sortedGroups = [...groups].sort(([a], [b]) => (a === "" ? -1 : b === "" ? 1 : 0));
+
+    const width = terminalWidth();
+    // One column wide enough for the longest name, capped so a single verbose
+    // name cannot squeeze the description column to nothing.
+    const nameW = Math.min(24, Math.max(...ordered.map((s) => [...displayName(s)].length)));
+    const AGE_W = 4;
+    // Where the description starts, and where every continuation line aligns:
+    // "  " + mark + " " + name + " " + age + "  "
+    const gutter = 2 + 1 + 1 + nameW + 1 + AGE_W + 2;
+    const descW = Math.max(20, width - gutter - 1);
+
+    // ROSTER-WIDE FACTS GO IN THE HEADER. "⟲ old hooks" was printed on all seven
+    // rows, which is one fact stated seven times, and it is a property of the
+    // install rather than of any agent.
+    const behind = ordered.filter((s) => {
+      const ver = versions.get(s.sessionId) ?? "";
+      return current !== "" && ver !== "" && ver !== current;
+    });
+    const treeNote = treeCounts.size > 1 ? ` · ${treeCounts.size} trees` : "";
+    console.log(bold(`${sessions.length} agents in ${PROJECT.name}${dim(treeNote)}`));
+    if (behind.length > 0) {
+      const which = behind.length === ordered.length ? "all" : `${behind.length}`;
+      console.log(dim(`  ⟲ ${which} running older hooks — restart to pick up changes`));
+    }
+
+    for (const [tree, group] of sortedGroups) {
+      console.log("");
+      if (tree !== "") {
+        const leaf = tree.split("/").pop() ?? tree;
+        const branch = group[0]?.branch ?? "";
+        console.log(dim(`  worktree ${leaf}${branch !== "" ? ` (${branch})` : ""}`));
+      }
+      for (const s of group) {
+        const paint = palette.get(displayName(s)) ?? handleColour(s.handle);
+        // A filled dot for busy, hollow for idle: state reads as a SHAPE at the
+        // start of the line, so the eye finds the working agents without parsing
+        // a word out of the middle of each row.
+        const mark = s.blocked !== "" ? red("●") : s.status === "busy" ? green("●") : dim("○");
+        const seen = activityColour(now - s.lastSeenMs)(pad(shortAge(s.lastSeenMs, now), AGE_W));
+        const t = taskCounts.get(s.sessionId);
+        const prog = t && t.open + t.done > 0 ? dim(` [${t.done}/${t.open + t.done}]`) : "";
+
+        // BEST AVAILABLE SOURCE, not all of them. The title is a better
+        // description than `intent`, which is guessed from a single prompt and
+        // gets it wrong in ways a title cannot: a compaction summary took the
+        // slot on one live session, listing it as "<analysis> Let me
+        // chronologically work through this convers…".
+        const headline = s.title !== "" ? s.title : s.intent;
+        const desc =
+          headline !== ""
+            ? fit(headline, descW - [...prog].length)
+            : dim(fit("(no stated task)", descW));
+        console.log(`  ${mark} ${paint(bold(pad(displayName(s), nameW)))} ${seen}  ${desc}${prog}`);
+
+        // A blocked session is the one that wants attention, so it gets its own
+        // line in red rather than a word buried in the row above.
+        if (s.blocked !== "") console.log(`${" ".repeat(gutter)}${red(fit(s.blocked, descW))}`);
+        // What the session is doing NOW, which the title cannot say: a title is
+        // set from the opening subject and does not move as the work does.
+        if (s.summary !== "") console.log(`${" ".repeat(gutter)}${cyan(fit(s.summary, descW))}`);
+
+        const mine = claims.filter((c) => c.handle === s.handle).map((c) => c.path);
+        if (mine.length === 0) continue;
+        const pieces = summarizeFiles(mine, { contested: contestedPaths });
+        if (pieces.length === 0) continue;
+        // Red marks ONLY a path two agents hold at once — the single entry here
+        // that needs a decision. Everything else is dim, so the line reads as
+        // context until something on it is actually contested.
+        const line = renderFileLine(pieces, descW - 2, { contested: red, normal: dim });
+        if (line === "") continue;
+        console.log(`${" ".repeat(gutter)}${dim("✎")} ${line}`);
+      }
     }
 
     // ONE TREE OR TWO is the whole question. Two agents editing one path in one
@@ -208,20 +243,25 @@ function who(): void {
       note: string,
     ): void => {
       for (const { path, holders } of group) {
+        // Two lines rather than one: path, then holders indented under it. The
+        // single-line form reached 103 characters and wrapped, which put the
+        // agent names on a ragged continuation exactly where the eye is looking
+        // for them.
         const who = holders.map((c) => handleColour(c.handle)(claimName(c)));
-        console.log(`    ${paint(path)} ${dim("—")} ${who.join(dim(", "))} ${dim(note)}`);
+        console.log(`    ${paint(fit(path, width - 6))}`);
+        console.log(`      ${who.join(dim(", "))} ${dim(note)}`);
       }
     };
 
     if (sameTree.length > 0) {
       console.log();
       console.log(red(`⚠ ${sameTree.length} file(s) held by two agents in ONE tree:`));
-      show(sameTree, (s) => s, "(uncommitted work would collide)");
+      show(sameTree, (s) => s, "— uncommitted work would collide");
     }
     if (crossTree.length > 0) {
       console.log();
       console.log(dim(`${crossTree.length} file(s) edited in separate worktrees:`));
-      show(crossTree, dim, "(different checkouts — merge later)");
+      show(crossTree, dim, "— different checkouts, merge later");
     }
   });
 }
