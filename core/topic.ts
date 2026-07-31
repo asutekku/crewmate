@@ -60,6 +60,13 @@ const RESERVED_ALIASES = /^(?:human|user|operator|everyone|all|none|system|claud
  * type it into `msg`, it is frozen into every message that agent sends, and it
  * appears on the board after the session is gone. An intent that is wrong is
  * noise for one session; a name that is wrong misroutes messages.
+ *
+ * ONE WORD, ALWAYS. A name with a space is not addressable and not readable:
+ * `msg water dynamic "..."` parses as a message to `water` with a stray
+ * argument, and on the roster `Water Dynamic — Keeper of Wet Things` gives a
+ * reader no way to see where the name stops and the role starts. The role is
+ * the field for several words, and it is unrestricted precisely because it is
+ * only ever read.
  */
 export function validateAlias(raw: string): { ok: true; alias: string } | { ok: false; why: string } {
   const alias = raw.trim().replace(/\s+/g, " ");
@@ -67,11 +74,23 @@ export function validateAlias(raw: string): { ok: true; alias: string } | { ok: 
   if ([...alias].length > ALIAS_MAX) {
     return { ok: false, why: `a name must be ${ALIAS_MAX} characters or fewer` };
   }
+  // Checked BEFORE the character class so the reason names the real problem.
+  // The generic "letters, digits, - and _ only" is true but unhelpful here: it
+  // does not say what to do, and the repair is always the same.
+  if (alias.includes(" ")) {
+    return {
+      ok: false,
+      why:
+        `a name must be one word — peers type it at \`msg\`, and "${alias}" would ` +
+        `read as two arguments. Try "${alias.replace(/ /g, "-")}", or put the ` +
+        `several-word version in your role with \`call-you\`.`,
+    };
+  }
   // Letters, digits, and the two separators a name actually wants. Excludes the
   // quotes and backticks that would break the shell line a peer copies to reply,
   // and the control characters that would let a name rewrite a roster line.
-  if (!/^[A-Za-z0-9][A-Za-z0-9 _-]*$/.test(alias)) {
-    return { ok: false, why: "letters, digits, spaces, - and _ only, starting with a letter or digit" };
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(alias)) {
+    return { ok: false, why: "letters, digits, - and _ only, starting with a letter or digit" };
   }
   if (RESERVED_ALIASES.test(alias)) return { ok: false, why: `"${alias}" is reserved` };
   if (SENSITIVE.test(alias)) return { ok: false, why: "that looks like a credential" };

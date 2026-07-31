@@ -128,7 +128,9 @@ export function pickName(taken: ReadonlySet<string>): string {
  * something from a minion asks the PARENT.
  */
 export function minionName(parent: string, seq: number): string {
-  const owner = titleCase(parent);
+  // `nameCase`, not `titleCase`: the owner's name has to stay recognisable as
+  // the name it is, and the roster indents this directly under it.
+  const owner = nameCase(parent);
   // `Chris'` rather than `Chris's`, which is the one case where the rule is not
   // just "add apostrophe-s". Nothing in the pool ends in s today; names can be
   // chosen freely, so it is handled rather than assumed away.
@@ -137,8 +139,11 @@ export function minionName(parent: string, seq: number): string {
 }
 
 export function fullName(name: string, role: string, slug: string): string {
+  // The two halves take DIFFERENT casers, which is the whole point of the split:
+  // the suffix is prose and reads better with spaces (`Water Dynamic`), the name
+  // must stay typeable and keeps its separator (`Water-Dynamic`).
   const suffix = role.trim() !== "" ? role.trim() : titleCase(slug);
-  const given = titleCase(name);
+  const given = nameCase(name);
   if (suffix === "" || suffix.toLowerCase() === given.toLowerCase()) return given;
   return `${given} — ${suffix}`;
 }
@@ -146,10 +151,15 @@ export function fullName(name: string, role: string, slug: string): string {
 /**
  * `terrain-perf` -> `Terrain Perf`, without destroying what is already there.
  *
+ * FOR PROSE — the role half of a roster line, where a slug is standing in for
+ * words. It replaces separators with spaces, so it must NOT be used on a name:
+ * `water-dynamic` would come back as `Water Dynamic`, which is exactly the
+ * unaddressable two-word name that validation now refuses. Use `nameCase`.
+ *
  * Capitalises INITIALS ONLY and leaves the rest of each word alone, because
  * lowercasing first would flatten the acronyms that actually appear here:
- * `a11y`, `R4 core`, `GPU splat`. A name is not worth being clever about, but
- * it is worth not mangling.
+ * `a11y`, `GPU splat`. A name is not worth being clever about, but it is worth
+ * not mangling.
  */
 export function titleCase(slug: string): string {
   return slug
@@ -157,4 +167,15 @@ export function titleCase(slug: string): string {
     .filter((w) => w !== "")
     .map((w) => (w[0] ?? "").toUpperCase() + w.slice(1))
     .join(" ");
+}
+
+/**
+ * `water-dynamic` -> `Water-Dynamic`. Capitalisation only; the separator stays.
+ *
+ * FOR NAMES, which are one word and must survive being read off the roster and
+ * typed back at `msg`. `titleCase` would turn the hyphen into a space and hand
+ * a peer something that no longer resolves.
+ */
+export function nameCase(name: string): string {
+  return name.replace(/(^|[-_])([a-z])/g, (_m, sep: string, ch: string) => sep + ch.toUpperCase());
 }

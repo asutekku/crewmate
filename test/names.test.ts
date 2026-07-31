@@ -8,7 +8,7 @@
 
 import { describe, expect, test } from "bun:test";
 
-import { fullName, GIVEN_NAMES, pickName, titleCase } from "../core/names.ts";
+import { fullName, GIVEN_NAMES, nameCase, pickName, titleCase } from "../core/names.ts";
 import { validateAlias, validateRole } from "../core/topic.ts";
 
 describe("the name pool", () => {
@@ -84,6 +84,51 @@ describe("titleCase", () => {
   test("survives empty and separator-only input", () => {
     expect(titleCase("")).toBe("");
     expect(titleCase("---")).toBe("");
+  });
+});
+
+/**
+ * Two casers, because the roster line has two halves with opposite needs.
+ *
+ * The ROLE half is prose and reads better as words. The NAME half is what a
+ * peer types at `msg`, so its separator is load-bearing — `titleCase` on a name
+ * hands back `Water Dynamic`, the exact unaddressable two-word form that
+ * `validateAlias` now refuses.
+ */
+describe("nameCase", () => {
+  test("capitalises without replacing the separator", () => {
+    expect(nameCase("water-dynamic")).toBe("Water-Dynamic");
+    expect(nameCase("terrain_perf")).toBe("Terrain_Perf");
+    expect(nameCase("hopper")).toBe("Hopper");
+  });
+
+  test("what it returns is still a legal name", () => {
+    // The property that matters: a name read off the roster can be typed back.
+    for (const n of ["water-dynamic", "terrain_perf", "hopper", "a11y", "agent2"]) {
+      const shown = nameCase(n);
+      expect(shown).not.toMatch(/\s/);
+      expect(validateAlias(shown).ok).toBe(true);
+    }
+  });
+
+  test("does NOT lowercase what is already there", () => {
+    expect(nameCase("GPU-splat")).toBe("GPU-Splat");
+    expect(nameCase("a11y")).toBe("A11y");
+  });
+
+  test("the two casers disagree exactly where they should", () => {
+    // Same input, different jobs — stated once so neither drifts into the other.
+    expect(titleCase("water-dynamic")).toBe("Water Dynamic"); // role: prose
+    expect(nameCase("water-dynamic")).toBe("Water-Dynamic"); // name: typeable
+    expect(fullName("water-dynamic", "Keeper of Wet Things", "")).toBe(
+      "Water-Dynamic — Keeper of Wet Things",
+    );
+    // …and a handle standing in for a missing role still reads as words.
+    expect(fullName("turing", "", "water-dynamic")).toBe("Turing — Water Dynamic");
+  });
+
+  test("survives empty input", () => {
+    expect(nameCase("")).toBe("");
   });
 });
 

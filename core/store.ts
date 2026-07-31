@@ -161,15 +161,21 @@ export interface Session {
  * the third is not, which is why it is last.
  */
 export function displayName(s: Pick<Session, "name" | "handle"> & { readonly alias?: string }): string {
+  // A stored name with a space cannot be typed at `msg`, so it is repaired on
+  // the way out rather than shown. Names are validated at both the CLI and
+  // `setAlias`, so this only catches rows written before that was true — but a
+  // roster that shows an unaddressable name is worse than one that shows a
+  // hyphenated version of it, because the peer will try to use it.
+  const hyphenate = (v: string): string => (v.includes(" ") ? v.replace(/\s+/g, "-") : v);
   // `alias` is optional in the SIGNATURE only, because `post` and the claim
   // helpers pass a narrower shape that never carried one. A `Session` always
   // has the field.
-  if (s.alias !== undefined && s.alias !== "") return s.alias;
+  if (s.alias !== undefined && s.alias !== "") return hyphenate(s.alias);
   // The GIVEN NAME beats Claude Code's `traffic-XX`, which is the reverse of
   // what this did before. That label is not stable — one conversation carried
   // three of them in an afternoon — so preferring it made every peer reference
   // and every frozen log line a moving target.
-  return s.handle !== "" ? s.handle : s.name;
+  return hyphenate(s.handle !== "" ? s.handle : s.name);
 }
 
 /**
@@ -773,6 +779,11 @@ export class Store {
    * ones, and it matches how handles are recycled.
    */
   setAlias(sessionId: string, alias: string, nowMs: number): string | null {
+    // A LAST LINE, not the only one: `validateAlias` gives the agent a reason it
+    // can act on, and this makes an unaddressable name unrepresentable however
+    // it was reached. A stored space is not a cosmetic problem — `msg water
+    // dynamic` resolves to nobody, so the name silently stops working.
+    if (alias.includes(" ")) return null;
     const claim = this.db.transaction((): string | null => {
       const taken = this.db
         .query(

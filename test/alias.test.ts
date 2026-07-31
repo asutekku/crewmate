@@ -37,17 +37,64 @@ afterEach(() => {
 
 describe("validateAlias", () => {
   test("accepts the names an agent would actually pick", () => {
-    for (const name of ["tooling", "terrain-perf", "water_sim", "R4 core", "a11y", "agent2"]) {
+    for (const name of ["tooling", "terrain-perf", "water_sim", "r4core", "a11y", "agent2"]) {
       const r = validateAlias(name);
       expect(r.ok).toBe(true);
       if (r.ok) expect(r.alias).toBe(name);
     }
   });
 
-  test("trims and collapses whitespace rather than refusing", () => {
-    const r = validateAlias("  terrain   perf  ");
+  test("trims surrounding whitespace rather than refusing", () => {
+    const r = validateAlias("  terrain-perf  ");
     expect(r.ok).toBe(true);
-    if (r.ok) expect(r.alias).toBe("terrain perf");
+    if (r.ok) expect(r.alias).toBe("terrain-perf");
+  });
+
+  /**
+   * A name is ONE WORD, because it is the thing peers type.
+   *
+   * `msg water dynamic "…"` parses as a message to `water` with a stray
+   * argument, so a name with a space does not merely look odd — it silently
+   * stops resolving. And on the roster `Water Dynamic — Keeper of Wet Things`
+   * gives a reader no way to see where the name ends and the role begins.
+   */
+  describe("one word only", () => {
+    test("refuses a name with a space", () => {
+      for (const bad of ["water dynamic", "R4 core", "terrain   perf"]) {
+        expect(validateAlias(bad).ok).toBe(false);
+      }
+    });
+
+    test("the reason says what to type instead", () => {
+      const r = validateAlias("water dynamic");
+      expect(r.ok).toBe(false);
+      // A refusal an agent cannot act on just gets retried with another space.
+      if (!r.ok) {
+        expect(r.why).toContain("water-dynamic");
+        expect(r.why).toContain("call-you");
+      }
+    });
+
+    test("the hyphenated repair the message suggests is itself accepted", () => {
+      // The advice has to be true, or it sends the agent round the loop again.
+      const r = validateAlias("water dynamic");
+      expect(r.ok).toBe(false);
+      if (!r.ok) {
+        const suggested = /"([a-z0-9-]+)"/.exec(r.why)?.[1] ?? "";
+        expect(suggested).toBe("water-dynamic");
+        expect(validateAlias(suggested).ok).toBe(true);
+      }
+    });
+
+    test("the store refuses one too, however it was reached", () => {
+      fresh((store) => {
+        const now = Date.now();
+        store.register("sess", "/tree", "master", now);
+        // `setAlias` is reachable without going through the CLI's validation.
+        expect(store.setAlias("sess", "water dynamic", now)).toBeNull();
+        expect(displayName(store.findBySession("sess")!)).not.toContain(" ");
+      });
+    });
   });
 
   test("refuses an empty name", () => {
@@ -67,17 +114,29 @@ describe("validateAlias", () => {
     expect(validateAlias("bell" + "\u0007").ok).toBe(false);
   });
 
-  test("whitespace is collapsed, so a newline cannot reach the roster intact", () => {
+  test("a newline cannot reach the roster intact", () => {
     // The danger was never the newline character, it was a newline SURVIVING
-    // into a roster line and splitting one agent into two. Collapsing runs of
-    // whitespace before the character check handles both the embedded case and
-    // the trailing one a heredoc or `$(cat file)` produces.
+    // into a roster line and splitting one agent into two. It used to collapse
+    // to a space and be accepted; now the space itself is refused, which lands
+    // in the same safe place by a shorter route. The PROPERTY is what matters:
+    // whatever comes back, no accepted name contains whitespace.
     const embedded = validateAlias("two\nlines");
-    expect(embedded.ok).toBe(true);
-    if (embedded.ok) expect(embedded.alias).toBe("two lines");
+    expect(embedded.ok).toBe(false);
+    // Surrounding whitespace is still trimmed rather than refused — a trailing
+    // newline is what `$(cat file)` and a heredoc produce, and refusing that
+    // would reject a name the agent typed correctly.
     const trailing = validateAlias("tooling\n");
     expect(trailing.ok).toBe(true);
     if (trailing.ok) expect(trailing.alias).toBe("tooling");
+  });
+
+  test("NOTHING accepted contains whitespace", () => {
+    // The invariant behind both rules above, stated once so a future relaxation
+    // of either has to break this line to get through.
+    for (const candidate of ["tooling", "two lines", "two\nlines", "  spaced  out ", "a\tb", "ok\n"]) {
+      const r = validateAlias(candidate);
+      if (r.ok) expect(r.alias).not.toMatch(/\s/);
+    }
   });
 
   test("refuses names reserved by the system", () => {

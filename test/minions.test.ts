@@ -49,9 +49,9 @@ describe("minionName", () => {
     expect(minionName("iris", 2)).toBe("Iris' Minion #2");
   });
 
-  test("a multi-word chosen name survives", () => {
-    // `validateAlias` permits spaces, so this is reachable.
-    expect(minionName("water dynamic", 1)).toBe("Water Dynamic's Minion #1");
+  test("a hyphenated name keeps its shape", () => {
+    // Names are one word, so this is what a two-word idea actually looks like.
+    expect(minionName("water-dynamic", 1)).toBe("Water-Dynamic's Minion #1");
   });
 });
 
