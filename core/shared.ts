@@ -162,8 +162,15 @@ export function formatRoster(
     // moves as work happens rather than describing what was asked hours ago.
     const t = tasks?.get(p.sessionId);
     const prog = t && t.open + t.done > 0 ? ` [${t.done}/${t.open + t.done} tasks]` : "";
+    // The ROLE reaches peers, reversing an earlier call that kept it operator-
+    // only for fear that "Terrain Whisperer" reads as a claim of authority. The
+    // measured cost of withholding it was worse: agents write "adela is fixing
+    // this same bug" in their user-facing text, and the operator — reading eight
+    // windows — has no idea who adela is. The name is what an agent TYPES, so it
+    // stays first and bare; the role is context in parentheses.
+    const role = p.role !== "" ? ` (${p.role})` : "";
     lines.push(
-      `  ${displayName(p)}${where}${branch}${doing}${prog} (${state}last active ${agoText(p.lastSeenMs, nowMs)})`,
+      `  ${displayName(p)}${role}${where}${branch}${doing}${prog} (${state}last active ${agoText(p.lastSeenMs, nowMs)})`,
     );
     // Operator view only. The title identifies the conversation the way the user
     // sees it listed; the summary says what that conversation is doing NOW,

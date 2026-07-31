@@ -62,9 +62,13 @@ const HOW_TO_RECORD =
 const HOW_TO_BE_CALLED =
   "The name above is what peers type at `msg`, and it survives a restart. You " +
   'can say what you ARE with `cli.ts call-you "<role>"` — "Tooling Master", ' +
-  '"Keeper of Wet Things" — which the operator reads on the roster; or take a ' +
-  'different name with `cli.ts call-me "<name>"`. Both optional. Your name stays ' +
-  "put while the role changes, so a role that moves still reads as the same agent.";
+  '"Keeper of Wet Things" — which appears beside your name on the roster; or take ' +
+  'a different name with `cli.ts call-me "<name>"`. Both optional. Your name stays ' +
+  "put while the role changes, so a role that moves still reads as the same agent." +
+  "\n\nWHEN YOU MENTION A PEER IN TEXT THE USER READS, give their role too: " +
+  '"adela (the road-network agent) is fixing this" rather than "adela is fixing ' +
+  'this". The user is looking at eight windows and a bare given name identifies ' +
+  "nobody — the roster above lists each peer's role in parentheses after its name.";
 
 async function main(): Promise<void> {
   const payload = await readPayload();

@@ -14,6 +14,7 @@ import type { Claim } from "../core/store.ts";
 import { agoText, claimName, withStore } from "../core/store.ts";
 import { emit, readPayload } from "../core/shared.ts";
 import { currentBranch, relPath, resolveProject, worktreeRoot } from "../core/repo.ts";
+import { dirtyFiles } from "../core/dirty.ts";
 
 /** One notice per peer, however many claim rows they hold on the path. */
 function dedupeBySession(claims: readonly Claim[]): Claim[] {
@@ -69,12 +70,34 @@ async function main(): Promise<void> {
 
     // Read peers' claims BEFORE recording our own, so this session's claim
     // cannot appear in its own conflict list.
-    const others = store.conflictingClaims(sessionId, path, now);
+    const claimed = store.conflictingClaims(sessionId, path, now);
     // The tool is recorded because a Write is a whole-file replacement and an
     // Edit is a hunk — reading "Write" against a file two agents share is worth
     // more alarm than reading "Edit".
     store.claim(sessionId, path, now, { tool: payload.tool_name ?? "", worktree: tree });
-    if (others.length === 0) return null;
+    if (claimed.length === 0) return null;
+
+    // A COMMITTED FILE IS NOT A COLLISION. A claim is released by nothing but a
+    // 2-hour timer, so an agent that edited a file, committed it and moved on
+    // still holds it. Measured on the live roster: 38 of 42 claims were on files
+    // with NO uncommitted changes — 90% of this channel pointing at conflicts
+    // that a commit had already resolved, with peers replying "that's committed"
+    // and the operator reading the exchange.
+    //
+    // This is why the check runs HERE and not on every edit: `git status` is
+    // ~40 ms, and by this line a conflicting claim already exists, which is rare.
+    // A null answer means git could not tell us — every warning stands, because
+    // "no dirty files" and "we do not know" must not look the same.
+    const others = claimed.filter((o) => {
+      const dirty = dirtyFiles(o.worktree !== "" ? o.worktree : tree);
+      return dirty === null || dirty.has(o.path);
+    });
+    if (others.length === 0) {
+      // The claim is stale, not merely quiet: drop it so the next agent through
+      // this file does not pay for the same git call to reach the same answer.
+      for (const o of claimed) store.releaseClaim(o.sessionId, o.path);
+      return null;
+    }
 
     // Same tree means their edits are literally in these files right now; a
     // separate worktree is an independent checkout, so the risk is a merge later

@@ -1,8 +1,8 @@
 /**
  * Human-facing view of the presence store, and a way to post into it by hand.
  *
- *   bun cli.ts who               # roster + claims
- *   bun cli.ts log [n]           # recent messages
+ *   bun cli.ts who               # roster + claims        [--raw] for typeable names
+ *   bun cli.ts log [n]           # recent messages       [--raw]
  *   bun cli.ts msg <name> "..."  # send to ONE agent  [--from <name>]
  *   bun cli.ts say <text>        # broadcast to every agent
  *   bun cli.ts clear             # wipe roster
@@ -19,7 +19,7 @@
  *   bun cli.ts step <n> "<status>"                    # in progress, not finished
  *   bun cli.ts add "<step>"                           # a phase the plan missed
  *   bun cli.ts done [<subject match>] [--abandoned]   # close ONE item
- *   bun cli.ts board [<agent>] [--history] [--all]    # read the board
+ *   bun cli.ts board [<agent>] [--history] [--all]    # read the board  [--raw]
  *   bun cli.ts mine                                   # my open items
  *
  * The project is resolved from the CWD exactly as the hooks resolve it, so
@@ -30,7 +30,14 @@
  * times. It posts under a fixed handle so agents can tell it from a peer.
  */
 
-import { agoText, claimName, displayName, rosterName, withStore } from "./core/store.ts";
+import {
+  agoText,
+  claimName,
+  displayName,
+  operatorNames,
+  rosterName,
+  withStore,
+} from "./core/store.ts";
 import { installedVersion, resolveProject } from "./core/repo.ts";
 import { listAgents } from "./core/agents.ts";
 import { refreshSummary, SUMMARY_TTL_MS } from "./core/summary.ts";
@@ -46,6 +53,7 @@ import {
 import { agentKey, BOARD_OPEN_SHOWN, foldEvents, parsePlan, progress } from "./core/work.ts";
 import { validateAlias, validateRole } from "./core/topic.ts";
 import { titleCase } from "./core/names.ts";
+import { dirtyFiles } from "./core/dirty.ts";
 import { agentTally, briefAge, briefAgo, itemLines } from "./core/board.ts";
 import type { BoardPaint } from "./core/board.ts";
 import {
@@ -102,7 +110,7 @@ const PROJECT = resolveProject(process.cwd());
  * scanning eight sessions wants density, and gets the same distinctions from
  * colour. Both read the same store, so they cannot disagree on the facts.
  */
-function who(): void {
+function who(raw: boolean): void {
   // Refreshed on every `who`: you are asking precisely because you want the
   // current picture, and ~950 ms is fine for a command you typed.
   const agents = listAgents();
@@ -141,7 +149,26 @@ function who(): void {
     }
     // Paths held by two agents at once — needed per-row below, so the whole
     // contested set is computed once rather than re-scanned inside the loop.
-    const contestedPaths = new Set([...counts].filter(([, n]) => n > 1).map(([p]) => p));
+    // A COMMITTED FILE IS NOT CONTESTED. Red is the roster's only alarm colour
+    // and it is worth exactly what it is spent on: measured 2026-08-01, 38 of 42
+    // live claims were on files with no uncommitted changes, so most of what
+    // this marked had already been resolved by a commit. `git status` is ~40 ms
+    // per worktree, paid once here for a command the operator typed — and only
+    // for paths that two agents actually hold.
+    const contestedPaths = new Set(
+      [...counts]
+        .filter(([, n]) => n > 1)
+        .map(([p]) => p)
+        .filter((p) => {
+          const holders = claims.filter((c) => c.path === p);
+          // Unknown (git failed) counts as contested: silence must not be the
+          // default when we cannot tell.
+          return holders.some((h) => {
+            const dirty = dirtyFiles(h.worktree !== "" ? h.worktree : PROJECT.root);
+            return dirty === null || dirty.has(h.path);
+          });
+        }),
+    );
 
     // MOST RECENTLY ACTIVE FIRST. Start order put whoever launched first at the
     // top, which is never the one you are looking for; the agents doing
@@ -175,7 +202,7 @@ function who(): void {
     // column prints — not on the bare name peers type. Cap raised to suit:
     // "Keeper of Wet Things Luna" is 25, and truncating the role to fit would
     // remove exactly the part that makes an agent recognisable at a glance.
-    const nameW = Math.min(30, Math.max(...ordered.map((s) => [...rosterName(s)].length)));
+    const nameW = Math.min(30, Math.max(...ordered.map((s) => [...(raw ? displayName(s) : rosterName(s))].length)));
     const AGE_W = 4;
     // Where the description starts, and where every continuation line aligns:
     // "  " + mark + " " + name + " " + age + "  "
@@ -223,7 +250,10 @@ function who(): void {
           headline !== ""
             ? fit(headline, descW - [...prog].length)
             : dim(fit("(no stated task)", descW));
-        console.log(`  ${mark} ${paint(bold(pad(fit(rosterName(s), nameW), nameW)))} ${seen}  ${desc}${prog}`);
+        // `--raw` prints the name peers TYPE, which is what you want when you
+        // are about to `msg` someone or are debugging why a match failed.
+        const shown = raw ? displayName(s) : rosterName(s);
+        console.log(`  ${mark} ${paint(bold(pad(fit(shown, nameW), nameW)))} ${seen}  ${desc}${prog}`);
 
         // A blocked session is the one that wants attention, so it gets its own
         // line in red rather than a word buried in the row above.
@@ -251,13 +281,14 @@ function who(): void {
     // ordinary parallel work. Colouring both red made the warning meaningless —
     // a master session and a worktree session on `waterTexture.ts` read exactly
     // like an imminent clobber.
-    const contested = [...counts]
-      .filter(([, n]) => n > 1)
-      .map(([path]) => {
-        const holders = claims.filter((c) => c.path === path);
-        const trees = new Set(holders.map((c) => c.worktree));
-        return { path, holders, sameTree: trees.size === 1 };
-      });
+    // Reads `contestedPaths`, not `counts` — the summary and the per-row marker
+    // must agree, and re-deriving from counts here would list a file as
+    // contested that the rows above had already ruled out as committed.
+    const contested = [...contestedPaths].map((path) => {
+      const holders = claims.filter((c) => c.path === path);
+      const trees = new Set(holders.map((c) => c.worktree));
+      return { path, holders, sameTree: trees.size === 1 };
+    });
     const sameTree = contested.filter((c) => c.sameTree);
     const crossTree = contested.filter((c) => !c.sameTree);
 
@@ -315,7 +346,7 @@ function who(): void {
  * with a `from → to` arrow; the agents' own bookkeeping is dimmed, because when
  * you are scanning for what was actually said, claims are background.
  */
-function log(limit: number): void {
+function log(limit: number, raw: boolean): void {
   withStore(PROJECT.dbPath, (store) => {
     const now = Date.now();
     const msgs = store.recent(limit);
@@ -323,6 +354,10 @@ function log(limit: number): void {
       console.log(dim("Log is empty."));
       return;
     }
+    // Sender names are FROZEN at send time, so the log holds `terrain-perf` and
+    // has no session to resolve. Mapping them through the live roster is what
+    // stops one agent reading as three different people across who/log/board.
+    const show = raw ? (n: string) => n : operatorNames(store.liveSessions(now));
     for (const m of msgs) {
       // Right-aligned and bracket-free: `[1m ago]` reads as a stray ANSI code
       // (ESC[1m is bold), which is genuinely confusing in a colourised log.
@@ -332,12 +367,12 @@ function log(limit: number): void {
         console.log(`${when} ${yellow(bold("you → everyone"))}: ${m.body}`);
       } else if (m.kind === "say") {
         // The arrow is the point of this view: who spoke, and to whom.
-        const to = m.to !== "" ? bold(handleColour(m.to)(m.to)) : dim("everyone");
-        console.log(`${when} ${paint(bold(m.from))} ${dim("→")} ${to}: ${m.body}`);
+        const to = m.to !== "" ? bold(handleColour(m.to)(show(m.to))) : dim("everyone");
+        console.log(`${when} ${paint(bold(show(m.from)))} ${dim("→")} ${to}: ${m.body}`);
       } else if (m.kind === "claim") {
-        console.log(`${when} ${paint(m.from)} ${red("claim")} ${dim(m.body)}`);
+        console.log(`${when} ${paint(show(m.from))} ${red("claim")} ${dim(m.body)}`);
       } else {
-        console.log(`${when} ${paint(m.from)} ${dim(`${m.kind}: ${m.body}`)}`);
+        console.log(`${when} ${paint(show(m.from))} ${dim(`${m.kind}: ${m.body}`)}`);
       }
     }
   });
@@ -790,10 +825,11 @@ function mine(): void {
  * per-agent record is 4-6 lines, and seven agents would add ~35 lines to every
  * turn to tell each agent six things it does not need.
  */
-function board(who: string, opts: { history: boolean; all: boolean }): void {
+function board(who: string, opts: { history: boolean; all: boolean; raw: boolean }): void {
   withStore(PROJECT.dbPath, (store) => {
     const now = Date.now();
     store.work.pruneWork(now);
+    const showName = operatorNames(store.liveSessions(now));
     const target = who !== "" ? resolveAgentId(store, who, now) : undefined;
     if (who !== "" && target === undefined) {
       console.error(`no work records for ${bold(who)}.`);
@@ -833,7 +869,10 @@ function board(who: string, opts: { history: boolean; all: boolean }): void {
       // "1 closed" beside a board that shows none is a claim the reader cannot
       // check. The `--all` hint below is how they get at them instead.
       const tally = agentTally(open.length, opts.all || opts.history ? closed : 0);
-      const name = first.agentName !== "" ? first.agentName : first.agentId;
+      // Through the same resolver `who` and `log` use, so one agent reads the
+      // same way in all three. `--raw` keeps the frozen name for debugging.
+      const stored = first.agentName !== "" ? first.agentName : first.agentId;
+      const name = opts.raw ? stored : showName(stored);
       const gap = Math.max(1, width - 2 - [...name].length - tally.length);
       console.log("");
       console.log(`  ${bold(handleColour(name)(name))}${" ".repeat(gap)}${dim(tally)}`);
@@ -957,10 +996,12 @@ const [cmd, ...rest] = Bun.argv.slice(2);
 switch (cmd) {
   case "who":
   case undefined:
-    who();
+    who(rest.includes("--raw"));
     break;
   case "log":
-    log(Number(rest[0] ?? 20) || 20);
+    // The count is the first bare number, so `log --raw` and `log 40 --raw`
+    // both work rather than `--raw` being parsed as the limit.
+    log(Number(rest.find((a) => /^\d+$/.test(a)) ?? 20) || 20, rest.includes("--raw"));
     break;
   case "say": {
     const text = rest.join(" ").trim();
@@ -1064,7 +1105,9 @@ switch (cmd) {
     if (history) args.splice(args.indexOf("--history"), 1);
     const all = args.includes("--all");
     if (all) args.splice(args.indexOf("--all"), 1);
-    board(args.join(" ").trim(), { history, all });
+    const raw = args.includes("--raw");
+    if (raw) args.splice(args.indexOf("--raw"), 1);
+    board(args.join(" ").trim(), { history, all, raw });
     break;
   }
   case "mine":

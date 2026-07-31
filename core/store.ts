@@ -167,6 +167,33 @@ export function displayName(s: Pick<Session, "name" | "handle"> & { readonly ali
  * that copied this three-word string would be quoting it at a command whose
  * validation rests on names having no spaces.
  */
+/**
+ * Names for the OPERATOR, resolved from whatever the caller has to hand.
+ *
+ * WHY THIS EXISTS: `who`, `log`, `board`, `files` and `blame` each had their own
+ * idea of what to print, so one agent appeared as "Tooling Master Hopper",
+ * "tooling" and "hopper" in three commands on one screen. Worse, `log` and
+ * `board` show names FROZEN at write time, so they cannot resolve a session at
+ * all — they hold a string and nothing else.
+ *
+ * So the lookup is by NAME, built once per command from the live roster, and it
+ * degrades to the name it was given. A frozen "terrain-perf" from an hour ago
+ * still resolves to "Terrain Whisperer Akari" while that agent is alive, and
+ * falls back to "terrain-perf" once it is gone — which is the honest answer.
+ */
+export function operatorNames(sessions: readonly Session[]): (name: string) => string {
+  const byName = new Map<string, string>();
+  for (const s of sessions) {
+    const full = rosterName(s);
+    // Every string that could have been frozen for this agent maps to one
+    // display: its chosen name, its given name, and Claude Code's own label.
+    for (const key of [s.alias, s.handle, s.name]) {
+      if (key !== "") byName.set(key.toLowerCase(), full);
+    }
+  }
+  return (name: string): string => byName.get(name.toLowerCase()) ?? name;
+}
+
 export function rosterName(s: Session): string {
   // THE GIVEN NAME IS ALWAYS THE NAME, even when the agent has chosen another —
   // otherwise a self-named agent reads "Tooling Master Tooling", the same word
@@ -1211,6 +1238,18 @@ export class Store {
       sessionId: String(r["session_id"]),
       lastMs: Number(r["last_ms"]),
     }));
+  }
+
+  /**
+   * Drops a claim whose file turned out to be committed.
+   *
+   * A claim means "my uncommitted work is in this file"; once it is committed
+   * that is false, and leaving the row costs every later agent a `git status`
+   * to rediscover the same thing. The EDIT HISTORY is untouched — the fact that
+   * they edited it stays true and is what `blame` reads.
+   */
+  releaseClaim(sessionId: string, path: string): void {
+    this.db.query(`DELETE FROM claims WHERE session_id = ? AND path = ?`).run(sessionId, path);
   }
 
   /** Claims on `path` held by OTHER live sessions. */
