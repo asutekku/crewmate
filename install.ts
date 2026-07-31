@@ -24,18 +24,19 @@ const BIN = `${HOME}/.claude/agent-presence/bin`;
 const SETTINGS = `${HOME}/.claude/settings.json`;
 const HERE = new URL(".", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
 
-/** Everything except this installer, which has no business running as a hook. */
-const SCRIPTS = [
-  "repo.ts",
-  "store.ts",
-  "shared.ts",
-  "session-start.ts",
-  "prompt-submit.ts",
-  "pre-edit.ts",
-  "turn-end.ts",
-  "session-end.ts",
-  "cli.ts",
-] as const;
+/**
+ * Everything except this installer, which has no business running as a hook.
+ *
+ * DISCOVERED, NOT LISTED: a hardcoded list silently drops a newly added module,
+ * and the failure lands at hook-run time as "Cannot find module" rather than at
+ * install time — which is exactly how `colour.ts` shipped broken once.
+ */
+async function scriptNames(): Promise<string[]> {
+  const { readdirSync } = await import("node:fs");
+  return readdirSync(HERE)
+    .filter((f) => f.endsWith(".ts") && f !== "install.ts")
+    .sort();
+}
 
 interface HookEntry {
   readonly matcher?: string;
@@ -84,10 +85,14 @@ async function writeSettings(s: Record<string, unknown>, backup: string | null):
 
 async function copyScripts(): Promise<void> {
   mkdirSync(BIN, { recursive: true });
-  for (const s of SCRIPTS) {
+  const scripts = await scriptNames();
+  for (const s of scripts) {
     await Bun.write(`${BIN}/${s}`, Bun.file(`${HERE}${s}`));
   }
-  console.log(`Copied ${SCRIPTS.length} scripts to ${BIN}`);
+  // Named, not just counted: a missing module is invisible in a bare number and
+  // only surfaces when a hook fails to import it.
+  console.log(`Copied ${scripts.length} scripts to ${BIN}`);
+  console.log(`  ${scripts.join(", ")}`);
 }
 
 async function install(force: boolean): Promise<void> {

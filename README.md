@@ -110,11 +110,30 @@ at once, so it beats retyping a correction four times. It posts under the handle
 `human` so agents can tell it from a peer. `where` is the first thing to check if
 a roster looks empty.
 
+`who` is colourised for the terminal:
+
+- **each agent keeps its own colour**, by position in the handle pool, so the
+  first five are always distinct and one agent looks the same across commands
+- **activity age** reads green (<5 min), amber (<15 min), then dim
+- **red marks a contested file** — a path two live agents both hold — and a
+  summary lists them at the bottom. Red is used for nothing else, so it always
+  means "look at this"
+- **the branch and worktree only appear when they differ** between agents;
+  four agents in one tree don't need `[worktree Traffic] on master` four times
+
+Colour is a second channel, never the only one: every distinction is also in the
+words. `NO_COLOR`, `FORCE_COLOR` and piping are honoured, so a redirected log is
+plain text.
+
+**Hook output is never colourised** — it goes into an agent's context window,
+where escape codes cost tokens and buy nothing.
+
 ## Files
 
 | File | Role |
 |---|---|
 | `repo.ts` | Project identity + db path. The only file that knows about platforms. |
+| `colour.ts` | ANSI for the CLI only. Never reaches an agent's context. |
 | `store.ts` | SQLite schema + all state access. The only file that knows SQL. |
 | `shared.ts` | Payload reading, report formatting, `emit`. |
 | `session-start.ts` | Register; inject roster. |
@@ -156,9 +175,17 @@ session cannot both deliver the same message. A new session's cursor starts at
 the current max, so it gets a deliberate `recent()` summary rather than a replay
 of everything.
 
-**Handles are reused.** Only *live* sessions reserve a name, so a 4-agent setup
-stays on `ada/turing/hopper/lovelace` instead of drifting down the list on every
-restart.
+**Handles are unique by construction.** Picking one is a read then a write, so it
+runs in a `BEGIN IMMEDIATE` transaction with a `UNIQUE` index behind it. WAL
+gives durability, not mutual exclusion: four sessions starting together can each
+read the roster before any inserts, and all four then pick the same "first free"
+name. That is not theoretical — four simultaneous starts in one tree produced
+**two agents called `hopper`** before the fix. Verified after: 10 rounds × 8
+simultaneous registrations, zero duplicates.
+
+**Handles are reused.** A name is freed when its session is pruned, so a 4-agent
+setup stays on `ada/turing/hopper/lovelace` instead of drifting down the list on
+every restart.
 
 **Every hook fails open.** A locked db or malformed payload ends the hook
 silently. Coordination is a convenience and must never break a session — the

@@ -36,8 +36,12 @@ export const STALE_MS = 90 * 60 * 1000; // 90 min
 /** Rows kept in the log; old ones are pruned so the file cannot grow forever. */
 const MAX_MESSAGES = 2000;
 
-/** Handles are for humans reading a roster, so they are short and pronounceable. */
-const HANDLES = [
+/**
+ * Handles are for humans reading a roster, so they are short and pronounceable.
+ * ORDER IS LOAD-BEARING: `colour.ts` colours an agent by its index here, so
+ * reordering this list reshuffles every agent's colour.
+ */
+export const HANDLES = [
   "ada",
   "turing",
   "hopper",
@@ -105,6 +109,9 @@ function openDb(dbPath: string): Database {
       started_ms   INTEGER NOT NULL,
       last_read_id INTEGER NOT NULL DEFAULT 0
     );
+    -- Two agents answering to one name makes the whole roster a lie, so the
+    -- constraint is enforced by the schema rather than trusted from the code.
+    CREATE UNIQUE INDEX IF NOT EXISTS sessions_handle ON sessions (handle);
     CREATE TABLE IF NOT EXISTS messages (
       id        INTEGER PRIMARY KEY AUTOINCREMENT,
       ts_ms     INTEGER NOT NULL,
@@ -166,29 +173,50 @@ export class Store {
    * Handle choice deliberately considers only LIVE sessions: reusing the handle
    * of an agent that died hours ago is what keeps a 4-agent setup on the first
    * four names instead of drifting down the list every restart.
+   *
+   * PICKING A HANDLE IS A READ THEN A WRITE, so it must be one transaction.
+   * Sessions start together — four terminals launched at once, or a `claude`
+   * command per pane — and WAL gives durability, not mutual exclusion: four
+   * processes can each read the roster before any of them inserts, and all four
+   * then pick the same "first free" name. Measured: 4 simultaneous starts in one
+   * tree produced TWO agents called `hopper`. BEGIN IMMEDIATE takes the write
+   * lock up front so the read and the insert cannot interleave, and the UNIQUE
+   * index makes a duplicate impossible rather than merely unlikely.
    */
   register(sessionId: string, worktree: string, branch: string, nowMs: number): string {
-    const existing = this.db
-      .query(`SELECT handle FROM sessions WHERE session_id = ?`)
-      .get(sessionId) as { handle: string } | null;
-    if (existing) {
-      this.db
-        .query(`UPDATE sessions SET last_seen_ms = ?, worktree = ?, branch = ? WHERE session_id = ?`)
-        .run(nowMs, worktree, branch, sessionId);
-      return existing.handle;
-    }
+    const claim = this.db.transaction((): string => {
+      const existing = this.db
+        .query(`SELECT handle FROM sessions WHERE session_id = ?`)
+        .get(sessionId) as { handle: string } | null;
+      if (existing) {
+        this.db
+          .query(
+            `UPDATE sessions SET last_seen_ms = ?, worktree = ?, branch = ? WHERE session_id = ?`,
+          )
+          .run(nowMs, worktree, branch, sessionId);
+        return existing.handle;
+      }
 
-    const taken = new Set(this.liveSessions(nowMs).map((s) => s.handle));
-    const handle =
-      HANDLES.find((h) => !taken.has(h)) ?? `agent${(taken.size + 1).toString()}`;
-    this.db
-      .query(
-        `INSERT INTO sessions
-           (session_id, handle, worktree, branch, intent, last_seen_ms, started_ms, last_read_id)
-         VALUES (?, ?, ?, ?, '', ?, ?, (SELECT COALESCE(MAX(id), 0) FROM messages))`,
-      )
-      .run(sessionId, handle, worktree, branch, nowMs, nowMs);
-    return handle;
+      // Every handle in the table, not just live ones: a stale row still owns
+      // its name until pruned, and the UNIQUE index would reject a reuse.
+      const taken = new Set(
+        (this.db.query(`SELECT handle FROM sessions`).all() as Array<{ handle: string }>).map(
+          (r) => r.handle,
+        ),
+      );
+      const handle = HANDLES.find((h) => !taken.has(h)) ?? `agent-${sessionId.slice(0, 6)}`;
+      this.db
+        .query(
+          `INSERT INTO sessions
+             (session_id, handle, worktree, branch, intent, last_seen_ms, started_ms, last_read_id)
+           VALUES (?, ?, ?, ?, '', ?, ?, (SELECT COALESCE(MAX(id), 0) FROM messages))`,
+        )
+        .run(sessionId, handle, worktree, branch, nowMs, nowMs);
+      return handle;
+    });
+    // IMMEDIATE, not DEFERRED: a deferred transaction still starts read-only and
+    // upgrades at the INSERT, which is exactly the window this must close.
+    return claim.immediate();
   }
 
   /**

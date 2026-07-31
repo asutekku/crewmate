@@ -67,11 +67,17 @@ export function formatRoster(
   nowMs: number,
   selfWorktree: string,
 ): string[] {
+  // With everyone in one tree there is nothing to distinguish, so the label is
+  // pure noise on every line; it earns its place only once trees actually differ.
+  const trees = new Set(peers.map((p) => p.worktree).filter((w) => w !== ""));
+  const treesDiffer = trees.size > 1 || (selfWorktree !== "" && !trees.has(selfWorktree));
+
   const lines: string[] = [];
   for (const p of peers) {
     // A branch is the tell that this is a git worktree at all; without one there
     // is only ever a single directory, so naming it adds nothing.
-    const elsewhere = p.worktree !== "" && p.worktree !== selfWorktree && p.branch !== "";
+    const elsewhere =
+      treesDiffer && p.worktree !== "" && p.worktree !== selfWorktree && p.branch !== "";
     const where = elsewhere ? ` [worktree ${p.worktree.split("/").pop() ?? p.worktree}]` : "";
     const branch = elsewhere ? ` on ${p.branch}` : "";
     // Quoted and attributed: the intent is the peer's USER's wording, not a
