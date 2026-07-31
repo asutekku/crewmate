@@ -518,3 +518,11 @@ the title half is free and independent.
   until `bun install.ts --force` copies it over. Testing a fix against
   `~/.claude/agent-presence/bin/cli.ts` before reinstalling exercises the OLD
   code, and it passes or fails for the wrong reason.
+
+## Planned
+
+- **[WORK_RECORDS_PLAN.md](WORK_RECORDS_PLAN.md)** — a shared board of what each
+  agent is doing, planning and breaking, as an append-only timeline. Nothing
+  implemented. Motivated by measurement: agents already write status reports, as
+  broadcasts with a median length of 681 characters, 15 of the last 40 over
+  1000 — while the `tasks` board built for exactly this has 0 rows.
