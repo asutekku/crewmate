@@ -8,6 +8,7 @@
  */
 
 import { unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { afterEach, describe, expect, test } from "bun:test";
 
 import { STALE_MS, withStore } from "./store.ts";
@@ -15,15 +16,22 @@ import { STALE_MS, withStore } from "./store.ts";
 let n = 0;
 const paths: string[] = [];
 
-/** A fresh db per test: shared state is what these tests are about. */
+/**
+ * A fresh db per test: shared state is what these tests are about.
+ *
+ * Created under the OS temp dir, never beside the source. These run in a repo
+ * several agents share, and a `-wal`/`-shm` pair left in the working tree shows
+ * up in everyone's `git status` as untracked litter — briefly did, before this.
+ */
 function fresh<T>(fn: (s: Parameters<Parameters<typeof withStore>[1]>[0]) => T): T {
-  const path = `${import.meta.dir}/.test-store-${process.pid}-${n++}.db`;
+  const path = `${tmpdir().replace(/\\/g, "/")}/presence-test-${process.pid}-${n++}.db`;
   paths.push(path);
   return withStore(path, fn);
 }
 
 afterEach(() => {
   for (const p of paths.splice(0)) {
+    // WAL leaves two sidecars beside the db; all three have to go.
     for (const suffix of ["", "-wal", "-shm"]) {
       try {
         unlinkSync(p + suffix);
