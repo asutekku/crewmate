@@ -50,6 +50,33 @@ function isContentless(phrase: string): boolean {
   return words.every((w) => FILLER.test(w));
 }
 
+/**
+ * Marks of pasted terminal output rather than a stated task: a shell prompt, a
+ * command line, an ANSI escape, a log timestamp, a diff or stack frame.
+ *
+ * Observed live 2026-07-31: pasting a `cli.ts log` transcript to ask about it
+ * set the roster's headline field to "Now it looks like this $ bun
+ * ~/.claude/agent-presence/bin/c…". Rejecting filler had correctly left the
+ * intent slot open, and the next prompt — the paste — took it.
+ *
+ * Checked against the WHOLE prompt, not its first clause, because the give-away
+ * is usually below the sentence that introduces it.
+ */
+const PASTED_OUTPUT = new RegExp(
+  [
+    String.raw`(?:^|\n)\s*\$ \S`, // a shell prompt followed by a command
+    String.raw`(?:^|\n)\s*(?:PS )?[A-Za-z]:\\[^\n]*>`, // a Windows prompt
+    "\u001b\\[", // an ANSI escape, written escaped: a raw ESC byte in source is
+    //         invisible and breaks every later text edit of this file
+    String.raw`(?:^|\n)\s*(?:at |\+\+\+ |--- |@@ )`, // stack frame or diff hunk
+    String.raw`\d{1,2}:\d{2}:\d{2}`, // a log timestamp
+    String.raw`\b\d+[mhd] ago\b`, // this log's own relative times
+  ].join("|"),
+);
+
+/** A line count past which this is a document being shown, not a task stated. */
+const PASTE_LINES = 4;
+
 export function summarize(text: string, maxLen: number): string {
   const flat = text.replace(/\s+/g, " ").trim();
   if (flat.length <= maxLen) return flat;
@@ -62,11 +89,23 @@ export function summarize(text: string, maxLen: number): string {
  * shaped, and rejects bare continuations ("go", "yes") that describe nothing.
  */
 export function topicOf(text: string): string {
+  // Tested against the RAW text, before whitespace is flattened: the marks of a
+  // paste are its line structure, and collapsing newlines destroys the evidence.
+  if (PASTED_OUTPUT.test(text)) return "";
+  if (text.split("\n").length > PASTE_LINES) return "";
+
   const flat = text.replace(/\s+/g, " ").trim();
   if (flat === "" || SENSITIVE.test(flat)) return "";
   // First sentence or clause: later ones are usually detail and caveats.
-  const head = flat.split(/(?<=[.!?])\s|[:;\n]/)[0] ?? flat;
-  const short = summarize(head, INTENT_MAX);
+  //
+  // A leading label ("goal:", "task:") is the exception — splitting on its colon
+  // leaves a one-word head that then fails the length gate, so a perfectly good
+  // prompt yields nothing. When the head is too short to be a topic, the text
+  // AFTER the separator is the topic.
+  const parts = flat.split(/(?<=[.!?])\s|[:;\n]/).filter((s) => s.trim() !== "");
+  const head = (parts[0] ?? flat).trim();
+  const usable = head.split(/\s+/).length >= 3 ? head : (parts.slice(1).join(" ").trim() || head);
+  const short = summarize(usable, INTENT_MAX);
   if (short.split(/\s+/).length < 3) return "";
   // A phrase of pure filler is worse than no phrase: it looks like a stated task
   // and outranks every honest fallback the roster could show instead.

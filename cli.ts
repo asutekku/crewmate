@@ -92,15 +92,12 @@ function who(): void {
       const where = showTree && s.worktree !== "" ? dim(` ${s.worktree.split("/").pop() ?? ""}`) : "";
       const branch = s.branch !== "" ? dim(` (${s.branch})`) : "";
       const seen = activityColour(age)(agoText(s.lastSeenMs, now));
-      // Same fallback as the agent-facing roster: with no stated task, what it
-      // holds is the truest available answer to "what is this one doing".
-      const held = claims.filter((c) => c.handle === s.handle);
-      const task =
-        s.intent !== ""
-          ? s.intent
-          : held.length > 0
-            ? dim(`working in ${held.slice(0, 2).map((c) => c.path).join(", ")}`)
-            : dim("(no stated task yet)");
+      const mine = claims.filter((c) => c.handle === s.handle);
+      // With no stated task, nothing goes here: the `editing` line directly
+      // below already lists these exact files, so a summary would be a strict
+      // subset of the detail beneath it. Only a session holding NO files needs
+      // the explicit "(no stated task yet)".
+      const task = s.intent !== "" ? s.intent : mine.length > 0 ? "" : dim("(no stated task yet)");
       const t = taskCounts.get(s.sessionId);
       const prog = t && t.open + t.done > 0 ? dim(` [${t.done}/${t.open + t.done}]`) : "";
       // A blocked session is the one that wants your attention, so it reads red
@@ -113,11 +110,13 @@ function who(): void {
             : s.status === "idle"
               ? dim(" idle")
               : "";
+      // Joined rather than concatenated, so an empty task does not leave a gap.
+      const head = `  ${paint(bold(displayName(s)))}${state}${where}${branch}`;
+      const mid = `${task}${prog}`.trim();
       console.log(
-        `  ${paint(bold(displayName(s)))}${state}${where}${branch}  ${task}${prog}  ${dim("·")} ${seen}`,
+        `${head}${mid === "" ? "" : `  ${mid}`}  ${dim("·")} ${seen}`,
       );
 
-      const mine = claims.filter((c) => c.handle === s.handle);
       if (mine.length === 0) continue;
       const shown = mine.slice(0, 6).map((c) => {
         // Red marks a path another live agent also holds — the one thing in this

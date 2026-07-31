@@ -106,15 +106,12 @@ export function formatRoster(
       treesDiffer && p.worktree !== "" && p.worktree !== selfWorktree && p.branch !== "";
     const where = elsewhere ? ` [worktree ${p.worktree.split("/").pop() ?? p.worktree}]` : "";
     const branch = elsewhere ? ` on ${p.branch}` : "";
-    // With no stated task, the files it holds are the honest answer to "what is
-    // this session doing" — and often a better one, since an intent is what was
-    // asked once while claims are what is happening now.
-    const mineNow = claims.filter((c) => c.handle === p.handle);
-    const derived =
-      mineNow.length > 0
-        ? ` — working in ${mineNow.slice(0, 2).map((c) => c.path).join(", ")}`
-        : " — (no stated task yet)";
-    const doing = p.intent ? ` — ${p.intent}` : derived;
+    const mine = claims.filter((c) => c.handle === p.handle);
+    // The `editing:` line below already lists these files, so repeating them
+    // here would spend two lines saying one thing.
+    // Nothing at all when the `editing:` line below already carries it — a
+    // pointer to the next line is words spent to say what it already says.
+    const doing = p.intent ? ` — ${p.intent}` : mine.length > 0 ? "" : " — (no stated task yet)";
     // `blocked` beats `status`: "waiting for permission approval" is the true
     // reason a session is not moving, where `idle` merely describes the symptom.
     const state = p.blocked !== "" ? `${p.blocked}, ` : p.status !== "" ? `${p.status}, ` : "";
@@ -125,7 +122,6 @@ export function formatRoster(
     lines.push(
       `  ${displayName(p)}${where}${branch}${doing}${prog} (${state}last active ${agoText(p.lastSeenMs, nowMs)})`,
     );
-    const mine = claims.filter((c) => c.handle === p.handle);
     if (mine.length > 0) {
       const shown = mine.slice(0, 6).map((c) => c.path);
       const more = mine.length > shown.length ? ` +${mine.length - shown.length} more` : "";

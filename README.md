@@ -225,6 +225,24 @@ where escape codes cost tokens and buy nothing.
 | `session-end.ts` | Deregister on clean exit. |
 | `cli.ts` | Human inspection + broadcast. |
 | `install.ts` | Copy to `~/.claude/agent-presence/bin/`, register hooks. |
+| `topic.test.ts` | What may become a roster label, and what may not. |
+
+## Tests
+
+```sh
+bun test ./.claude/hooks/presence/topic.test.ts     # the leading ./ is required
+```
+
+**The path must be explicit.** `bun test` skips dot-directories, so this file is
+invisible to the repo-wide sweep and a bare `bun test .claude/...` matches
+nothing — it reports "0 files searched" rather than failing, which reads exactly
+like a pass. It is run by hand after touching `topic.ts`.
+
+Every rejection case in it is a string that actually reached the roster and
+described nothing. The acceptance cases are there because the first version of
+each filter was too greedy and blanked the field it was meant to protect: an
+intent that says nothing and an intent that says the wrong thing are both
+failures, and a filter is only finished when it is tested from both sides.
 
 ## Design notes
 
@@ -316,8 +334,13 @@ project paths took `PostToolBatch` from 93 ms to 76 ms.
   because a *resumed* session's opening prompt is usually an acknowledgement of
   a conversation the roster never saw. With three live sessions on 2026-07-31 all
   three stated tasks were exactly that shape, so the roster's headline column
-  described nothing. A session with no stated task now falls back to the files it
-  currently holds, which is what it is *doing* rather than what it was *asked*.
+  described nothing.
+
+  Pasted terminal output is rejected for the same reason: leaving the slot open
+  meant the next prompt could fill it, and a pasted `cli.ts log` promptly became
+  a session's "stated task". A session with no stated task shows **nothing** in
+  that column — the `editing` line beneath already names its files, and a summary
+  there would be a strict subset of the detail directly below it.
 - **Sessions that die uncleanly linger** until they miss the 90-minute staleness
   window (`STALE_MS` in `store.ts`). `cli.ts clear` forces it.
 - **`bun` must be on PATH.** The registered command is `bun`, not an absolute
