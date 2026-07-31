@@ -396,6 +396,48 @@ describe("lifetime", () => {
   });
 });
 
+describe("who the board credits", () => {
+  const ID = "c5ce05bc-4024-45ef-8cb0-67c0c08d323d";
+  const KEY = `session:${ID}`;
+
+  test("an agent that renames itself is credited under the NEW name", () => {
+    // Found live: the board still said `traffic-7c` minutes after the agent had
+    // renamed itself to `tooling`, because the name was frozen at creation.
+    fresh((store) => {
+      const now = Date.now();
+      store.register(ID, "/tree", "master", now);
+      store.work.open(KEY, "traffic-7c", "some work", [], now);
+      store.setAlias(ID, "tooling", now);
+      expect(store.work.items({ agentId: KEY })[0]?.agentName).toBe("tooling");
+    });
+  });
+
+  test("an agent that has EXITED keeps the name it had", () => {
+    // The other half: with no live row to resolve against, the frozen copy is
+    // the only thing that can still say who did the work — which is the whole
+    // point of keeping closed records for a week.
+    fresh((store) => {
+      const now = Date.now();
+      store.register(ID, "/tree", "master", now);
+      store.work.open(KEY, "traffic-7c", "some work", [], now);
+      store.unregister(ID);
+      expect(store.work.items({ agentId: KEY })[0]?.agentName).toBe("traffic-7c");
+    });
+  });
+
+  test("the live name is resolved on every read path", () => {
+    fresh((store) => {
+      const now = Date.now();
+      store.register(ID, "/tree", "master", now);
+      store.work.open(KEY, "traffic-7c", "some work", [], now);
+      store.setAlias(ID, "tooling", now);
+      expect(store.work.target(KEY)?.agentName).toBe("tooling");
+      expect(store.work.openItems(KEY)[0]?.agentName).toBe("tooling");
+      expect(store.work.items({})[0]?.agentName).toBe("tooling");
+    });
+  });
+});
+
 describe("board ordering", () => {
   test("open items sort ahead of closed ones", () => {
     fresh((store) => {

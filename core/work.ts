@@ -11,10 +11,10 @@
  * every `Stop`, and that has to be one indexed query rather than a replay of an
  * agent's whole history, so a step's `done_ms` is mutable in place.
  *
- * KEYED ON THE AGENT, NOT THE SESSION. A restarted terminal is a new session id,
- * so keying on it would break the timeline exactly when it matters — yesterday's
- * `traffic-aa` and today's `traffic-a0` are the same person doing the same work.
- * See `agentKey` for why the conversation title wins that job.
+ * KEYED ON THE CONVERSATION, which is what a session id already is — see
+ * `agentKey`. Claude Code's `traffic-XX` label moves across a restart; the
+ * session id does not, so yesterday's `traffic-aa` and today's `traffic-a0`
+ * resolve to one timeline without any matching heuristic.
  */
 
 import type { Database } from "bun:sqlite";
@@ -50,7 +50,10 @@ export interface WorkItem {
   readonly workId: number;
   /** Stable across restarts; see `agentKey`. */
   readonly agentId: string;
-  /** The agent's display name when the item was opened, for a readable board. */
+  /**
+   * What to call the agent on the board: its current name if it is still around,
+   * else the one frozen when the item was opened.
+   */
   readonly agentName: string;
   readonly subject: string;
   readonly startedMs: number;
@@ -116,11 +119,13 @@ export function createWorkTables(db: Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS work (
       work_id    INTEGER PRIMARY KEY AUTOINCREMENT,
-      -- Resolved ONCE at creation and stored, so a later title change cannot
-      -- orphan the rows already written against the old key.
+      -- "session:" + the conversation uuid. Stored rather than recomputed so a
+      -- record still names its owner once that session is gone.
       agent_id   TEXT NOT NULL,
-      -- Frozen at creation for the same reason message sender names are: a board
-      -- read after the session exits must still say who did the work.
+      -- The name at creation, kept as a FALLBACK: a board read after the session
+      -- exits must still say who did the work. It is not the whole answer,
+      -- because an agent can rename itself after opening an item — the queries
+      -- below prefer the live name and fall back to this one.
       agent_name TEXT NOT NULL DEFAULT '',
       subject    TEXT NOT NULL,
       started_ms INTEGER NOT NULL,
@@ -149,6 +154,24 @@ export function createWorkTables(db: Database): void {
     CREATE INDEX IF NOT EXISTS work_events_item ON work_events (work_id, id);
   `);
 }
+
+/**
+ * What every work query selects, so the three cannot drift apart.
+ *
+ * `agent_name` resolves to the LIVE name when that agent is still around and
+ * has renamed itself, falling back to the copy frozen at creation. Both halves
+ * are load-bearing: an agent that renames itself mid-item would otherwise be
+ * credited under a name nobody uses any more, and an agent that has exited has
+ * no live row to resolve against at all.
+ *
+ * The join is on the agent key, which is `session:<uuid>` — the conversation
+ * uuid, so it still matches after a restart.
+ */
+const WORK_COLUMNS = `work.work_id, work.agent_id, work.subject, work.started_ms,
+     work.closed_ms, work.outcome, work.updated_ms, work.asked_turn_ms,
+     COALESCE(NULLIF((SELECT s.alias FROM sessions s
+                       WHERE 'session:' || s.session_id = work.agent_id), ''),
+              NULLIF(work.agent_name, ''), '') AS agent_name`;
 
 function rowToItem(r: Record<string, string | number>): WorkItem {
   return {
@@ -245,7 +268,7 @@ export class WorkStore {
   target(agentId: string, match?: string): WorkItem | null {
     const q = (match ?? "").trim().toLowerCase();
     const rows = this.db
-      .query(`SELECT * FROM work WHERE agent_id = ? AND closed_ms = 0 ORDER BY updated_ms DESC`)
+      .query(`SELECT ${WORK_COLUMNS} FROM work WHERE agent_id = ? AND closed_ms = 0 ORDER BY updated_ms DESC`)
       .all(agentId) as Array<Record<string, string | number>>;
     const items = rows.map(rowToItem);
     if (q === "") return items[0] ?? null;
@@ -254,7 +277,7 @@ export class WorkStore {
 
   openItems(agentId: string): WorkItem[] {
     const rows = this.db
-      .query(`SELECT * FROM work WHERE agent_id = ? AND closed_ms = 0 ORDER BY updated_ms DESC`)
+      .query(`SELECT ${WORK_COLUMNS} FROM work WHERE agent_id = ? AND closed_ms = 0 ORDER BY updated_ms DESC`)
       .all(agentId) as Array<Record<string, string | number>>;
     return rows.map(rowToItem);
   }
@@ -271,7 +294,7 @@ export class WorkStore {
     const clause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
     const rows = this.db
       .query(
-        `SELECT * FROM work ${clause}
+        `SELECT ${WORK_COLUMNS} FROM work ${clause}
           ORDER BY closed_ms = 0 DESC, updated_ms DESC`,
       )
       .all(...args) as Array<Record<string, string | number>>;
