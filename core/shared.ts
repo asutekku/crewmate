@@ -34,6 +34,15 @@ export const TRUST_NOTE =
 export interface HookPayload {
   readonly session_id?: string;
   readonly cwd?: string;
+  /**
+   * This session's transcript JSONL. Present on every event.
+   *
+   * Written ASYNCHRONOUSLY, so it can lag the in-memory conversation by a turn —
+   * fine for the conversation title and recent prose, which move slowly. Never
+   * use it for the current turn's final assistant text; `last_assistant_message`
+   * on Stop is the field for that.
+   */
+  readonly transcript_path?: string;
   /** Which event fired — the only way one script can serve two events. */
   readonly hook_event_name?: string;
   /** Notification: the text shown to the user. */
@@ -92,6 +101,14 @@ export function formatRoster(
   nowMs: number,
   selfWorktree: string,
   tasks?: ReadonlyMap<string, { open: number; done: number }>,
+  /**
+   * Show the conversation title and Haiku summary. OFF for peer injections and
+   * ON for the operator's `who`, by the user's ruling: the title names a window
+   * on their screen, which is what makes it useful to them and meaningless to an
+   * agent. Keeping it out of injections also keeps that text — which every agent
+   * pays for on every turn — from growing two lines per peer.
+   */
+  verbose = false,
 ): string[] {
   // With everyone in one tree there is nothing to distinguish, so the label is
   // pure noise on every line; it earns its place only once trees actually differ.
@@ -122,6 +139,12 @@ export function formatRoster(
     lines.push(
       `  ${displayName(p)}${where}${branch}${doing}${prog} (${state}last active ${agoText(p.lastSeenMs, nowMs)})`,
     );
+    // Operator view only. The title identifies the conversation the way the user
+    // sees it listed; the summary says what that conversation is doing NOW,
+    // which the title cannot, because it is set from the opening subject and a
+    // session's work moves on from where it started.
+    if (verbose && p.title !== "") lines.push(`      "${p.title}"`);
+    if (verbose && p.summary !== "") lines.push(`      doing: ${p.summary}`);
     if (mine.length > 0) {
       const shown = mine.slice(0, 6).map((c) => c.path);
       const more = mine.length > shown.length ? ` +${mine.length - shown.length} more` : "";

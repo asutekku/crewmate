@@ -26,6 +26,9 @@ function session(over: Partial<Session> = {}): Session {
     worktree: "I:/Projects/Traffic",
     branch: "master",
     intent: "",
+    title: "",
+    summary: "",
+    summaryMs: 0,
     lastSeenMs: 1_000,
     startedMs: 0,
     ...over,
@@ -114,6 +117,44 @@ describe("formatRoster layout", () => {
     ).map(plain);
     // A blank sender is worse than an internal one.
     expect(head).toContain("knuth");
+  });
+
+  test("keeps the conversation title OUT of what peers are shown", () => {
+    // USER RULING: titles are for the operator, who uses them to match a roster
+    // line to a window on their screen. An agent has no screen, and this text is
+    // injected into every peer's context on every turn — so it stays out by
+    // default and only `who` opts in.
+    const s = session({ title: "Explore cheap agent communication solutions" });
+    const injected = formatRoster([s], [], 2_000, "I:/Projects/Traffic").map(plain).join("\n");
+    expect(injected).not.toContain("Explore cheap agent communication");
+  });
+
+  test("shows the title and summary when the operator asks for them", () => {
+    const lines = formatRoster(
+      [session({ title: "Optimize water hot functions", summary: "Benchmarking the texel pack" })],
+      [],
+      2_000,
+      "I:/Projects/Traffic",
+      undefined,
+      true,
+    )
+      .map(plain)
+      .join("\n");
+    expect(lines).toContain("Optimize water hot functions");
+    expect(lines).toContain("Benchmarking the texel pack");
+  });
+
+  test("omits an absent title instead of printing an empty quoted line", () => {
+    const lines = formatRoster(
+      [session({ title: "", summary: "" })],
+      [],
+      2_000,
+      "I:/Projects/Traffic",
+      undefined,
+      true,
+    ).map(plain);
+    expect(lines.some((l) => l.trim() === '""')).toBe(false);
+    expect(lines.some((l) => l.trim() === "doing:")).toBe(false);
   });
 
   test("blocked outranks status, because it is the cause not the symptom", () => {

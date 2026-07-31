@@ -16,6 +16,7 @@ import { withStore } from "../core/store.ts";
 import { emit, formatMessages, formatRoster, readPayload, TRUST_NOTE } from "../core/shared.ts";
 import { currentBranch, resolveProject, worktreeRoot } from "../core/repo.ts";
 import { topicOf } from "../core/topic.ts";
+import { readTranscript } from "../core/transcript.ts";
 
 
 async function main(): Promise<void> {
@@ -58,6 +59,23 @@ async function main(): Promise<void> {
     // "yes" would lose the last true thing the column had.
     const topic = payload.prompt !== undefined ? topicOf(payload.prompt) : "";
     if (self && topic !== "") store.setIntent(sessionId, topic);
+
+    // Claude Code's own conversation name, which it rewrites every turn. Read
+    // rather than inferred: it is a model-written summary of the whole
+    // conversation and costs 0.4 ms, where `topicOf` above can only ever see the
+    // single prompt in front of it. Recorded for the OPERATOR's roster — a peer
+    // never sees it (see the Session type).
+    //
+    // The transcript path is also stored, so the summary refresh can find this
+    // session's transcript later without reconstructing a path from its id.
+    if (payload.transcript_path) {
+      store.setTranscript(sessionId, payload.transcript_path);
+      const { title } = readTranscript(payload.transcript_path);
+      // Only when non-empty: transcripts predating the feature have no title at
+      // all, and blanking a good one because today's read came up empty would
+      // lose the only description some sessions have.
+      if (title !== "") store.setTitle(sessionId, title);
+    }
 
     const unread = store.drainUnread(sessionId);
     if (unread.length === 0) return null;

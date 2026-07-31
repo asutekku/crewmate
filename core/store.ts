@@ -107,6 +107,14 @@ export interface Session {
   readonly worktree: string;
   readonly branch: string;
   readonly intent: string;
+  /**
+   * Claude Code's conversation name. OPERATOR-FACING: it identifies a window on
+   * the user's screen, so it belongs in `who` and never in a peer injection.
+   */
+  readonly title: string;
+  /** A Haiku line describing current work; "" until the first refresh lands. */
+  readonly summary: string;
+  readonly summaryMs: number;
   readonly lastSeenMs: number;
   readonly startedMs: number;
 }
@@ -212,7 +220,19 @@ function openDb(dbPath: string): Database {
       -- The build of the hook scripts this session LOADED. A session keeps the
       -- copy it started with until it restarts, so this is what tells a reader
       -- that a peer's behaviour is a version behind rather than broken.
-      code_version TEXT NOT NULL DEFAULT ''
+      code_version TEXT NOT NULL DEFAULT '',
+      -- Claude Code's own conversation name ("Explore cheap agent communication
+      -- solutions"), read from the transcript. OPERATOR-FACING ONLY: it names a
+      -- window on the user's screen, which is what makes it useful to them and
+      -- useless to a peer agent, so it is never injected into a peer's context.
+      title        TEXT NOT NULL DEFAULT '',
+      -- A Haiku-written line describing current work. Refreshed on a timer from
+      -- the transcript, not on any hook path — see core/summary.ts.
+      summary      TEXT NOT NULL DEFAULT '',
+      summary_ms   INTEGER NOT NULL DEFAULT 0,
+      -- Where this session's transcript lives, so a refresh can read it without
+      -- reconstructing a path from the session id.
+      transcript   TEXT NOT NULL DEFAULT ''
     );
     -- Two agents answering to one name makes the whole roster a lie, so the
     -- constraint is enforced by the schema rather than trusted from the code.
@@ -257,6 +277,10 @@ function openDb(dbPath: string): Database {
   // can be dropped and regenerated (which is what the repo's pre-release
   // "no migrations" rule is about).
   addColumnIfMissing(db, "sessions", "code_version", "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(db, "sessions", "title", "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(db, "sessions", "summary", "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(db, "sessions", "summary_ms", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(db, "sessions", "transcript", "TEXT NOT NULL DEFAULT ''");
   return db;
 }
 
@@ -287,6 +311,28 @@ export function withStore<T>(dbPath: string, fn: (s: Store) => T): T {
   }
 }
 
+/** The column list every Session query selects, so the two cannot drift apart. */
+const SESSION_COLUMNS = `session_id, handle, name, status, blocked, worktree, branch,
+                         intent, title, summary, summary_ms, last_seen_ms, started_ms`;
+
+function rowToSession(r: Record<string, string | number>): Session {
+  return {
+    sessionId: String(r["session_id"]),
+    handle: String(r["handle"]),
+    name: String(r["name"] ?? ""),
+    status: String(r["status"] ?? ""),
+    blocked: String(r["blocked"] ?? ""),
+    worktree: String(r["worktree"]),
+    branch: String(r["branch"]),
+    intent: String(r["intent"]),
+    title: String(r["title"] ?? ""),
+    summary: String(r["summary"] ?? ""),
+    summaryMs: Number(r["summary_ms"] ?? 0),
+    lastSeenMs: Number(r["last_seen_ms"]),
+    startedMs: Number(r["started_ms"]),
+  };
+}
+
 export class Store {
   constructor(private readonly db: Database) {}
 
@@ -294,23 +340,11 @@ export class Store {
   liveSessions(nowMs: number): Session[] {
     const rows = this.db
       .query(
-        `SELECT session_id, handle, name, status, blocked, worktree, branch, intent,
-                last_seen_ms, started_ms
+        `SELECT ${SESSION_COLUMNS}
            FROM sessions WHERE last_seen_ms > ? ORDER BY started_ms ASC`,
       )
       .all(nowMs - STALE_MS) as Array<Record<string, string | number>>;
-    return rows.map((r) => ({
-      sessionId: String(r["session_id"]),
-      handle: String(r["handle"]),
-      name: String(r["name"] ?? ""),
-      status: String(r["status"] ?? ""),
-      blocked: String(r["blocked"] ?? ""),
-      worktree: String(r["worktree"]),
-      branch: String(r["branch"]),
-      intent: String(r["intent"]),
-      lastSeenMs: Number(r["last_seen_ms"]),
-      startedMs: Number(r["started_ms"]),
-    }));
+    return rows.map(rowToSession);
   }
 
   /**
@@ -455,6 +489,53 @@ export class Store {
     this.db.query(`UPDATE sessions SET intent = ? WHERE session_id = ?`).run(intent, sessionId);
   }
 
+  /** Claude Code's conversation name, read from the transcript. */
+  setTitle(sessionId: string, title: string): void {
+    this.db.query(`UPDATE sessions SET title = ? WHERE session_id = ?`).run(title, sessionId);
+  }
+
+  /** Where this session's transcript lives, so a refresh can find it later. */
+  setTranscript(sessionId: string, path: string): void {
+    this.db.query(`UPDATE sessions SET transcript = ? WHERE session_id = ?`).run(path, sessionId);
+  }
+
+  transcriptOf(sessionId: string): string {
+    const r = this.db
+      .query(`SELECT transcript FROM sessions WHERE session_id = ?`)
+      .get(sessionId) as Record<string, string> | null;
+    return r ? String(r["transcript"] ?? "") : "";
+  }
+
+  /**
+   * Stores a generated summary. The timestamp is written even for an EMPTY
+   * summary, so a session whose transcript cannot be summarised is retried on
+   * the TTL rather than on every single roster read — an unsummarisable session
+   * would otherwise spawn a model call each time anyone typed `who`.
+   */
+  setSummary(sessionId: string, summary: string, nowMs: number): void {
+    this.db
+      .query(`UPDATE sessions SET summary = ?, summary_ms = ? WHERE session_id = ?`)
+      .run(summary, nowMs, sessionId);
+  }
+
+  /**
+   * Live sessions whose summary is older than the TTL, with the transcript to
+   * read. Only sessions that have RECORDED a transcript path qualify — there is
+   * nothing to summarise without one.
+   */
+  staleSummarySessions(nowMs: number, ttlMs: number): Array<{ sessionId: string; path: string }> {
+    const rows = this.db
+      .query(
+        `SELECT session_id, transcript FROM sessions
+          WHERE last_seen_ms > ? AND transcript != '' AND summary_ms < ?`,
+      )
+      .all(nowMs - STALE_MS, nowMs - ttlMs) as Array<Record<string, string | number>>;
+    return rows.map((r) => ({
+      sessionId: String(r["session_id"]),
+      path: String(r["transcript"]),
+    }));
+  }
+
   /**
    * A state Claude Code's own `idle`/`busy` cannot express: waiting on a
    * permission prompt, or dead after an API error.
@@ -509,25 +590,10 @@ export class Store {
    */
   findBySession(sessionId: string): Session | null {
     const r = this.db
-      .query(
-        `SELECT session_id, handle, name, status, blocked, worktree, branch, intent,
-                last_seen_ms, started_ms
-           FROM sessions WHERE session_id = ?`,
-      )
+      .query(`SELECT ${SESSION_COLUMNS} FROM sessions WHERE session_id = ?`)
       .get(sessionId) as Record<string, string | number> | null;
     if (!r) return null;
-    return {
-      sessionId: String(r["session_id"]),
-      handle: String(r["handle"]),
-      name: String(r["name"] ?? ""),
-      status: String(r["status"] ?? ""),
-      blocked: String(r["blocked"] ?? ""),
-      worktree: String(r["worktree"]),
-      branch: String(r["branch"]),
-      intent: String(r["intent"]),
-      lastSeenMs: Number(r["last_seen_ms"]),
-      startedMs: Number(r["started_ms"]),
-    };
+    return rowToSession(r);
   }
 
   unregister(sessionId: string): void {

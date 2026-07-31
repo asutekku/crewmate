@@ -192,6 +192,77 @@ describe("identity", () => {
   });
 });
 
+describe("summaries", () => {
+  test("a session with no transcript is never queued for a summary", () => {
+    // The worker reads the transcript; with no path there is nothing to read,
+    // and queueing it would spawn an ~8 s model call that can only fail.
+    fresh((store) => {
+      const now = Date.now();
+      store.register("me", "/t", "main", now);
+      expect(store.staleSummarySessions(now, 60_000)).toEqual([]);
+    });
+  });
+
+  test("a session whose summary is older than the TTL comes back due", () => {
+    fresh((store) => {
+      const now = Date.now();
+      store.register("me", "/t", "main", now);
+      store.setTranscript("me", "/tmp/t.jsonl");
+      store.setSummary("me", "Optimizing the water sim", now - 3_600_000);
+      const due = store.staleSummarySessions(now, 60_000);
+      expect(due.map((d) => d.sessionId)).toEqual(["me"]);
+      expect(due[0]?.path).toBe("/tmp/t.jsonl");
+    });
+  });
+
+  test("a fresh summary is not regenerated, so repeated `who` costs nothing", () => {
+    fresh((store) => {
+      const now = Date.now();
+      store.register("me", "/t", "main", now);
+      store.setTranscript("me", "/tmp/t.jsonl");
+      store.setSummary("me", "Optimizing the water sim", now);
+      expect(store.staleSummarySessions(now, 60_000)).toEqual([]);
+    });
+  });
+
+  test("an EMPTY summary still stamps the clock, so failure is not retried hotly", () => {
+    // A transcript that cannot be summarised would otherwise look permanently
+    // stale and spawn a model call on every roster read.
+    fresh((store) => {
+      const now = Date.now();
+      store.register("me", "/t", "main", now);
+      store.setTranscript("me", "/tmp/t.jsonl");
+      store.setSummary("me", "", now);
+      expect(store.staleSummarySessions(now, 60_000)).toEqual([]);
+    });
+  });
+
+  test("a dead session is never queued, however stale its summary", () => {
+    fresh((store) => {
+      const now = Date.now();
+      store.register("ghost", "/t", "main", now - STALE_MS - 1000);
+      store.setTranscript("ghost", "/tmp/t.jsonl");
+      expect(store.staleSummarySessions(now, 60_000)).toEqual([]);
+    });
+  });
+
+  test("title and summary survive a round trip through the store", () => {
+    fresh((store) => {
+      const now = Date.now();
+      store.register("me", "/t", "main", now);
+      store.setTitle("me", "Explore cheap agent communication solutions");
+      store.setSummary("me", "Wiring transcript titles into the roster", now);
+      const s = store.findBySession("me");
+      expect(s?.title).toBe("Explore cheap agent communication solutions");
+      expect(s?.summary).toBe("Wiring transcript titles into the roster");
+      // liveSessions is the roster's source and must agree with findBySession.
+      expect(store.liveSessions(now)[0]?.title).toBe(
+        "Explore cheap agent communication solutions",
+      );
+    });
+  });
+});
+
 describe("claims", () => {
   test("a session's own claim is never a conflict with itself", () => {
     fresh((store) => {

@@ -19,6 +19,7 @@
 import { agoText, claimName, displayName, withStore } from "./core/store.ts";
 import { installedVersion, resolveProject } from "./core/repo.ts";
 import { listAgents } from "./core/agents.ts";
+import { refreshSummary, SUMMARY_TTL_MS } from "./core/summary.ts";
 import {
   activityColour,
   bold,
@@ -31,6 +32,19 @@ import {
 } from "./core/colour.ts";
 
 const HUMAN_HANDLE = "human";
+
+/**
+ * The summary worker, resolved beside THIS file.
+ *
+ * `import.meta.dir` rather than a fixed path, so a CLI run from the source tree
+ * spawns the source worker and the installed copy under `~/.claude/agent-
+ * presence/bin/` spawns its own. Hardcoding the installed path would make every
+ * source-tree test silently exercise the deployed build — the exact trap that
+ * once had an edit look broken because `bin/` was stale.
+ */
+function summaryWorkerPath(): string {
+  return `${import.meta.dir}/core/summarize-worker.ts`;
+}
 
 /**
  * Set by Claude Code in every process it spawns, so an agent shelling out to
@@ -89,6 +103,13 @@ function who(): void {
     // leaves the roster mixing builds with nothing to tell them apart.
     const current = installedVersion();
     const versions = store.codeVersions();
+    // Kicked off HERE and never waited for. Each call is ~8 s of Haiku, so the
+    // roster below prints whatever summaries already exist and these land for
+    // the next `who`. Bounded by SUMMARY_TTL_MS per session, so typing `who`
+    // repeatedly costs nothing extra.
+    for (const stale of store.staleSummarySessions(now, SUMMARY_TTL_MS)) {
+      refreshSummary(summaryWorkerPath(), stale.sessionId, stale.path, PROJECT.dbPath);
+    }
     console.log(bold(`${sessions.length} active agent(s) in ${PROJECT.name}:`));
     for (const s of sessions) {
       const paint = palette.get(displayName(s)) ?? handleColour(s.handle);
@@ -131,6 +152,13 @@ function who(): void {
         prog,
       ].filter((f) => f !== "");
       console.log(`  ${fields.join("  ")}  ${dim("·")} ${seen}`);
+      // Claude Code's own name for the conversation — the label the user sees in
+      // their session list, so the roster and their windows agree. Quoted to
+      // mark it as a title rather than another status field.
+      if (s.title !== "") console.log(`      ${dim(`"${s.title}"`)}`);
+      // What the session is doing NOW, which the title cannot say: a title is
+      // set from the opening subject and does not move as the work does.
+      if (s.summary !== "") console.log(`      ${cyan("doing")} ${s.summary}`);
 
       if (mine.length === 0) continue;
       const shown = mine.slice(0, 6).map((c) => {

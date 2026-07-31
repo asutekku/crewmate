@@ -1,0 +1,20 @@
+{
+  "//": "Scoped to the presence tool. The repo root's tsconfig covers src/ and does not include .claude/, so without this the hooks were never type-checked as a unit — which is how a missing import once shipped and failed open, silently doing nothing.",
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "types": ["bun"],
+    "skipLibCheck": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitReturns": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "useUnknownInCatchVariables": true
+  },
+  "include": ["cli.ts", "install.ts", "core/**/*.ts", "hooks/**/*.ts", "test/**/*.ts"]
+}
