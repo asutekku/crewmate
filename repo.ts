@@ -18,7 +18,7 @@
  * stray files.
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 
 export interface RepoContext {
@@ -73,24 +73,15 @@ function slug(key: string, name: string): string {
 }
 
 /**
- * Resolves the project for `cwd`. Never null: a directory with no git repo is a
- * perfectly good coordination scope, and agents working there need the roster
- * just as much. Without this fallback the hooks would silently do nothing for
- * anyone who has not run `git init`, which looks like a broken install rather
- * than an unsupported setup.
+ * Project identity comes from a `git rev-parse` subprocess, measured at ~31 ms —
+ * cheap once per session, but `PostToolBatch` fires after every batch of tool
+ * calls, where it dominates the hook's cost. So it is cached on disk.
  *
- * The two keys cannot collide: a git key always ends in `/.git`, a plain
- * directory never does.
- */
-/**
- * Project identity is derived from a `git rev-parse` subprocess, measured at
- * ~31 ms — cheap once per session, but `PostToolBatch` fires after every batch
- * of tool calls, where it dominates the hook's cost.
- *
- * A repo's git common dir cannot change for a given directory (moving the repo
- * changes the directory too), so the answer is cached on disk beside the state.
- * The cache is keyed by cwd and holds only derived paths — nothing that goes
- * stale within a session.
+ * THE CACHE OUTLIVES THE SESSION THAT WROTE IT, which is where the danger is: a
+ * cwd's answer is stable only while that directory remains what it was. Deleting
+ * a worktree and reusing its path, or `git init` in a directory previously seen
+ * as plain, both change the true answer — so a hit is only trusted while its key
+ * still exists on disk.
  */
 function cachedResolve(cwdNorm: string): RepoContext | null {
   try {
@@ -100,7 +91,15 @@ function cachedResolve(cwdNorm: string): RepoContext | null {
       string,
       RepoContext
     >;
-    return map[cwdNorm] ?? null;
+    const hit = map[cwdNorm] ?? null;
+    // The cache outlives the session that wrote it, so "cannot go stale" is only
+    // true while the directory it describes still is what it was. A worktree
+    // deleted and its path reused by a DIFFERENT repo would otherwise route that
+    // session into the old repo's roster, and a `git init` in a directory
+    // previously resolved as non-git would split that project in two. Checking
+    // the key still exists costs a stat and closes both.
+    if (hit && !existsSync(hit.key)) return null;
+    return hit;
   } catch {
     return null;
   }
@@ -135,6 +134,16 @@ function cacheResolve(cwdNorm: string, ctx: RepoContext): void {
  */
 const TEST_DB = process.env["PRESENCE_TEST_DB"] ?? "";
 
+/**
+ * Resolves the project for `cwd`. Never null: a directory with no git repo is a
+ * perfectly good coordination scope, and agents working there need the roster
+ * just as much. Without this fallback the hooks would silently do nothing for
+ * anyone who has not run `git init`, which looks like a broken install rather
+ * than an unsupported setup.
+ *
+ * The two keys cannot collide: a git key always ends in `/.git`, a plain
+ * directory never does.
+ */
 export function resolveProject(cwd: string): RepoContext {
   const cwdNorm = cwd.replace(/\\/g, "/").replace(/\/$/, "");
   if (TEST_DB !== "") {
@@ -180,6 +189,12 @@ export function worktreeRoot(cwd: string): string {
   // path, where a `git rev-parse` subprocess dominates the hook's cost (measured
   // 2026-07-31: pre-edit 157 ms → 106 ms). A directory's working tree cannot
   // change without the directory changing, so the answer is stable per key.
+  // Under test, resolve without touching the shared cache file: writing
+  // `trees.json` into the live state dir is a leak in the isolation that
+  // `PRESENCE_TEST_DB` exists to guarantee.
+  if (TEST_DB !== "") {
+    return git(cwd, ["rev-parse", "--path-format=absolute", "--show-toplevel"]) ?? cwdNorm;
+  }
   const hit = cachedTree(cwdNorm);
   if (hit !== null) return hit;
   const tree = git(cwd, ["rev-parse", "--path-format=absolute", "--show-toplevel"]) ?? cwdNorm;
@@ -251,7 +266,13 @@ export function ensureBaseDir(): void {
 export function relPath(p: string, root: string): string {
   const s = p.replace(/\\/g, "/");
   const rootNorm = root.replace(/\\/g, "/").replace(/\/$/, "");
-  return foldCase(s).startsWith(foldCase(rootNorm))
-    ? s.slice(rootNorm.length).replace(/^\//, "")
-    : s;
+  // The prefix must end on a path BOUNDARY. A bare `startsWith` also matches a
+  // sibling that merely shares the root as a string: with root
+  // `I:/Projects/Traffic`, the file `I:/Projects/Traffic-experiments/x.ts`
+  // yielded `-experiments/x.ts` — a relative-looking path that then slipped
+  // past the outside-tree guard and was claimed as if it were in this repo.
+  const inside =
+    foldCase(s).startsWith(foldCase(rootNorm)) &&
+    (s.length === rootNorm.length || s[rootNorm.length] === "/");
+  return inside ? s.slice(rootNorm.length).replace(/^\//, "") : s;
 }

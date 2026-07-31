@@ -9,9 +9,10 @@
  * spawned by a lead, which independently launched sessions are not. So the only
  * shared board possible is one we keep.
  *
- * WHAT IT FIXES: the roster's stalest field. A session's stated task comes from
- * its first prompt and never changes, so an agent hours into a run still shows
- * peers what it was asked at the start. Task counts move as the work does.
+ * WHAT IT ADDS: progress, which no other field carries. A stated task says what
+ * a session was ASKED — it updates on each topic-bearing prompt, but a long run
+ * on one instruction still shows the same line for hours. A count that moves as
+ * work completes is the only signal that says how far along it is.
  *
  * SIDE-EFFECT ONLY BY CHOICE. These hooks CAN block task creation with exit 2;
  * doing so would be enforcement, which this system does not do.

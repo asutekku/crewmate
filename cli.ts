@@ -206,7 +206,19 @@ function log(limit: number): void {
 function say(text: string): void {
   const from = withStore(PROJECT.dbPath, (store) => {
     const now = Date.now();
+    // An agent whose row was reaped must NOT fall through to the operator's
+    // handle. `note` renders as "the user, to everyone" and outranks peer text
+    // wherever it appears, so that fallback turned a bookkeeping miss into a
+    // live agent broadcasting in the user's voice — the exact forgery the
+    // sender-identity work was meant to prevent, reachable with no malice at
+    // all. A session that identifies itself is an agent whether or not the
+    // roster still has a row for it.
     const self = ENV_SESSION !== "" ? store.findBySession(ENV_SESSION) : null;
+    if (ENV_SESSION !== "" && !self) {
+      const handle = store.handleForOrRegister(ENV_SESSION, PROJECT.root, "", now);
+      store.post(handle, "say", text, now);
+      return handle;
+    }
     if (self) {
       store.post(self.handle, "say", text, now);
       return displayName(self);
@@ -244,11 +256,11 @@ function msg(target: string, text: string, from: string | undefined): void {
       handle = sender.handle;
       fromLabel = displayName(sender);
     } else if (ENV_SESSION !== "") {
+      // Same rule as `say`: a caller that identifies itself as a session is an
+      // agent, and never speaks as the operator even if its row was reaped.
       const self = store.findBySession(ENV_SESSION);
-      if (self) {
-        handle = self.handle;
-        fromLabel = displayName(self);
-      }
+      handle = self ? self.handle : store.handleForOrRegister(ENV_SESSION, PROJECT.root, "", now);
+      fromLabel = self ? displayName(self) : handle;
     }
     store.post(handle, "say", text, now, { sessionId: to.sessionId, name: displayName(to) });
     return { ok: true as const, to, fromLabel };

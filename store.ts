@@ -33,6 +33,18 @@ import { ensureBaseDir } from "./repo.ts";
  */
 export const STALE_MS = 90 * 60 * 1000; // 90 min
 
+/**
+ * How long a claim keeps meaning "I am working on this".
+ *
+ * A claim is recorded per edit and never released, so without an age limit a
+ * file touched once at 09:00 is still "held" at 17:00. With several agents in
+ * one tree that turns most of the day's files into contested paths, the roster's
+ * red channel stops meaning anything, and the one collision that matters is
+ * buried among a dozen that do not. Two hours is longer than any single edit
+ * session on one file and far shorter than a working day.
+ */
+export const CLAIM_TTL_MS = 2 * 60 * 60 * 1000; // 2 h
+
 /** Rows kept in the log; old ones are pruned so the file cannot grow forever. */
 const MAX_MESSAGES = 2000;
 
@@ -63,7 +75,7 @@ export const HANDLES = [
  * peer, and produced lines like `turing was asked by its user: "go"` that say
  * nothing. A session's task now reaches peers only as its own short `intent`.
  */
-export type MessageKind = "say" | "claim" | "release" | "done" | "note";
+export type MessageKind = "say" | "claim" | "done" | "note";
 
 export interface Session {
   readonly sessionId: string;
@@ -160,12 +172,14 @@ export function hasUnread(dbPath: string, sessionId: string): boolean {
 function openDb(dbPath: string): Database {
   ensureBaseDir();
   const db = new Database(dbPath, { create: true });
+  // busy_timeout FIRST: without it a concurrent writer throws SQLITE_BUSY
+  // instead of waiting, and the `journal_mode` switch below is itself a
+  // statement that can block on a fresh db another process is opening. Setting
+  // the timeout second would leave that one pragma unprotected.
+  db.exec("PRAGMA busy_timeout = 5000");
   // WAL survives across connections once set, but setting it every open is
   // cheap and means a deleted db file comes back correctly configured.
   db.exec("PRAGMA journal_mode = WAL");
-  // Without a busy timeout a concurrent writer throws SQLITE_BUSY instead of
-  // waiting; 5 s is far longer than any write here takes.
-  db.exec("PRAGMA busy_timeout = 5000");
   db.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
       session_id   TEXT PRIMARY KEY,
@@ -364,6 +378,27 @@ export class Store {
   }
 
   /**
+   * The handle for a session, registering it if the row is gone.
+   *
+   * A HOOK FIRING IS PROOF THE SESSION IS ALIVE, whatever `pruneStale` decided.
+   * Reaping is a heuristic for sessions that died by having their terminal
+   * closed, and it misfires on two ordinary cases: a session idle at a prompt
+   * for 90 minutes, and a single long turn that runs no Edit/Write (the
+   * `PostToolBatch` fast path deliberately skips `touch` when there is no mail,
+   * so such a turn heartbeats once at its start).
+   *
+   * Before this existed, a pruned session was permanently invisible: every hook
+   * did `handleFor → null → return`, so it recorded no claims, RAISED NO
+   * OVERLAP WARNINGS, and received no messages — silently, because the hooks
+   * fail open. It failed back into exactly the blindness the tool exists to end,
+   * and it did so for the longest-running sessions, which are the ones with the
+   * most work at stake.
+   */
+  handleForOrRegister(sessionId: string, worktree: string, branch: string, nowMs: number): string {
+    return this.handleFor(sessionId) ?? this.register(sessionId, worktree, branch, nowMs);
+  }
+
+  /**
    * Corrects the recorded working tree.
    *
    * Separate from `register` because it must NOT touch the handle or the read
@@ -484,6 +519,7 @@ export class Store {
 
   unregister(sessionId: string): void {
     this.db.query(`DELETE FROM claims WHERE session_id = ?`).run(sessionId);
+    this.db.query(`DELETE FROM tasks WHERE session_id = ?`).run(sessionId);
     this.db.query(`DELETE FROM sessions WHERE session_id = ?`).run(sessionId);
   }
 
@@ -535,8 +571,18 @@ export class Store {
    * to the 8-continuation cap. A question actually addressed to this session is
    * worth continuing for; a peer's bookkeeping is not.
    *
-   * The cursor advances only past what was DELIVERED, so a skipped `done` line
-   * still arrives on the next prompt rather than being silently dropped.
+   * THE CURSOR STOPS BELOW THE FIRST ROW IT SKIPPED, not at the last row it
+   * delivered. A single monotonic cursor cannot express "delivered id 7 but not
+   * id 6", so advancing past a skipped row buries it forever: no later drain
+   * looks below the cursor.
+   *
+   * That is not hypothetical. A peer broadcasts "waterSim.ts is mine" (id N),
+   * then anyone sends this session a directed message (id N+1); delivering N+1
+   * and advancing to N+1 loses the broadcast permanently — and broadcasts are
+   * exactly the stay-off-this-file traffic the tool exists to carry. Holding the
+   * cursor below N re-delivers the directed message at the next prompt, which is
+   * the cheap side of the trade: a duplicate is noise, a lost claim warning is a
+   * conflict nobody saw coming.
    */
   drainDirected(sessionId: string): Message[] {
     const drain = this.db.transaction((): Message[] => {
@@ -544,28 +590,38 @@ export class Store {
         .query(`SELECT handle, last_read_id FROM sessions WHERE session_id = ?`)
         .get(sessionId) as { handle: string; last_read_id: number } | null;
       if (!cur) return [];
+      const deliverable = `id > ?1 AND handle != ?2 AND (to_session = '' OR to_session = ?3)`;
       const rows = this.db
         .query(
           `SELECT id, ts_ms, handle, kind, body, to_session, from_name, to_name
              FROM messages
-            WHERE id > ? AND handle != ?
-              AND (to_session = '' OR to_session = ?)
-              AND (kind = 'note' OR (kind = 'say' AND to_session = ?))
+            WHERE ${deliverable}
+              AND (kind = 'note' OR (kind = 'say' AND to_session = ?3))
             ORDER BY id ASC`,
         )
-        .all(cur.last_read_id, cur.handle, sessionId, sessionId) as Array<
-        Record<string, string | number>
-      >;
+        .all(cur.last_read_id, cur.handle, sessionId) as Array<Record<string, string | number>>;
       if (rows.length === 0) return [];
-      // Only past the last row actually handed over — undelivered chatter keeps
-      // its place in the queue for the next prompt.
-      const lastId = Number(rows[rows.length - 1]?.["id"] ?? cur.last_read_id);
-      this.db
-        .query(`UPDATE sessions SET last_read_id = ? WHERE session_id = ?`)
-        .run(lastId, sessionId);
+      // The lowest id this drain did NOT hand over. Everything from here on is
+      // still owed to this session, so the cursor must stay beneath it.
+      const skipped = this.db
+        .query(
+          `SELECT MIN(id) AS id FROM messages
+            WHERE ${deliverable}
+              AND NOT (kind = 'note' OR (kind = 'say' AND to_session = ?3))`,
+        )
+        .get(cur.last_read_id, cur.handle, sessionId) as { id: number | null } | null;
+      const lastDelivered = Number(rows[rows.length - 1]?.["id"] ?? cur.last_read_id);
+      const firstSkipped = skipped?.id ?? null;
+      const advanceTo =
+        firstSkipped === null ? lastDelivered : Math.min(lastDelivered, firstSkipped - 1);
+      if (advanceTo > cur.last_read_id) {
+        this.db
+          .query(`UPDATE sessions SET last_read_id = ? WHERE session_id = ?`)
+          .run(advanceTo, sessionId);
+      }
       return rows.map(toMessage);
     });
-    return drain();
+    return drain.immediate();
   }
 
   drainUnread(sessionId: string): Message[] {
@@ -598,7 +654,13 @@ export class Store {
         .run(maxId.m, sessionId);
       return rows.map(toMessage);
     });
-    return drain();
+    // IMMEDIATE for the same reason `register` is: this reads and then writes,
+    // and under WAL a deferred transaction that upgrades after a peer committed
+    // fails with SQLITE_BUSY_SNAPSHOT — which `busy_timeout` cannot rescue,
+    // because waiting does not freshen a stale snapshot. With several agents
+    // posting continuously that is the busy case, i.e. exactly when delivery
+    // matters most.
+    return drain.immediate();
   }
 
   /**
@@ -663,11 +725,19 @@ export class Store {
    * separately — the marker already exists and cannot drift out of sync with the
    * thing it marks.
    */
-  lastDoneMs(handle: string): number {
+  lastDoneMs(handle: string, sinceMs = 0): number {
+    // Bounded by `sinceMs` (the caller passes its own `startedMs`) because
+    // handles are RECYCLED once a session is pruned. A new session inheriting
+    // `ada` would otherwise adopt the dead ada's last `done` timestamp as its
+    // turn start, and silently omit from its first turn-end summary every file
+    // it edited before that moment.
     const r = this.db
-      .query(`SELECT MAX(ts_ms) AS t FROM messages WHERE handle = ? AND kind = 'done'`)
-      .get(handle) as { t: number | null } | null;
-    return Number(r?.t ?? 0);
+      .query(
+        `SELECT MAX(ts_ms) AS t FROM messages
+          WHERE handle = ? AND kind = 'done' AND ts_ms >= ?`,
+      )
+      .get(handle, sinceMs) as { t: number | null } | null;
+    return Math.max(Number(r?.t ?? 0), sinceMs);
   }
 
   claim(sessionId: string, path: string, nowMs: number): void {
@@ -686,9 +756,12 @@ export class Store {
         `SELECT s.handle AS handle, s.name AS name, s.worktree AS worktree,
                 c.path AS path, c.ts_ms AS ts_ms
            FROM claims c JOIN sessions s ON s.session_id = c.session_id
-          WHERE c.path = ? AND c.session_id != ? AND s.last_seen_ms > ?`,
+          WHERE c.path = ? AND c.session_id != ? AND s.last_seen_ms > ?
+            AND c.ts_ms > ?`,
       )
-      .all(path, sessionId, nowMs - STALE_MS) as Array<Record<string, string | number>>;
+      .all(path, sessionId, nowMs - STALE_MS, nowMs - CLAIM_TTL_MS) as Array<
+        Record<string, string | number>
+      >;
     return rows.map(toClaim);
   }
 
@@ -719,21 +792,25 @@ export class Store {
         `SELECT s.handle AS handle, s.name AS name, s.worktree AS worktree,
                 c.path AS path, c.ts_ms AS ts_ms
            FROM claims c JOIN sessions s ON s.session_id = c.session_id
-          WHERE s.last_seen_ms > ? ORDER BY c.ts_ms ASC`,
+          WHERE s.last_seen_ms > ? AND c.ts_ms > ? ORDER BY c.ts_ms ASC`,
       )
-      .all(nowMs - STALE_MS) as Array<Record<string, string | number>>;
+      .all(nowMs - STALE_MS, nowMs - CLAIM_TTL_MS) as Array<Record<string, string | number>>;
     return rows.map(toClaim);
   }
 
-  /** Drops rows for sessions that stopped heartbeating. */
+  /**
+   * Drops rows for sessions that stopped heartbeating.
+   *
+   * Tasks go with them: they were the only table nothing ever cleaned, so a
+   * machine that has run agents for months accumulates every task any dead
+   * session ever created. Every other table here prunes; this one was simply
+   * missed.
+   */
   pruneStale(nowMs: number): void {
     const cutoff = nowMs - STALE_MS;
-    this.db
-      .query(
-        `DELETE FROM claims WHERE session_id IN
-           (SELECT session_id FROM sessions WHERE last_seen_ms <= ?)`,
-      )
-      .run(cutoff);
+    const dead = `(SELECT session_id FROM sessions WHERE last_seen_ms <= ?)`;
+    this.db.query(`DELETE FROM claims WHERE session_id IN ${dead}`).run(cutoff);
+    this.db.query(`DELETE FROM tasks WHERE session_id IN ${dead}`).run(cutoff);
     this.db.query(`DELETE FROM sessions WHERE last_seen_ms <= ?`).run(cutoff);
   }
 }

@@ -1,12 +1,12 @@
 /**
  * PostCompact: refresh this session's roster line from the compaction summary.
  *
- * THE ROSTER'S STALEST FIELD. A session's stated task is derived from its FIRST
- * prompt and never updated, so an agent four hours into a long run still shows
- * peers what it was asked at breakfast. `compact_summary` is the opposite: a
- * freshly written description of what this session is actually doing, produced
- * by the model that has been doing it. It is the best intent update available,
- * and it arrives for free.
+ * A BETTER INTENT THAN A PROMPT. The stated task is distilled from whatever the
+ * user last typed, which describes what a session was ASKED — and a long run on
+ * one instruction keeps that line for hours. `compact_summary` is a freshly
+ * written description of what the session is ACTUALLY doing, produced by the
+ * model that has been doing it, and it arrives for free at exactly the moment a
+ * long run has drifted furthest from its opening request.
  *
  * SIDE-EFFECT ONLY. HOOKS.MD lists PostCompact under "No decision control", so
  * this writes and says nothing. The session's own re-orientation after

@@ -10,7 +10,7 @@
  *
  * SIDE-EFFECT ONLY. HOOKS.MD lists Notification under "No decision control —
  * used for side effects like logging or cleanup", so nothing is injected here.
- * The matcher in settings.json restricts this to the two notification types
+ * The matcher in settings.json restricts this to the notification type
  * worth recording; the rest (auth, elicitation) are not coordination facts.
  */
 

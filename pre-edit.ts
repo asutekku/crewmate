@@ -53,8 +53,10 @@ async function main(): Promise<void> {
     // and this runs on every edit, so the common case — a session that has not
     // moved — must not pay for it.
     if (store.worktreeOf(sessionId) !== tree) store.setWorktree(sessionId, tree, currentBranch(cwd));
-    const self = store.liveSessions(now).find((s) => s.sessionId === sessionId);
-    const handle = self?.handle ?? store.handleFor(sessionId);
+    // Re-registers a reaped session. Losing THIS hook is the worst case of all:
+    // a session that records no claims raises no overlap warnings, which is the
+    // blindness the tool exists to end.
+    const handle = store.handleForOrRegister(sessionId, tree, currentBranch(cwd), now);
     if (!handle) return null;
 
     // Read peers' claims BEFORE recording our own, so this session's claim

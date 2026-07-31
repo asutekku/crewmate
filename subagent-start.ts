@@ -17,10 +17,9 @@
  * parent's tree is where the edit lands.
  */
 
-import { withStore } from "./store.ts";
+import { claimName, withStore } from "./store.ts";
 import { emit, readPayload } from "./shared.ts";
-import { relPath, resolveProject, worktreeRoot } from "./repo.ts";
-import { displayName } from "./store.ts";
+import { resolveProject } from "./repo.ts";
 
 /** Enough to spot a collision; a full list would crowd a fresh context. */
 const MAX_PATHS = 10;
@@ -32,7 +31,6 @@ async function main(): Promise<void> {
   if (!sessionId || !cwd) return;
 
   const project = resolveProject(cwd);
-  const tree = worktreeRoot(cwd);
 
   const text = withStore(project.dbPath, (store) => {
     const now = Date.now();
@@ -45,9 +43,11 @@ async function main(): Promise<void> {
 
     const byHandle = new Map<string, string[]>();
     for (const c of others.slice(0, MAX_PATHS)) {
-      const owner = sessions.find((s) => s.handle === c.handle);
-      const key = owner ? displayName(owner) : c.handle;
-      byHandle.set(key, [...(byHandle.get(key) ?? []), relPath(c.path, tree)]);
+      // `c.path` is ALREADY tree-relative (`pre-edit` relativises before
+      // storing), so it is used as-is. Re-relativising here would be a no-op at
+      // best and wrong at worst — it would measure a peer's path against THIS
+      // session's tree.
+      byHandle.set(claimName(c), [...(byHandle.get(claimName(c)) ?? []), c.path]);
     }
     const lines = ["Other Claude Code sessions in this project are editing these files:"];
     for (const [who, paths] of byHandle) lines.push(`  ${who}: ${paths.join(", ")}`);

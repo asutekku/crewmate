@@ -14,26 +14,10 @@
 
 import { withStore } from "./store.ts";
 import { emit, formatMessages, formatRoster, readPayload, TRUST_NOTE } from "./shared.ts";
-import { resolveProject, worktreeRoot } from "./repo.ts";
+import { currentBranch, resolveProject, worktreeRoot } from "./repo.ts";
 import { topicOf } from "./topic.ts";
 
 
-/**
- * The MOST RECENT prompt that names a topic is the session's stated task.
- *
- * This used to be the FIRST such prompt, on the reasoning that a mid-session
- * follow-up ("now fix the test") reads as nonsense to a peer. That guard is no
- * longer needed — `topicOf` rejects contentless text directly — and keeping it
- * made the field describe what a session was asked once rather than what it is
- * doing. Measured across four live sessions on 2026-07-31, the first-prompt rule
- * produced: one session frozen on its opening question while working on
- * something else entirely, one frozen on an ANSWER it had given ("Yes, byte
- * identical generation is not needed…"), and two blank. Nothing in the column
- * was current.
- *
- * A stale label is worse than a moving one: a peer reads the roster to decide
- * whether to interrupt, and deciding against yesterday's topic is the failure.
- */
 async function main(): Promise<void> {
   const payload = await readPayload();
   const sessionId = payload?.session_id;
@@ -47,10 +31,21 @@ async function main(): Promise<void> {
     const now = Date.now();
     store.touch(sessionId, now);
 
-    const self = store.liveSessions(now).find((s) => s.sessionId === sessionId);
-    const handle = self?.handle ?? store.handleFor(sessionId);
+    // Re-registers if the row was reaped: this hook firing proves the session
+    // is alive, and a pruned session that cannot come back is invisible to
+    // every peer for the rest of its life.
+    const handle = store.handleForOrRegister(sessionId, tree, currentBranch(cwd), now);
     if (!handle) return null;
+    const self = store.liveSessions(now).find((s) => s.sessionId === sessionId);
 
+    // THE MOST RECENT prompt that names a topic is the session's stated task —
+    // not the first. The first-prompt rule made the column describe what a
+    // session was asked once rather than what it is doing: measured across four
+    // live sessions on 2026-07-31 it produced one agent frozen on its opening
+    // question, one frozen on an ANSWER it had given, and two blank. A stale
+    // label is worse than a moving one, because a peer reads the roster to
+    // decide whether to interrupt.
+    //
     // The roster gets a SHORT, NON-VERBATIM label and nothing is posted to the
     // log. Publishing prompts word-for-word sent whatever the user typed —
     // credentials, client names, a pasted stack trace — to every peer in the

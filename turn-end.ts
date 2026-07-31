@@ -24,7 +24,7 @@
 
 import { withStore } from "./store.ts";
 import { emit, formatMessages, readPayload, TRUST_NOTE } from "./shared.ts";
-import { resolveProject } from "./repo.ts";
+import { currentBranch, resolveProject, worktreeRoot } from "./repo.ts";
 
 async function main(): Promise<void> {
   const payload = await readPayload();
@@ -41,7 +41,9 @@ async function main(): Promise<void> {
   const report = withStore(resolveProject(cwd).dbPath, (store) => {
     const now = Date.now();
     store.touch(sessionId, now);
-    const handle = store.handleFor(sessionId);
+    // Re-registers a reaped session: a turn ending proves it is alive, and a
+    // long turn that ran no Edit/Write heartbeats only once, at its start.
+    const handle = store.handleForOrRegister(sessionId, worktreeRoot(cwd), currentBranch(cwd), now);
     if (!handle) return null;
 
     // What this turn actually touched, from the claims it recorded. The
@@ -49,7 +51,10 @@ async function main(): Promise<void> {
     // prompts — but the FILES it edited are already published facts, and they
     // are the difference between a log worth reading and a wall of
     // "reached a stopping point".
-    const touched = store.claimsSince(sessionId, store.lastDoneMs(handle));
+    // Bounded by this session's own start so a recycled handle cannot inherit a
+    // dead predecessor's `done` timestamp as this turn's beginning.
+    const startedMs = store.findBySession(sessionId)?.startedMs ?? 0;
+    const touched = store.claimsSince(sessionId, store.lastDoneMs(handle, startedMs));
     const shown = touched.slice(0, 3).join(", ");
     const more = touched.length > 3 ? ` +${touched.length - 3} more` : "";
     const did = touched.length > 0 ? `${shown}${more}` : "";

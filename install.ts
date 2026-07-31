@@ -18,11 +18,16 @@
 
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const HOME = homedir().replace(/\\/g, "/");
 const BIN = `${HOME}/.claude/agent-presence/bin`;
 const SETTINGS = `${HOME}/.claude/settings.json`;
-const HERE = new URL(".", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+// `fileURLToPath`, not `URL.pathname`: pathname is percent-ENCODED, so a home
+// directory like `C:/Users/John Doe` arrives as `John%20Doe` and every read
+// under it fails. Decoding is not optional on a path that came from a URL.
+const HERE = `${dirname(fileURLToPath(import.meta.url)).replace(/\\/g, "/")}/`;
 
 /**
  * Everything except this installer, which has no business running as a hook.
@@ -65,10 +70,21 @@ interface HookEntry {
 /**
  * `bun` from PATH rather than an absolute binary: the same settings file has to
  * work on Linux and macOS, where a Windows `bun.exe` path does not exist.
+ *
+ * EXEC FORM (`args` present), not a shell string. HOOKS.MD: with `args` set,
+ * "each element is one argument exactly as written" and "no shell tokenization
+ * happens on any platform". The shell form `bun ${BIN}/x.ts` is unquoted, so a
+ * home directory containing a space — `C:/Users/John Doe/…` — tokenizes into
+ * two arguments and EVERY hook fails on EVERY firing. Because the hooks fail
+ * open, such a user sees nothing at all and believes the tool is installed.
+ * `bun` resolves to a real executable on all three platforms, which is what
+ * exec form requires on Windows.
  */
 function entry(script: string, extra: Record<string, unknown> = {}): unknown {
   return {
-    hooks: [{ type: "command", command: `bun ${BIN}/${script}`, timeout: 15, ...extra }],
+    hooks: [
+      { type: "command", command: "bun", args: [`${BIN}/${script}`], timeout: 15, ...extra },
+    ],
   };
 }
 
@@ -141,9 +157,20 @@ async function install(force: boolean): Promise<void> {
   const raw = JSON.stringify(settings);
   const hooks = (settings["hooks"] ?? {}) as Record<string, unknown[]>;
 
-  if (raw.includes("agent-presence/bin") && !force) {
+  // Compared as an EVENT SET, not as "is the string present anywhere". Any
+  // registration at all used to satisfy the check, so an update that ADDED an
+  // event copied the new script and never registered it — while `VERSION`
+  // advanced, so the roster reported this machine as current. The documented
+  // update command was the broken path.
+  const missing = REGISTRATIONS.filter(
+    ([event]) => !(Array.isArray(hooks[event]) ? hooks[event] : []).some((e) => isOurs(e)),
+  ).map(([event]) => event);
+  if (raw.includes("agent-presence/bin") && !force && missing.length === 0) {
     console.log("Hooks already registered — scripts updated. Use --force to re-register.");
     return;
+  }
+  if (missing.length > 0 && !force) {
+    console.log(`Registering ${missing.length} new event(s): ${missing.join(", ")}`);
   }
   for (const [event, reg] of REGISTRATIONS) {
     const existing = (Array.isArray(hooks[event]) ? hooks[event] : []).filter((e) => !isOurs(e));

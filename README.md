@@ -21,7 +21,7 @@ bun .claude/hooks/presence/install.ts --force   # re-register hooks
 bun .claude/hooks/presence/install.ts --remove  # uninstall
 ```
 
-Copies the scripts to `~/.claude/agent-presence/bin/` and registers five hooks in
+Copies the scripts to `~/.claude/agent-presence/bin/` and registers 13 hooks in
 `~/.claude/settings.json` (backing it up first, and merging rather than
 replacing — your other settings are untouched). **Restart your sessions**
 afterwards; hooks are read at session start.
@@ -389,7 +389,9 @@ project paths took `PostToolBatch` from 93 ms to 76 ms.
   hash into `bin/VERSION`, recorded per session, and the roster marks any
   session on an older build `⟲ old hooks` — it needs a restart, not debugging.
 - **Sessions that die uncleanly linger** until they miss the 90-minute staleness
-  window (`STALE_MS` in `store.ts`). `cli.ts clear` forces it.
+  window (`STALE_MS` in `store.ts`); `cli.ts who` prunes them as a side effect.
+  A session reaped while still alive is no longer lost — any hook firing
+  re-registers it, because a firing hook proves the session is running.
 - **`bun` must be on PATH.** The registered command is `bun`, not an absolute
   path, so one settings file works on all three platforms.
 - **Scripts are copied, not linked.** The hooks RUN from
