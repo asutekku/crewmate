@@ -41,29 +41,33 @@ messages are the demand; the 0 tasks are the warning.
 
 ## What this adds
 
-One durable record per agent per unit of work, replacing nothing and stealing
-its content from what agents already write unprompted.
+A durable record per unit of work — several open at once, each with a checklist
+the agent wrote — kept honest by a `Stop` hook that asks the agent to reconcile
+against it before going idle. It replaces nothing and steals its content from
+what agents already write unprompted.
 
 ```
 $ cli.ts board
 
   old-core-retirement-80                                  2 open · 1 closed
     ▸ retiring the old net core                        2h · updated 4m
-      plan     delete buildGraph → migrate callers → re-record baselines
-      now      3/3 · unwrapping withNetworkCore call sites
+      ✓ 1  delete buildGraph and the core flag
+      ✓ 2  migrate the 12 withNetworkCore call sites
+      ▪ 3  re-record baselines            ← current
       landed   3e36ff9  2f2ac31
       ⚠ breaks road baselines move (seed 42: 143→213 strokes); re-record
                citizenBaseline.json before this reaches master
     ▸ junction sliver fix                             40m · updated 12m
-      now      a cut shared by 2+ alignments is never absorbed
-      landed   9814150
+      ✓ 1  a cut shared by 2+ alignments is never absorbed
+      ▪ 2  verify across the six generated seeds
     ✓ road harness for terrain-controlled tests        closed 1h ago
     files      src/net/ (16 files)
 
   water-sim-timberborn-e2                                 1 open · 2 closed
     ▸ cheap fluid simulation                           3h · updated 1m
-      plan     shore fade → chunk uploads → per-texel pack
-      now      2/3 · fixing shore fade banding on shallow ponds
+      ✓ 1  per-texel pack (194.5ms → 39.5ms, byte-identical)
+      ▪ 2  shore fade banding on shallow ponds   ← current
+      ▪ 3  chunk uploads
       landed   db6d450  c17a24c
       ⚠ breaks water texture channel layout; G is now unread on wet cells
     files      src/render/ground/ (7 files)  +1 scratch
@@ -93,7 +97,7 @@ broadcast that scrolled past.
 
 ## Design
 
-### Two tables, because it has to be a timeline
+### Three tables, because it has to be a timeline
 
 **User ruling, 2026-07-31: several open records per agent, keyed to the agent,
 and the whole thing works as a timeline — "one record is useless".**
@@ -113,18 +117,32 @@ asked days later ("who broke the baselines?"). So:
 | `startedMs` / `closedMs` | hook + agent | `closedMs = 0` means open |
 | `outcome` | **hook** at SessionEnd, agent may override | `done` / `abandoned` |
 
+`work_steps` — the checklist, one row per phase. The only mutable field is
+`done_ms`, so ticking a step is not an event-fold question.
+
+| Field | Notes |
+|---|---|
+| `work_id`, `idx` | ordering within the item |
+| `text` | the phase, in the agent's own words |
+| `done_ms` | 0 while outstanding |
+| `note` | what actually happened, set when ticked; optional |
+
 `work_events` — append-only. **Nothing here is ever updated in place.**
 
 | Field | Notes |
 |---|---|
 | `id`, `work_id`, `ts_ms` | ordering |
-| `kind` | `started` `step` `landed` `breaks` `needs` `note` `closed` |
+| `kind` | `started` `step` `did` `landed` `breaks` `needs` `note` `closed` |
 | `body` | the text |
-| `ref` | a sha for `landed`, a step number for `step`, else empty |
+| `ref` | a sha for `landed`, a step index for `step`/`did`, else empty |
 
 Current state is a *fold* over the events, not a stored column: `status` is the
 latest `step`, `landed` is every `landed` ref, `breaks` is every un-retracted
 `breaks`. This is what makes `board --history` and `board` the same data.
+
+Steps are deliberately **not** derived from the event fold. "Which phases remain"
+is asked on every `Stop` (see *The idle check*), and it must be one indexed
+query rather than a replay of an agent's whole history.
 
 ### Identity: agent, not session
 
@@ -185,13 +203,16 @@ Everything above is already available:
 Deliberately few, and each maps to a sentence agents already write:
 
 ```sh
-cli.ts doing "<subject>" [--plan "a → b → c"]   # OPEN a new item (does not close others)
-cli.ts step  <n> "<status>"                     # progress on the most recent item
+cli.ts doing "<subject>" --plan "a; b; c"       # OPEN an item with a CHECKLIST
+cli.ts did   <n> ["<what changed>"]             # tick step n off
+cli.ts step  <n> "<status>"                     # working on step n, not finished
+cli.ts add   "<step>"                           # a phase the plan missed
 cli.ts landed <sha> [--breaks "<consequence>"]  # usually automatic; this is the override
 cli.ts breaks "<consequence>"                   # the field that matters most
 cli.ts needs  "<what is blocking>"              # or "" to clear
 cli.ts done  ["<subject match>"] [--abandoned]  # close one item
 cli.ts board [<agent>] [--history] [--all]      # read; --all includes closed
+cli.ts mine                                     # MY open items and unticked steps
 ```
 
 With several items open, every command needs to know *which*. Rule: **the most
@@ -201,6 +222,73 @@ narrates ("finished the sliver fix, back to the core work").
 
 Identity of the caller comes from `CLAUDE_CODE_SESSION_ID`, as `msg` already
 does — no `--from` to forget. It is then resolved to the agent key above.
+
+### The checklist is per phase, and the agent owns it
+
+*(User ruling, 2026-07-31: one entry per phase — "that's how agents like to
+work".)*
+
+`--plan` therefore stores **steps as rows**, not a display string:
+
+`work_steps` — `work_id`, `idx`, `text`, `done_ms`, `note`.
+
+This is what open question 2 was asking, and the answer is now forced: the idle
+check (below) has to name *which* step is outstanding, and `2/3` has to be
+derived rather than typed. A `→`-joined string cannot do either.
+
+Steps are the agent's own decomposition, not a schema we impose. `add` exists
+because a plan written at the start is always wrong by the middle, and an agent
+that cannot record a discovered phase will abandon the checklist instead.
+
+### The idle check — closing the loop
+
+*(User ruling, 2026-07-31: when an agent stops to idle, the hook asks whether it
+has updated and validated against its tasks.)*
+
+This is what makes the checklist more than decoration. A record an agent writes
+once and never revisits is worse than none — it looks current and is not.
+
+**The event is `Stop`, not `TeammateIdle`.** `TeammateIdle` fires only for
+agent-team teammates spawned by a lead; independently launched sessions — which
+is all of these — never emit it. `Stop` is where a turn ends, which is the
+moment the user described.
+
+**The mechanism is `additionalContext`, not `decision: "block"`.** Both continue
+the turn under the same protections, but `block` renders as a hook *error* and
+reads as a refusal to let the agent stop. HOOKS.MD names this exact use case for
+`additionalContext`: *"Use additionalContext when the hook is working as
+designed and giving Claude guidance, such as 'run the test suite before
+finishing'."* The register matters — the tool advises, it does not enforce.
+
+What the agent sees at `Stop`, only when there is something to reconcile:
+
+```
+Your open work record has 2 steps not ticked off:
+  2. migrate the 12 withNetworkCore call sites
+  3. re-record citizenBaseline.json
+You edited 16 files this turn. If a step is done, `cli.ts did 2`; if the plan
+changed, `cli.ts add "<step>"`. If neither, nothing to do.
+```
+
+**Silent unless it has a question.** It fires only when the agent has an open
+item AND either an unticked step or edits since the last update. An agent with a
+clean record stops with no injection at all — otherwise this becomes noise on
+every turn and gets ignored, taking the genuine warnings with it.
+
+Three guards, because a `Stop` hook that continues the turn is the one place
+this tool could genuinely misbehave:
+
+1. **`stop_hook_active` short-circuits it.** `turn-end.ts` already checks this.
+   Without it a hook that continues a turn can be re-entered by its own
+   continuation.
+2. **Once per work item per turn.** Recorded on the item, so a turn that
+   continues for another reason cannot re-ask.
+3. **It never blocks.** No `decision: "block"`, so the 8-continuation cap is a
+   backstop and not the mechanism. An agent that ignores it three times stops
+   anyway — being asked is not being required.
+
+**Cost.** This rides `turn-end.ts`, which already runs on every `Stop`, so it is
+one extra query on a hook that is already open. No new registration.
 
 ### Delivery: pull, not push
 
@@ -241,14 +329,22 @@ without understanding, or being ignored as noise.
 
 | Phase | Contents | Gate |
 |---|---|---|
-| **P0** | `work` + `work_events` tables; agent key from title with session fallback; `doing`/`done`/`board` | Two items open at once for one agent, both listed; closing one leaves the other |
+| **P0** | `work` + `work_steps` + `work_events`; agent key from title with session fallback; `doing --plan`/`did`/`done`/`board`/`mine` | Two items open at once for one agent, both listed with their checklists; closing one leaves the other |
 | **P1** | Hook auto-fill: subject from title, files from claims, lifecycle from existing hooks | An agent that never calls the CLI still has a usable row |
-| **P2** | `PostToolUse` commit detection → `landed` events | Real shas appear with no agent action |
-| **P3** | `step`/`breaks`/`needs`; `board --history`; `breaks` delivered to intersecting peers as non-interrupting context | A `breaks` reaches exactly the overlapping agents and ends nobody's turn |
-| **P4** | 7-day prune for closed records; SessionStart shows open items; `who` gains a one-line `▸ status` | Roster stays inside 80 columns; a closed record survives a restart and expires on time |
+| **P2** | **The idle check** in `turn-end.ts` — unticked steps + edits since last update, via `additionalContext` | It fires when a step is outstanding, stays silent when the record is clean, and never fires twice for one item in one turn |
+| **P3** | `PostToolUse` commit detection → `landed` events | Real shas appear with no agent action |
+| **P4** | `breaks`/`needs`; `board --history`; `breaks` delivered to intersecting peers as non-interrupting context | A `breaks` reaches exactly the overlapping agents and ends nobody's turn |
+| **P5** | 7-day prune for closed records; SessionStart shows open items; `who` gains a one-line `▸ status` | Roster stays inside 80 columns; a closed record survives a restart and expires on time |
 
-P0–P1 are the bet: if agents ignore `doing` but the auto-filled rows are still
-useful to *you*, that is already a win and P3 is optional.
+**P2 moved up**, ahead of commit detection. The idle check is what makes the
+checklist self-maintaining, and it is also the riskiest thing here — it is the
+only part that can interrupt an agent's turn. Better to learn early whether it
+reads as helpful or as nagging, on a small feature, than to build three more
+phases on top of a loop that turns out to be annoying.
+
+P0–P2 are the bet: a checklist agents write and a hook that keeps it honest. If
+agents ignore `doing` but the auto-filled rows still tell *you* what is
+happening, that is already a win and P4 is optional.
 
 **P0 must prove the timeline property**, not just that a row can be written —
 the append-only event table is the whole design, and a P0 that stores current
@@ -258,8 +354,17 @@ state in columns will not grow into `--history` later.
 
 **Agents may not use it** — the task board's 0 rows. Mitigated by hooks filling
 the skeleton, so the feature degrades to "a better `who`" rather than to nothing.
-**Measure before building P3**: if `work` rows are all hook-authored after a
+**Measure before building P4**: if `work` rows are all hook-authored after a
 week, the agent-facing verbs are not earning their place.
+
+**The idle check is the one thing here that can annoy.** Everything else in this
+tool is passive; this asks an agent a question at the moment it is trying to
+finish. Get the silence condition wrong and it fires on every turn, agents learn
+to skim past hook feedback, and it degrades the overlap warnings that already
+work. Hence: silent unless there is genuinely something outstanding, once per
+item per turn, and never blocking. If it still reads as nagging in practice, cut
+it — the checklist is useful without it, and P2 is deliberately early so that
+call can be made cheaply.
 
 **`breaks` is only as good as what agents write.** It cannot be derived. The
 evidence says they already write it (18 of 25 broadcasts) — this gives it a
@@ -270,7 +375,7 @@ field instead of a paragraph.
 references them. `files` is a query against `claims`, not a copy.
 
 **Row growth, now that events append.** `work` grows one row per work item, but
-`work_events` grows per *update* — and with P2 auto-recording every commit, a
+`work_events` grows per *update* — and with P3 auto-recording every commit, a
 busy agent could add dozens a day. Bounded three ways: events belong to a work
 item and die with it; closed items prune at 7 days (ruling 1) on their own
 sweep, since `STALE_MS` is about liveness and these are deliberately history;
@@ -296,12 +401,22 @@ honest, and makes a forgotten item look like what it is.
    append-only and current state is a fold rather than a stored column.
 3. **`breaks` steers, it does not interrupt.** Agents make their own decisions;
    the record informs them. No turn is ended and no tool call is blocked.
+4. **Agents write their own checklist, one entry per phase**, and a `Stop` hook
+   asks them to reconcile against it — "that's how agents like to work". This is
+   why `work_steps` is a table rather than a display string: the idle check has
+   to name which phase is outstanding, and `2/3` has to be derived.
+5. **`board` gains a one-line `▸ status` in `who`.** Confirmed; scheduled for P5
+   so the field is known to be populated before it takes roster space.
 
 ## Open questions
 
-1. **Should `plan` steps be structured rather than a `→` string?** A real list
-   makes `2/3` derivable and lets `step` reference a step by name. It also makes
-   `doing` fussier to call. Suggest string for P0, revisit if `step` is used.
-3. **Does `board` belong in `who`?** A one-line `▸ status` per agent would put
-   the moving fact where you already look, at ~7 extra lines. Suggest yes, after
-   P3 proves the field is populated.
+1. **Does the idle check need a per-session opt-out?** An agent doing something
+   genuinely unplanned (a quick review, answering a question) has no checklist to
+   reconcile and will be silent — but an agent that opened an item and then
+   pivoted gets asked about a plan it has abandoned. `done --abandoned` is the
+   honest answer; whether agents will reach for it is unknown until P2 runs.
+2. **Should a ticked step record what actually happened?** `work_steps.note` is
+   in the schema and `did <n> "<what changed>"` accepts it, but nothing yet
+   requires it. It is the difference between "step 2 done" and "step 2 done: 12
+   call sites migrated, 2 needed a different fix" — which is what makes the
+   timeline worth reading later. Suggest optional, and see whether agents fill it.
