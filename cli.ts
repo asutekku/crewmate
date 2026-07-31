@@ -33,6 +33,19 @@ import {
 const HUMAN_HANDLE = "human";
 
 /**
+ * Set by Claude Code in every process it spawns, so an agent shelling out to
+ * this CLI identifies itself without being asked to.
+ *
+ * WHY THIS IS NOT LEFT TO `--from`: an optional flag that an agent must
+ * remember to pass fails silently and forges the operator. Live, traffic-4b
+ * replied to a direct question without it; the message stored as `human` and
+ * reached its recipient reading `human to traffic-c9`, so the agent had typed
+ * "traffic-4b:" into the body by hand to say who it was. Provenance cannot
+ * depend on remembering a flag — the environment already knows.
+ */
+const ENV_SESSION = process.env["CLAUDE_CODE_SESSION_ID"] ?? "";
+
+/**
  * Resolved from the CWD, so running this from any worktree reads that repo's
  * roster — the same key the hooks use.
  */
@@ -79,7 +92,15 @@ function who(): void {
       const where = showTree && s.worktree !== "" ? dim(` ${s.worktree.split("/").pop() ?? ""}`) : "";
       const branch = s.branch !== "" ? dim(` (${s.branch})`) : "";
       const seen = activityColour(age)(agoText(s.lastSeenMs, now));
-      const task = s.intent !== "" ? s.intent : dim("(no stated task yet)");
+      // Same fallback as the agent-facing roster: with no stated task, what it
+      // holds is the truest available answer to "what is this one doing".
+      const held = claims.filter((c) => c.handle === s.handle);
+      const task =
+        s.intent !== ""
+          ? s.intent
+          : held.length > 0
+            ? dim(`working in ${held.slice(0, 2).map((c) => c.path).join(", ")}`)
+            : dim("(no stated task yet)");
       const t = taskCounts.get(s.sessionId);
       const prog = t && t.open + t.done > 0 ? dim(` [${t.done}/${t.open + t.done}]`) : "";
       // A blocked session is the one that wants your attention, so it reads red
@@ -153,12 +174,27 @@ function log(limit: number): void {
   });
 }
 
+/**
+ * Broadcast to every agent.
+ *
+ * An agent calling this speaks as ITSELF, not as you: `note` is the kind that
+ * carries the operator's words and outranks peer text wherever it is rendered,
+ * so letting a session post one would let it issue instructions in your voice.
+ */
 function say(text: string): void {
-  withStore(PROJECT.dbPath, (store) => {
-    store.post(HUMAN_HANDLE, "note", text, Date.now());
+  const from = withStore(PROJECT.dbPath, (store) => {
+    const now = Date.now();
+    const self = ENV_SESSION !== "" ? store.findBySession(ENV_SESSION) : null;
+    if (self) {
+      store.post(self.handle, "say", text, now);
+      return displayName(self);
+    }
+    store.post(HUMAN_HANDLE, "note", text, now);
+    return null;
   });
-  console.log(`${yellow("broadcast")} to ${bold(PROJECT.name)}: ${text}`);
-  console.log(dim("Every agent sees this on its next turn, marked as from you."));
+  const who = from === null ? "you" : from;
+  console.log(`${yellow("broadcast")} to ${bold(PROJECT.name)} ${dim(`as ${who}`)}: ${text}`);
+  console.log(dim(`Every agent sees this on its next turn, marked as from ${who}.`));
 }
 
 /**
@@ -175,6 +211,9 @@ function msg(target: string, text: string, from: string | undefined): void {
     const to = store.findByName(target, now);
     if (!to) return { ok: false as const, live: store.liveSessions(now) };
 
+    // Explicit `--from` wins (it is how you speak AS an agent); otherwise the
+    // environment identifies an agent caller, and only a genuine terminal —
+    // one with no Claude session around it — speaks as the operator.
     let handle = HUMAN_HANDLE;
     let fromLabel = "you";
     if (from !== undefined) {
@@ -182,6 +221,12 @@ function msg(target: string, text: string, from: string | undefined): void {
       if (!sender) return { ok: false as const, live: store.liveSessions(now), badFrom: true };
       handle = sender.handle;
       fromLabel = displayName(sender);
+    } else if (ENV_SESSION !== "") {
+      const self = store.findBySession(ENV_SESSION);
+      if (self) {
+        handle = self.handle;
+        fromLabel = displayName(self);
+      }
     }
     store.post(handle, "say", text, now, { sessionId: to.sessionId, name: displayName(to) });
     return { ok: true as const, to, fromLabel };

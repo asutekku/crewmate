@@ -44,15 +44,28 @@ async function main(): Promise<void> {
     const handle = store.handleFor(sessionId);
     if (!handle) return null;
 
+    // What this turn actually touched, from the claims it recorded. The
+    // assistant's own words are NOT republished — same leak class as user
+    // prompts — but the FILES it edited are already published facts, and they
+    // are the difference between a log worth reading and a wall of
+    // "reached a stopping point".
+    const touched = store.claimsSince(sessionId, store.lastDoneMs(handle));
+    const shown = touched.slice(0, 3).join(", ");
+    const more = touched.length > 3 ? ` +${touched.length - 3} more` : "";
+    const did = touched.length > 0 ? `${shown}${more}` : "";
+
     // A session waiting on a background task has NOT finished, and saying it has
     // is the roster's most misleading possible claim about a peer.
     if (background.length > 0) {
       const kinds = [...new Set(background.map((t) => t.type ?? "task"))].join(", ");
-      store.post(handle, "done", `paused, waiting on background work (${kinds})`, now);
+      const tail = did !== "" ? `; edited ${did}` : "";
+      store.post(handle, "done", `paused, waiting on background work (${kinds})${tail}`, now);
+    } else if (did !== "") {
+      store.post(handle, "done", `stopped after editing ${did}`, now);
     } else {
-      // The assistant's own words are NOT republished: same leak class as user
-      // prompts, and a peer needs the fact of a stop, not its content.
-      store.post(handle, "done", "reached a stopping point", now);
+      // Nothing was edited, so there is genuinely nothing to report beyond the
+      // stop itself — a conversational turn, or one that only read.
+      store.post(handle, "done", "reached a stopping point (no files edited)", now);
     }
 
     if (continuing) return null;

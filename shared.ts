@@ -106,7 +106,15 @@ export function formatRoster(
       treesDiffer && p.worktree !== "" && p.worktree !== selfWorktree && p.branch !== "";
     const where = elsewhere ? ` [worktree ${p.worktree.split("/").pop() ?? p.worktree}]` : "";
     const branch = elsewhere ? ` on ${p.branch}` : "";
-    const doing = p.intent ? ` — ${p.intent}` : " — (no stated task yet)";
+    // With no stated task, the files it holds are the honest answer to "what is
+    // this session doing" — and often a better one, since an intent is what was
+    // asked once while claims are what is happening now.
+    const mineNow = claims.filter((c) => c.handle === p.handle);
+    const derived =
+      mineNow.length > 0
+        ? ` — working in ${mineNow.slice(0, 2).map((c) => c.path).join(", ")}`
+        : " — (no stated task yet)";
+    const doing = p.intent ? ` — ${p.intent}` : derived;
     // `blocked` beats `status`: "waiting for permission approval" is the true
     // reason a session is not moving, where `idle` merely describes the symptom.
     const state = p.blocked !== "" ? `${p.blocked}, ` : p.status !== "" ? `${p.status}, ` : "";

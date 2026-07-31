@@ -381,6 +381,37 @@ export class Store {
     return prefixed.length === 1 ? (prefixed[0] ?? null) : null;
   }
 
+  /**
+   * Looks a session up by its id, ignoring staleness.
+   *
+   * Used to identify a CLI caller from `CLAUDE_CODE_SESSION_ID`. Staleness is
+   * deliberately NOT applied: a session running this command is by definition
+   * alive, whatever its last heartbeat says, and falling back to the operator's
+   * handle because a timestamp looked old would forge the user's identity.
+   */
+  findBySession(sessionId: string): Session | null {
+    const r = this.db
+      .query(
+        `SELECT session_id, handle, name, status, blocked, worktree, branch, intent,
+                last_seen_ms, started_ms
+           FROM sessions WHERE session_id = ?`,
+      )
+      .get(sessionId) as Record<string, string | number> | null;
+    if (!r) return null;
+    return {
+      sessionId: String(r["session_id"]),
+      handle: String(r["handle"]),
+      name: String(r["name"] ?? ""),
+      status: String(r["status"] ?? ""),
+      blocked: String(r["blocked"] ?? ""),
+      worktree: String(r["worktree"]),
+      branch: String(r["branch"]),
+      intent: String(r["intent"]),
+      lastSeenMs: Number(r["last_seen_ms"]),
+      startedMs: Number(r["started_ms"]),
+    };
+  }
+
   unregister(sessionId: string): void {
     this.db.query(`DELETE FROM claims WHERE session_id = ?`).run(sessionId);
     this.db.query(`DELETE FROM sessions WHERE session_id = ?`).run(sessionId);
@@ -554,6 +585,21 @@ export class Store {
     return out;
   }
 
+  /**
+   * When this session last announced a stopping point, or 0 if it never has.
+   *
+   * Used as the start of "this turn": anything claimed after the previous `done`
+   * was claimed since. Cheaper and more honest than tracking turn boundaries
+   * separately — the marker already exists and cannot drift out of sync with the
+   * thing it marks.
+   */
+  lastDoneMs(handle: string): number {
+    const r = this.db
+      .query(`SELECT MAX(ts_ms) AS t FROM messages WHERE handle = ? AND kind = 'done'`)
+      .get(handle) as { t: number | null } | null;
+    return Number(r?.t ?? 0);
+  }
+
   claim(sessionId: string, path: string, nowMs: number): void {
     this.db
       .query(
@@ -573,6 +619,26 @@ export class Store {
       )
       .all(path, sessionId, nowMs - STALE_MS) as Array<Record<string, string | number>>;
     return rows.map(toClaim);
+  }
+
+  /**
+   * Paths this session claimed since `sinceMs` — what it actually touched,
+   * rather than everything it has ever held.
+   *
+   * This is what makes a turn-end line worth reading. Measured with three live
+   * sessions on 2026-07-31: 7 of 7 log rows were `done`, and 4 were the literal
+   * string "reached a stopping point". A peer scanning that learns nothing at
+   * all, which made the log — the whole point of the system — pure noise.
+   */
+  claimsSince(sessionId: string, sinceMs: number): string[] {
+    const rows = this.db
+      .query(
+        `SELECT path FROM claims
+          WHERE session_id = ? AND ts_ms >= ?
+          ORDER BY ts_ms ASC`,
+      )
+      .all(sessionId, sinceMs) as Array<Record<string, string>>;
+    return rows.map((r) => String(r["path"]));
   }
 
   /** Every live claim, for the roster. */

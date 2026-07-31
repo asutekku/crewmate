@@ -27,6 +27,15 @@ async function main(): Promise<void> {
   // same file identically and their claims actually meet.
   const path = relPath(filePath, tree);
 
+  // `relPath` returns the input unchanged when it lies outside the tree, so an
+  // absolute path here means a file no peer can collide with — a scratchpad
+  // note, a file in ~/.claude, a sibling project. Claiming those filled the
+  // roster with unreadable temp paths (observed live 2026-07-31: a session's
+  // claim list led with a 100-character scratchpad path) and pushed the real,
+  // in-repo claims past the display cap.
+  const outsideTree = /^(?:[A-Za-z]:\/|\/)/.test(path.replace(/\\/g, "/"));
+  if (outsideTree) return;
+
   const warning = withStore(project.dbPath, (store) => {
     const now = Date.now();
     store.touch(sessionId, now);

@@ -61,18 +61,35 @@ show nothing, keeping the common case quiet.
 
 ```
 1 update(s) from other agents in Traffic:
-  [3m ago] ada done: finished a turn: Fixed the shore fade by depth-scaling the alpha ramp.
+  [3m ago] traffic-4b done: stopped after editing src/net/types/ids.ts, src/net/types/document.ts
 ```
+
+A turn-end line names the files that turn touched, taken from the claims the
+session recorded since its previous stop. The assistant's own words are never
+republished — but which files it edited is the difference between a log worth
+reading and a column of "reached a stopping point".
 
 ### Messaging
 
 Agents and you can send to **one** agent or to everyone:
 
 ```sh
-cli.ts msg traffic-16 "waterSim.ts is mine for the next hour"   # from you
-cli.ts msg traffic-16 "..." --from traffic-12                   # from an agent
-cli.ts say "branch before committing"                           # everyone
+cli.ts msg traffic-16 "waterSim.ts is mine for the next hour"   # to one agent
+cli.ts say "branch before committing"                           # to everyone
+cli.ts msg traffic-16 "..." --from traffic-12                   # speak AS an agent
 ```
+
+**The sender identifies itself; you do not pass a flag.** Claude Code sets
+`CLAUDE_CODE_SESSION_ID` in every process it spawns, so a message from an agent
+is attributed to that agent and one typed in a plain terminal is attributed to
+you. `--from` remains for speaking as a session deliberately.
+
+> This matters more than it looks. When `--from` was the only way to identify a
+> sender, an agent answering a direct question forgot it, its reply was stored
+> as **`human`**, and it reached the recipient reading `human to traffic-c9` —
+> a peer's words in the operator's voice. `say` from an agent is likewise
+> recorded as that agent's `say`, never as your `note`, because `note` outranks
+> peer text wherever it is rendered.
 
 A directed message is **shown only to its recipient** — the drain query filters
 on recipient, so an unaddressed peer never receives the row at all. Names match
@@ -288,12 +305,25 @@ project paths took `PostToolBatch` from 93 ms to 76 ms.
   but an idle peer reads its mail whenever you next prompt it.
 - **Claims are per-path, not per-region.** Two agents in different functions of
   one large file still read as an overlap.
-- **A stated task is the session's first prompt.** Later prompts do not update it
-  (a follow-up like "now fix the test" is meaningless to a peer), so a
-  long-running session's roster line can go stale. `cli.ts say` is the
-  workaround.
+- **Only files inside the tree are claimed.** A scratchpad note or a file under
+  `~/.claude` cannot collide with a peer, and claiming them buried the real
+  in-repo claims under 100-character temp paths.
+- **A stated task is the first prompt that names a topic.** Later prompts do not
+  update it (a follow-up like "now fix the test" is meaningless to a peer), so a
+  long-running session's roster line can go stale. `cli.ts say` is the workaround.
+
+  Prompts that are pure filler — "Lovely, start working on it." — set nothing,
+  because a *resumed* session's opening prompt is usually an acknowledgement of
+  a conversation the roster never saw. With three live sessions on 2026-07-31 all
+  three stated tasks were exactly that shape, so the roster's headline column
+  described nothing. A session with no stated task now falls back to the files it
+  currently holds, which is what it is *doing* rather than what it was *asked*.
 - **Sessions that die uncleanly linger** until they miss the 90-minute staleness
   window (`STALE_MS` in `store.ts`). `cli.ts clear` forces it.
 - **`bun` must be on PATH.** The registered command is `bun`, not an absolute
   path, so one settings file works on all three platforms.
-- **Scripts are copied, not linked.** Re-run `install.ts` after editing them.
+- **Scripts are copied, not linked.** The hooks RUN from
+  `~/.claude/agent-presence/bin/`; editing the copy in this repo changes nothing
+  until `bun install.ts --force` copies it over. Testing a fix against
+  `~/.claude/agent-presence/bin/cli.ts` before reinstalling exercises the OLD
+  code, and it passes or fails for the wrong reason.

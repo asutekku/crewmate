@@ -19,9 +19,20 @@ import { topicOf } from "./topic.ts";
 
 
 /**
- * The first prompt of a session is treated as its stated task. Later prompts do
- * not overwrite it, because mid-session prompts are usually follow-ups ("now fix
- * the test") that read as nonsense to a peer without the preceding context.
+ * The FIRST prompt that actually names a topic becomes the session's stated
+ * task. Later prompts do not overwrite it, because mid-session prompts are
+ * usually follow-ups ("now fix the test") that read as nonsense to a peer
+ * without the preceding context.
+ *
+ * "First that names a topic" rather than "first", because a resumed session's
+ * opening prompt is typically an acknowledgement. Measured with three live
+ * sessions on 2026-07-31, every stated task in the roster was filler of exactly
+ * that shape — "Ok great, start implementing the next steps.", "lovely, we can
+ * start working on next steps.", "Lovely, start working on it." Under the old
+ * rule the first of those latched forever and the roster's headline column
+ * described nothing for the rest of the session. `topicOf` now returns "" for
+ * such text, so an empty intent means "still nothing worth showing" and the
+ * next contentful prompt gets to fill it.
  */
 function shouldSetIntent(existing: string): boolean {
   return existing.trim().length === 0;
@@ -44,7 +55,10 @@ async function main(): Promise<void> {
     const handle = self?.handle ?? store.handleFor(sessionId);
     if (!handle) return null;
 
-    if (self && shouldSetIntent(self.intent) && payload.prompt) {
+    // `topicOf` can legitimately return "", so it is only written when it found
+    // something — otherwise a filler prompt would clear an intent that a later,
+    // contentful one had already established.
+    if (self && shouldSetIntent(self.intent) && payload.prompt && topicOf(payload.prompt) !== "") {
       // The roster gets a SHORT, NON-VERBATIM label and nothing is posted to the
       // log. Publishing prompts word-for-word sent whatever the user typed —
       // credentials, client names, a pasted stack trace — to every peer in the
