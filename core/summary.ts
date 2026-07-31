@@ -101,6 +101,9 @@ export function refreshSummary(
   try {
     Bun.spawn(["bun", workerPath, sessionId, transcriptPath, dbPath], {
       stdio: ["ignore", "ignore", "ignore"],
+      // Inherited by the `claude -p` the worker spawns, which is a REAL session
+      // and would otherwise register itself as a peer. See `isInternalSession`.
+      env: { ...process.env, PRESENCE_INTERNAL: "1" },
     });
   } catch {
     // No bun on PATH, spawn refused: the roster simply keeps the summary it has.
@@ -121,7 +124,17 @@ export async function generateSummary(activity: string, timeoutMs = 60_000): Pro
       stdin: new TextEncoder().encode(buildPrompt(activity)),
       stdout: "pipe",
       stderr: "ignore",
+      // Belt and braces: the worker already carries this, but an explicit value
+      // means a worker invoked by hand cannot forge a roster entry either.
+      env: { ...process.env, PRESENCE_INTERNAL: "1" },
     });
+    // KILLING STRANDS A ROSTER ROW. `proc.kill()` terminates the child before
+    // its own SessionEnd hook can run, so a timed-out call left a registered
+    // session behind FOREVER — that is how five "You label background jobs."
+    // agents appeared. The env var above stops them registering in the first
+    // place, which is the real fix; this timeout stays as a backstop for a call
+    // that hangs, and is now generous enough that a slow-but-working call is
+    // never killed (measured: ~8 s typical, 7.7 s on a warm cache).
     const timer = setTimeout(() => proc.kill(), timeoutMs);
     try {
       const out = await new Response(proc.stdout).text();

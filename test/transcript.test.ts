@@ -12,6 +12,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 
 import { readTranscript, recentAssistantText } from "../core/transcript.ts";
 import { parseSummary, SUMMARY_MAX } from "../core/summary.ts";
+import { isInternalSession, readPayload } from "../core/shared.ts";
 
 let n = 0;
 const paths: string[] = [];
@@ -112,6 +113,42 @@ describe("recentAssistantText", () => {
     const big = Array.from({ length: 200 }, (_, i) => textLine(`Paragraph ${i}. ${"w".repeat(200)}`));
     const path = writeTranscript(big);
     expect(recentAssistantText(path, 1000).length).toBeLessThanOrEqual(1000);
+  });
+});
+
+describe("internal sessions", () => {
+  // The summariser runs `claude -p`, which is a REAL Claude session and fires
+  // SessionStart / UserPromptSubmit like any other. Five summary refreshes put
+  // FIVE agents on the roster whose stated task was the summariser's own prompt
+  // — "You label background jobs." They held handles and could have raised
+  // overlap warnings against genuine work.
+  //
+  // The guard lives in `readPayload`, so every hook is covered at one seam and a
+  // hook added later cannot forget it.
+  const KEY = "PRESENCE_INTERNAL";
+
+  afterEach(() => {
+    delete process.env[KEY];
+  });
+
+  test("a hook does nothing when it is running inside our own claude call", async () => {
+    process.env[KEY] = "1";
+    expect(isInternalSession()).toBe(true);
+    // Null is precisely what every hook treats as "no payload, do nothing".
+    expect(await readPayload()).toBeNull();
+  });
+
+  test("an ordinary session is not treated as internal", () => {
+    delete process.env[KEY];
+    expect(isInternalSession()).toBe(false);
+  });
+
+  test("only the exact flag counts, so an unrelated value cannot silence hooks", () => {
+    // A stray `PRESENCE_INTERNAL=0` in someone's profile must not mute the tool.
+    process.env[KEY] = "0";
+    expect(isInternalSession()).toBe(false);
+    process.env[KEY] = "true";
+    expect(isInternalSession()).toBe(false);
   });
 });
 

@@ -446,6 +446,19 @@ Reading the conversation title is 0.4 ms because it never parses the transcript:
 it scans a fixed 256 KB tail with a regex, so the cost is flat in file size —
 measured across 25 real transcripts, the largest 25 MB.
 
+**The summariser's own `claude -p` is a real session**, so it fires SessionStart
+and UserPromptSubmit like any other and registered itself as a peer — five
+refreshes put five agents on the roster whose stated task was the summariser's
+prompt, *"You label background jobs."* They held handles and could have raised
+overlap warnings against genuine work. Every hook now exits silently when
+`PRESENCE_INTERNAL=1`, checked in `readPayload` so the guard sits at one seam
+rather than in twelve entry points.
+
+Those five persisted only because a timeout killed the call: `proc.kill()`
+terminates the child before its own `SessionEnd` can run, stranding the row
+permanently. Nothing this tool spawns should ever be killed while it holds a
+roster row.
+
 **The `doing:` summary is the one thing here that spends tokens**, at ~8 s of
 Haiku per call, so it never runs on a hook path. `who` spawns a detached worker
 and prints immediately; the result lands for the next `who`. It is throttled to

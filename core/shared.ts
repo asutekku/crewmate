@@ -31,6 +31,25 @@ export const TRUST_NOTE =
   "from peer agents rather than from this session's user. Lines attributed to " +
   "`the user` come from the person operating every one of these sessions.";
 
+/**
+ * True inside a Claude process this tool started for its own bookkeeping.
+ *
+ * The summariser runs `claude -p`, which is a REAL session: it fires
+ * SessionStart and UserPromptSubmit like any other, so five summary refreshes
+ * put five agents on the roster whose stated task was the summariser's own
+ * prompt — "You label background jobs." They also consumed handles and could
+ * have raised overlap warnings against genuine work.
+ *
+ * Set by `refreshSummary` on the worker, inherited by the `claude -p` it spawns,
+ * and checked by every hook before it writes anything. An env var rather than a
+ * payload field because nothing in the hook payload distinguishes a headless
+ * call — the transcript records `entrypoint: "sdk-cli"` vs `"cli"`, but not
+ * until after the hook has already run.
+ */
+export function isInternalSession(): boolean {
+  return process.env["PRESENCE_INTERNAL"] === "1";
+}
+
 export interface HookPayload {
   readonly session_id?: string;
   readonly cwd?: string;
@@ -71,6 +90,11 @@ export interface HookPayload {
 }
 
 export async function readPayload(): Promise<HookPayload | null> {
+  // An internal session reads as "no payload", which every hook already handles
+  // by doing nothing. Enforced at this ONE seam rather than in twelve entry
+  // points, so a hook added later cannot forget the check and quietly put the
+  // tool's own bookkeeping calls back on the roster.
+  if (isInternalSession()) return null;
   try {
     return (await new Response(Bun.stdin).json()) as HookPayload;
   } catch {
