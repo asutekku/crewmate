@@ -19,25 +19,21 @@ import { topicOf } from "./topic.ts";
 
 
 /**
- * The FIRST prompt that actually names a topic becomes the session's stated
- * task. Later prompts do not overwrite it, because mid-session prompts are
- * usually follow-ups ("now fix the test") that read as nonsense to a peer
- * without the preceding context.
+ * The MOST RECENT prompt that names a topic is the session's stated task.
  *
- * "First that names a topic" rather than "first", because a resumed session's
- * opening prompt is typically an acknowledgement. Measured with three live
- * sessions on 2026-07-31, every stated task in the roster was filler of exactly
- * that shape — "Ok great, start implementing the next steps.", "lovely, we can
- * start working on next steps.", "Lovely, start working on it." Under the old
- * rule the first of those latched forever and the roster's headline column
- * described nothing for the rest of the session. `topicOf` now returns "" for
- * such text, so an empty intent means "still nothing worth showing" and the
- * next contentful prompt gets to fill it.
+ * This used to be the FIRST such prompt, on the reasoning that a mid-session
+ * follow-up ("now fix the test") reads as nonsense to a peer. That guard is no
+ * longer needed — `topicOf` rejects contentless text directly — and keeping it
+ * made the field describe what a session was asked once rather than what it is
+ * doing. Measured across four live sessions on 2026-07-31, the first-prompt rule
+ * produced: one session frozen on its opening question while working on
+ * something else entirely, one frozen on an ANSWER it had given ("Yes, byte
+ * identical generation is not needed…"), and two blank. Nothing in the column
+ * was current.
+ *
+ * A stale label is worse than a moving one: a peer reads the roster to decide
+ * whether to interrupt, and deciding against yesterday's topic is the failure.
  */
-function shouldSetIntent(existing: string): boolean {
-  return existing.trim().length === 0;
-}
-
 async function main(): Promise<void> {
   const payload = await readPayload();
   const sessionId = payload?.session_id;
@@ -55,18 +51,18 @@ async function main(): Promise<void> {
     const handle = self?.handle ?? store.handleFor(sessionId);
     if (!handle) return null;
 
-    // `topicOf` can legitimately return "", so it is only written when it found
-    // something — otherwise a filler prompt would clear an intent that a later,
-    // contentful one had already established.
-    if (self && shouldSetIntent(self.intent) && payload.prompt && topicOf(payload.prompt) !== "") {
-      // The roster gets a SHORT, NON-VERBATIM label and nothing is posted to the
-      // log. Publishing prompts word-for-word sent whatever the user typed —
-      // credentials, client names, a pasted stack trace — to every peer in the
-      // repo, and produced lines like `turing was asked by its user: "go"` that
-      // carried no information at all. A peer needs to know roughly what a
-      // session is for; it does not need the transcript.
-      store.setIntent(sessionId, topicOf(payload.prompt));
-    }
+    // The roster gets a SHORT, NON-VERBATIM label and nothing is posted to the
+    // log. Publishing prompts word-for-word sent whatever the user typed —
+    // credentials, client names, a pasted stack trace — to every peer in the
+    // repo, and produced lines like `turing was asked by its user: "go"` that
+    // carried no information at all. A peer needs to know roughly what a session
+    // is for; it does not need the transcript.
+    //
+    // Written only when `topicOf` found something: it returns "" for filler and
+    // for pasted output, and clearing a good label because the latest prompt was
+    // "yes" would lose the last true thing the column had.
+    const topic = payload.prompt !== undefined ? topicOf(payload.prompt) : "";
+    if (self && topic !== "") store.setIntent(sessionId, topic);
 
     const unread = store.drainUnread(sessionId);
     if (unread.length === 0) return null;

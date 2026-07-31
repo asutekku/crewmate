@@ -32,6 +32,14 @@ describe("topicOf rejects", () => {
     ["filler, longer", "Ok great, start implementing the next steps."],
     ["filler, plural", "lovely, we can start working on next steps."],
     ["too few words", "go"],
+    // FILLER is matched one word at a time, so multi-word entries in it can
+    // never fire. "go ahead" and "carry on" were listed as phrases, and these
+    // three sailed through as stated tasks.
+    ["a three-word continuation", "yes go ahead"],
+    ["a polite continuation", "go ahead please"],
+    ["a continuation with a tail", "carry on then"],
+    ["an approval", "yes that works"],
+    ["a hand-off", "ok you can start now"],
     // A redacted secret still reveals that a secret was there, and what kind.
     ["credential-shaped text", "use api_key=sk-abcdefghijklmnopqrstuvwxyz012345"],
   ])("%s", (_name, prompt) => {
@@ -51,6 +59,14 @@ describe("topicOf keeps", () => {
     ["a short list", "do these:\nfix lanes\nfix ramps\nfix signals"],
     // Filler at the START is normal speech, not a contentless prompt.
     ["a task opening with filler", "Ok great, now fix the waterTexture channel packing"],
+    // The guard against an over-eager FILLER list: each of these is mostly
+    // common words, and every one of them is a real instruction. One noun is
+    // enough to make a phrase worth showing.
+    ["a short real task", "fix the tests"],
+    ["a terse instruction", "commit the hooks"],
+    ["work named by one noun", "now do the lanes"],
+    ["a task with a verb and object", "start the water sim"],
+    ["a question about work", "can you check the roster"],
   ])("%s", (_name, prompt) => {
     expect(topicOf(prompt)).not.toBe("");
   });

@@ -99,7 +99,10 @@ function who(): void {
       // the explicit "(no stated task yet)".
       const task = s.intent !== "" ? s.intent : mine.length > 0 ? "" : dim("(no stated task yet)");
       const t = taskCounts.get(s.sessionId);
-      const prog = t && t.open + t.done > 0 ? dim(` [${t.done}/${t.open + t.done}]`) : "";
+      // No leading space: the separator between fields is added when the line is
+      // assembled, so a field that is present cannot smuggle in spacing that a
+      // field that is absent leaves behind.
+      const prog = t && t.open + t.done > 0 ? dim(`[${t.done}/${t.open + t.done}]`) : "";
       // A blocked session is the one that wants your attention, so it reads red
       // and outranks idle/busy — those describe the symptom, this the cause.
       const state =
@@ -110,12 +113,14 @@ function who(): void {
             : s.status === "idle"
               ? dim(" idle")
               : "";
-      // Joined rather than concatenated, so an empty task does not leave a gap.
-      const head = `  ${paint(bold(displayName(s)))}${state}${where}${branch}`;
-      const mid = `${task}${prog}`.trim();
-      console.log(
-        `${head}${mid === "" ? "" : `  ${mid}`}  ${dim("·")} ${seen}`,
+      // Assembled from the fields that are actually present, rather than
+      // concatenated and then trimmed. A field's colour codes come BEFORE its
+      // text, so `.trim()` cannot reach a leading space tucked inside them —
+      // an empty task left "master)   [6/6]" with three spaces.
+      const fields = [`${paint(bold(displayName(s)))}${state}${where}${branch}`, task, prog].filter(
+        (f) => f !== "",
       );
+      console.log(`  ${fields.join("  ")}  ${dim("·")} ${seen}`);
 
       if (mine.length === 0) continue;
       const shown = mine.slice(0, 6).map((c) => {
@@ -125,7 +130,10 @@ function who(): void {
         return shared ? red(`${c.path} ⚠`) : dim(c.path);
       });
       const more = mine.length > shown.length ? dim(` +${mine.length - shown.length} more`) : "";
-      console.log(`      ${dim("editing")} ${shown.join(dim(", "))}${more}`);
+      // A PLAIN separator. Colouring it wraps the comma and space in reset codes
+      // between two already-coloured paths, and a terminal that folds the line
+      // there can eat the space — the observed symptom was "topic.ts,.claude/…".
+      console.log(`      ${dim("editing")} ${shown.join(", ")}${more}`);
     }
 
     const contested = [...counts].filter(([, n]) => n > 1);

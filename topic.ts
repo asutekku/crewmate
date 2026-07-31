@@ -33,8 +33,12 @@ const SENSITIVE =
  * resumed session is an acknowledgement, because the actual subject was
  * established in the conversation that came before it.
  */
+// SINGLE WORDS ONLY — `isContentless` tests one word at a time, so a multi-word
+// entry here can never match and silently does nothing. "go ahead" and "carry
+// on" were listed as phrases, which let "yes go ahead" through as a stated task
+// because `ahead` and `then` were in no entry of their own.
 const FILLER =
-  /^(?:ok|okay|oh|ah|yeah|yes|yep|sure|right|great|lovely|nice|good|perfect|cool|thanks|thank you|please|now|so|and|but|then|well|alright|continue|continuing|go|go ahead|proceed|carry on|keep going|next|lets|let's|we|i|you|can|could|should|would|shall|will|start|started|begin|implement|implementing|work|working|do|doing|make|making|on|it|that|this|the|a|an|to|of|for|with|next|step|steps|thing|things|stuff|task|tasks|one|first|second|last|more|some|all|is|are|was|were|be|been|have|has|had|get|got|please)$/i;
+  /^(?:ok|okay|oh|ah|yeah|yes|yep|yup|sure|right|alright|great|lovely|nice|good|perfect|cool|awesome|thanks|thank|please|now|so|and|but|then|well|continue|continuing|go|going|ahead|proceed|carry|keep|next|lets|let's|we|i|you|can|could|should|would|shall|will|start|started|begin|implement|implementing|work|working|do|doing|done|make|making|on|it|that|this|the|a|an|to|of|for|with|step|steps|thing|things|stuff|task|tasks|one|two|first|second|last|more|some|any|all|is|are|was|were|be|been|being|have|has|had|get|got|up|out|in|at|if|as|too|also|just|still|again|ready|there|here|them|its|your|my|works|work|worked|fine|correct|agreed|exactly|indeed|true|looks|sounds|seems)$/i;
 
 /**
  * True when a phrase is made entirely of filler — an acknowledgement plus a

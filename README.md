@@ -226,11 +226,12 @@ where escape codes cost tokens and buy nothing.
 | `cli.ts` | Human inspection + broadcast. |
 | `install.ts` | Copy to `~/.claude/agent-presence/bin/`, register hooks. |
 | `topic.test.ts` | What may become a roster label, and what may not. |
+| `roster.test.ts` | Roster layout, asserted with colour codes stripped. |
 
 ## Tests
 
 ```sh
-bun test ./.claude/hooks/presence/topic.test.ts     # the leading ./ is required
+bun test ./.claude/hooks/presence/*.test.ts        # the leading ./ is required
 ```
 
 **The path must be explicit.** `bun test` skips dot-directories, so this file is
@@ -326,9 +327,13 @@ project paths took `PostToolBatch` from 93 ms to 76 ms.
 - **Only files inside the tree are claimed.** A scratchpad note or a file under
   `~/.claude` cannot collide with a peer, and claiming them buried the real
   in-repo claims under 100-character temp paths.
-- **A stated task is the first prompt that names a topic.** Later prompts do not
-  update it (a follow-up like "now fix the test" is meaningless to a peer), so a
-  long-running session's roster line can go stale. `cli.ts say` is the workaround.
+- **A stated task is the most recent prompt that names a topic.** It used to be
+  the FIRST such prompt, so the column described what a session was asked once
+  rather than what it is doing. Across four live sessions that rule produced one
+  agent frozen on its opening question while working on something else, one
+  frozen on an *answer it had given*, and two blank — nothing current. A stale
+  label is worse than a moving one, because a peer reads the roster to decide
+  whether to interrupt.
 
   Prompts that are pure filler — "Lovely, start working on it." — set nothing,
   because a *resumed* session's opening prompt is usually an acknowledgement of
