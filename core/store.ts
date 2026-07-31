@@ -24,6 +24,7 @@
 import { Database } from "bun:sqlite";
 
 import { ensureBaseDir } from "./repo.ts";
+import { createWorkTables, WorkStore } from "./work.ts";
 
 /**
  * A session with no heartbeat for this long is treated as gone. Sessions die by
@@ -271,6 +272,7 @@ function openDb(dbPath: string): Database {
       PRIMARY KEY (path, session_id)
     );
   `);
+  createWorkTables(db);
   // `CREATE TABLE IF NOT EXISTS` leaves an EXISTING table alone, so a column
   // added later never reaches a db that is already live — and this db is live
   // state that several running sessions are writing to, not a save file that
@@ -335,6 +337,18 @@ function rowToSession(r: Record<string, string | number>): Session {
 
 export class Store {
   constructor(private readonly db: Database) {}
+
+  /**
+   * The work-record tables, sharing this connection.
+   *
+   * A separate class rather than more methods here, because work records are a
+   * timeline with their own lifetime rule (`WORK_KEEP_MS`, deliberately outliving
+   * the `STALE_MS` sweep) and folding them into the roster's store would put two
+   * different notions of "expired" in one file.
+   */
+  get work(): WorkStore {
+    return new WorkStore(this.db);
+  }
 
   /** Sessions seen recently enough to be plausibly alive, oldest first. */
   liveSessions(nowMs: number): Session[] {
@@ -918,6 +932,12 @@ export class Store {
     this.db.query(`DELETE FROM claims WHERE session_id IN ${dead}`).run(cutoff);
     this.db.query(`DELETE FROM tasks WHERE session_id IN ${dead}`).run(cutoff);
     this.db.query(`DELETE FROM sessions WHERE last_seen_ms <= ?`).run(cutoff);
+    // WORK RECORDS ARE NOT SWEPT WITH THE SESSION. They are keyed on the agent
+    // precisely so they outlive the terminal that opened them — a record that
+    // evaporated when a session went stale could not answer "who moved the
+    // baselines?" a day later, which is the question it exists for. They expire
+    // on their own, longer clock, and only once CLOSED.
+    new WorkStore(this.db).pruneWork(nowMs);
   }
 }
 

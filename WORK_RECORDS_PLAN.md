@@ -2,7 +2,10 @@
 
 *Created: 2026-07-31*
 
-**PLAN ONLY. Nothing here is implemented.**
+**P0 shipped 2026-07-31. P1–P5 are still plan.** What P0 covers is marked in the
+phase table at the bottom; everything else here describes work not yet built.
+The shipped behaviour is documented in `README.md` under *The work board* — this
+file stays as the reasoning behind it, not as its documentation.
 
 ## The problem, measured
 
@@ -403,7 +406,7 @@ without understanding, or being ignored as noise.
 
 | Phase | Contents | Gate |
 |---|---|---|
-| **P0** | `work` + `work_steps` + `work_events`; agent key from title with session fallback; `doing --plan`/`did`/`done`/`board`/`mine` | Two items open at once for one agent, both listed with their checklists; closing one leaves the other |
+| **P0 — SHIPPED** | `work` + `work_steps` + `work_events`; agent key from title with session fallback; `doing --plan`/`did`/`step`/`add`/`done`/`board`/`mine` | ✅ Two items open at once for one agent, both listed with their checklists; closing one leaves the other |
 | **P1** | Hook auto-fill: subject from title, files from claims, lifecycle from existing hooks | An agent that never calls the CLI still has a usable row |
 | **P2** | **The idle check** in `turn-end.ts` — unticked steps + edits since last update, via `additionalContext`, behind a `remind`/`insist`/`require` level constant | It fires when a step is outstanding, stays SILENT for an item with no checklist, never fires twice for one item in one turn, and flipping the constant to `require` needs no other edit |
 | **P3** | `PostToolUse` commit detection → `landed` events | Real shas appear with no agent action |
@@ -423,6 +426,38 @@ happening, that is already a win and P4 is optional.
 **P0 must prove the timeline property**, not just that a row can be written —
 the append-only event table is the whole design, and a P0 that stores current
 state in columns will not grow into `--history` later.
+
+### What P0 established (2026-07-31)
+
+Both gates hold, and the timeline property is tested rather than asserted:
+`test/work.test.ts` walks an item through seven events and checks that ids and
+timestamps ascend, that `foldEvents` reconstructs `landed`/`breaks`/`needs`/
+`status` from them alone, and that a **restarted session picks up the checklist
+its predecessor opened** — the property the title-keyed identity exists for,
+verified end-to-end as well (a session registered as `e2e-session-2` ticked step
+2 of an item `e2e-session-1` had opened). 46 tests across `work` and `board`;
+165 in the tool overall, all green.
+
+Three things the plan did not anticipate:
+
+- **`add` had to work on an item with no plan.** The command list treated it as a
+  correction to an existing checklist, but it is also the only path from "no
+  checklist" to "a checklist" — which is exactly the transition P2's strictness
+  gate reads. Tested from both directions.
+- **`step` earned its place after all**, and is in P0 rather than P4. Without it
+  an item with no checklist has nothing to say between `doing` and `done`, and
+  that is the item the auto-fill phases will produce most of.
+- **The board's widths must be measured on unpainted text.** Padding computed
+  from a painted string counts ANSI escapes as columns, so the age column drifted
+  by ~8 characters per colour — and only in a terminal, never in a piped test.
+  `board.ts` therefore takes a paint callback and computes every width before
+  painting; `test/board.test.ts` asserts the painted and plain lines are identical
+  once escapes are stripped, and that no line exceeds the terminal at 40/60/80.
+
+One thing deliberately built early: `work.asked_turn_ms` and `markAsked` are in
+the schema and tested, though nothing reads them until P2. They are the "once per
+item per turn" guard, and the plan's claim that flipping to `require` is a
+one-constant change is only true if that guard exists from the start.
 
 ## Risks
 

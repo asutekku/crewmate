@@ -8,6 +8,16 @@
  *   bun cli.ts clear             # wipe roster
  *   bun cli.ts where             # which project/db this directory maps to
  *
+ * And the work board — what each agent is doing, as a timeline:
+ *
+ *   bun cli.ts doing "<subject>" [--plan "a; b; c"]   # open an item
+ *   bun cli.ts did <n> ["<what changed>"]             # tick step n off
+ *   bun cli.ts step <n> "<status>"                    # in progress, not finished
+ *   bun cli.ts add "<step>"                           # a phase the plan missed
+ *   bun cli.ts done [<subject match>] [--abandoned]   # close ONE item
+ *   bun cli.ts board [<agent>] [--history] [--all]    # read the board
+ *   bun cli.ts mine                                   # my open items
+ *
  * The project is resolved from the CWD exactly as the hooks resolve it, so
  * running this from any worktree reads that repo's roster.
  *
@@ -29,6 +39,9 @@ import {
   summarizeFiles,
   terminalWidth,
 } from "./core/layout.ts";
+import { agentKey, BOARD_OPEN_SHOWN, foldEvents, parsePlan, progress } from "./core/work.ts";
+import { agentTally, briefAge, briefAgo, itemLines } from "./core/board.ts";
+import type { BoardPaint } from "./core/board.ts";
 import {
   activityColour,
   bold,
@@ -421,6 +434,292 @@ function where(): void {
 }
 
 /**
+ * Who is calling, as an agent identity that survives a restart.
+ *
+ * Returns null for a genuine terminal — no Claude session around it — because
+ * the operator has no work record of their own and should be told so rather
+ * than silently opening one under a synthetic key.
+ */
+function callerIdentity(store: StoreHandle): { agentId: string; agentName: string } | null {
+  if (ENV_SESSION === "") return null;
+  const self = store.findBySession(ENV_SESSION);
+  // A session whose roster row was reaped is still an agent — the same reasoning
+  // `say` uses. Falling back to the operator here would file its work under a
+  // key no restart of that conversation could ever find again.
+  const title = self?.title ?? "";
+  // The HANDLE, not a slice of the session id: a work record outlives the
+  // session that opened it, and `e2e-sess` on a board read next week names
+  // nobody. `displayName` prefers Claude Code's own `traffic-a0` and falls back
+  // to the handle, both of which a reader recognises.
+  const name = self
+    ? displayName(self)
+    : (store.handleFor(ENV_SESSION) ?? ENV_SESSION.slice(0, 8));
+  return { agentId: agentKey(title, ENV_SESSION), agentName: name };
+}
+
+/** `withStore`'s callback argument, named so helpers can take one. */
+type StoreHandle = Parameters<Parameters<typeof withStore>[1]>[0];
+
+/** The paint set the board uses in a terminal. */
+const BOARD_PAINT: BoardPaint = { bold, dim, green, red, cyan, name: cyan };
+
+/** Prints the "you are not an agent" refusal every write command shares. */
+function notAnAgent(verb: string): void {
+  console.error(`${verb} records work for the agent that runs it.`);
+  console.error(
+    dim("  No CLAUDE_CODE_SESSION_ID here, so there is no agent to record it against."),
+  );
+  console.error(dim("  Read the board with `cli.ts board`."));
+  process.exitCode = 1;
+}
+
+/**
+ * Opens a work item, optionally with a checklist.
+ *
+ * `--plan` is OPTIONAL by ruling: the agent judges whether the work has phases
+ * worth tracking, and an item with no steps is a legitimate end state rather
+ * than a half-filled form.
+ */
+function doing(subject: string, plan: string): void {
+  withStore(PROJECT.dbPath, (store) => {
+    const me = callerIdentity(store);
+    if (!me) return notAnAgent("`doing`");
+    const now = Date.now();
+    const steps = parsePlan(plan);
+    const workId = store.work.open(me.agentId, me.agentName, subject, steps, now);
+    console.log(`${cyan("▸")} ${bold(subject)} ${dim(`— work #${workId}`)}`);
+    for (const [i, s] of steps.entries()) console.log(`    ${dim(String(i + 1))}  ${s}`);
+    if (steps.length === 0) {
+      console.log(dim("    no checklist — `cli.ts add \"<step>\"` if phases appear"));
+    }
+    console.log(dim(`  Peers see it with \`cli.ts board\`. Close it with \`cli.ts done\`.`));
+  });
+}
+
+/** Ticks step `n` off, optionally recording what actually happened. */
+function did(n: number, note: string, match: string): void {
+  withStore(PROJECT.dbPath, (store) => {
+    const me = callerIdentity(store);
+    if (!me) return notAnAgent("`did`");
+    const now = Date.now();
+    const item = store.work.target(me.agentId, match);
+    if (!item) return noOpenItem(match);
+    if (!store.work.tick(item.workId, n, note, now)) {
+      const steps = store.work.steps(item.workId);
+      console.error(`${bold(item.subject)} has no step ${n}.`);
+      for (const s of steps) console.error(dim(`  ${s.idx}  ${s.text}`));
+      if (steps.length === 0) console.error(dim("  (no checklist — `cli.ts add \"<step>\"`)"));
+      process.exitCode = 1;
+      return;
+    }
+    printProgress(store, item.workId, item.subject);
+  });
+}
+
+/** Says which step is in progress, without claiming it is finished. */
+function step(n: number, status: string, match: string): void {
+  withStore(PROJECT.dbPath, (store) => {
+    const me = callerIdentity(store);
+    if (!me) return notAnAgent("`step`");
+    const now = Date.now();
+    const item = store.work.target(me.agentId, match);
+    if (!item) return noOpenItem(match);
+    store.work.record(item.workId, "step", status, now, String(n));
+    console.log(`${cyan("▪")} ${bold(item.subject)} ${dim(`step ${n}`)}: ${status}`);
+  });
+}
+
+/** Appends a phase the original plan missed. */
+function addStep(text: string, match: string): void {
+  withStore(PROJECT.dbPath, (store) => {
+    const me = callerIdentity(store);
+    if (!me) return notAnAgent("`add`");
+    const now = Date.now();
+    const item = store.work.target(me.agentId, match);
+    if (!item) return noOpenItem(match);
+    const idx = store.work.addStep(item.workId, text, now);
+    console.log(`${green("+")} ${bold(item.subject)} ${dim(`step ${idx}`)}: ${text}`);
+  });
+}
+
+/** Closes one item, leaving any other open item alone. */
+function doneWork(match: string, abandoned: boolean, body: string): void {
+  withStore(PROJECT.dbPath, (store) => {
+    const me = callerIdentity(store);
+    if (!me) return notAnAgent("`done`");
+    const now = Date.now();
+    const item = store.work.target(me.agentId, match);
+    if (!item) return noOpenItem(match);
+    const outcome = abandoned ? "abandoned" : "done";
+    const p = progress(store.work.steps(item.workId));
+    store.work.close(item.workId, outcome, body, now);
+    const mark = abandoned ? red("✗") : green("✓");
+    console.log(`${mark} ${bold(item.subject)} ${dim(outcome)}`);
+    // Closing with steps outstanding is allowed and worth SAYING: it is the
+    // honest exit from a plan that turned out wrong, and the record should show
+    // that the remaining phases were dropped rather than silently completed.
+    if (!abandoned && p.outstanding.length > 0) {
+      console.log(dim(`  ${p.outstanding.length} step(s) were still outstanding`));
+    }
+    const rest = store.work.openItems(me.agentId);
+    if (rest.length > 0) {
+      console.log(dim(`  still open: ${rest.map((i) => i.subject).join(", ")}`));
+    }
+  });
+}
+
+function noOpenItem(match: string): void {
+  if (match !== "") console.error(`no open work item matching ${bold(match)}.`);
+  else console.error("no open work item.");
+  console.error(dim('  Open one with `cli.ts doing "<subject>" --plan "a; b; c"`.'));
+  process.exitCode = 1;
+}
+
+function printProgress(store: StoreHandle, workId: number, subject: string): void {
+  const steps = store.work.steps(workId);
+  const p = progress(steps);
+  console.log(`${green("✓")} ${bold(subject)} ${dim(`${p.done}/${p.total}`)}`);
+  if (p.current) console.log(`  ${dim("next")}  ${p.current.idx}  ${p.current.text}`);
+  else if (p.total > 0) console.log(dim("  every step ticked — `cli.ts done` to close it"));
+}
+
+/** MY open items and what is still outstanding on them. */
+function mine(): void {
+  withStore(PROJECT.dbPath, (store) => {
+    const me = callerIdentity(store);
+    if (!me) return notAnAgent("`mine`");
+    const now = Date.now();
+    const items = store.work.openItems(me.agentId);
+    if (items.length === 0) {
+      console.log(dim("No open work items."));
+      console.log(dim('  `cli.ts doing "<subject>" --plan "a; b; c"` opens one.'));
+      return;
+    }
+    const width = terminalWidth();
+    for (const item of items) {
+      const steps = store.work.steps(item.workId);
+      const fold = foldEvents(store.work.events(item.workId));
+      for (const line of itemLines(item, steps, fold, now, width, BOARD_PAINT)) console.log(line);
+    }
+  });
+}
+
+/**
+ * The shared board: what every agent is working on.
+ *
+ * PULL, NOT PUSH. This is a command rather than an injection because the
+ * per-agent record is 4-6 lines, and seven agents would add ~35 lines to every
+ * turn to tell each agent six things it does not need.
+ */
+function board(who: string, opts: { history: boolean; all: boolean }): void {
+  withStore(PROJECT.dbPath, (store) => {
+    const now = Date.now();
+    store.work.pruneWork(now);
+    const target = who !== "" ? resolveAgentId(store, who, now) : undefined;
+    if (who !== "" && target === undefined) {
+      console.error(`no work records for ${bold(who)}.`);
+      process.exitCode = 1;
+      return;
+    }
+    const items = store.work.items({
+      ...(target !== undefined ? { agentId: target } : {}),
+      includeClosed: opts.all || opts.history,
+    });
+    if (items.length === 0) {
+      console.log(dim(`No work records in ${PROJECT.name}.`));
+      console.log(dim('  Agents open one with `cli.ts doing "<subject>"`.'));
+      return;
+    }
+    const width = terminalWidth();
+    if (opts.history) {
+      printHistory(store, items, now, width);
+      return;
+    }
+
+    // Grouped by agent, most recently touched agent first — the same ordering
+    // rule the roster uses, and for the same reason: whoever is doing something
+    // now is who you are looking for.
+    const byAgent = new Map<string, typeof items>();
+    for (const i of items) {
+      const g = byAgent.get(i.agentId);
+      if (g) g.push(i);
+      else byAgent.set(i.agentId, [i]);
+    }
+    for (const [, group] of byAgent) {
+      const first = group[0];
+      if (!first) continue;
+      const open = group.filter((i) => i.closedMs === 0);
+      const closed = group.length - open.length;
+      // The tally counts what is IN this view: with closed items hidden, saying
+      // "1 closed" beside a board that shows none is a claim the reader cannot
+      // check. The `--all` hint below is how they get at them instead.
+      const tally = agentTally(open.length, opts.all || opts.history ? closed : 0);
+      const name = first.agentName !== "" ? first.agentName : first.agentId;
+      const gap = Math.max(1, width - 2 - [...name].length - tally.length);
+      console.log("");
+      console.log(`  ${bold(handleColour(name)(name))}${" ".repeat(gap)}${dim(tally)}`);
+      // Beyond the first few, open items are a COUNT. Nothing stops an agent
+      // opening items it never closes, and a board that lists eleven of them
+      // stops being readable exactly when it most needs to be.
+      const shown = group.slice(0, BOARD_OPEN_SHOWN + closed);
+      for (const item of shown) {
+        const steps = store.work.steps(item.workId);
+        const fold = foldEvents(store.work.events(item.workId));
+        for (const line of itemLines(item, steps, fold, now, width, BOARD_PAINT)) console.log(line);
+      }
+      const hidden = group.length - shown.length;
+      if (hidden > 0) console.log(dim(`    +${hidden} more`));
+    }
+    console.log("");
+    // A closed record is kept for a week and is invisible here, so the default
+    // view has to SAY that there is more rather than looking like the whole
+    // history — "who broke the baselines?" is asked days after the item closed.
+    if (!opts.all) {
+      const withClosed = store.work.items({
+        ...(target !== undefined ? { agentId: target } : {}),
+        includeClosed: true,
+      });
+      const closed = withClosed.length - items.length;
+      if (closed > 0) console.log(dim(`  ${closed} closed — \`board --all\` to include them`));
+    }
+  });
+}
+
+/** The same rows as a timeline — what the append-only event table is for. */
+function printHistory(
+  store: StoreHandle,
+  items: readonly { workId: number; subject: string; startedMs: number }[],
+  nowMs: number,
+  width: number,
+): void {
+  for (const item of items) {
+    console.log("");
+    console.log(`  ${bold(item.subject)} ${dim(`started ${briefAgo(item.startedMs, nowMs)}`)}`);
+    for (const e of store.work.events(item.workId)) {
+      const when = dim(briefAge(e.tsMs, nowMs).padStart(6));
+      const ref = e.ref !== "" ? ` ${cyan(e.ref)}` : "";
+      console.log(`  ${when}  ${dim(e.kind.padEnd(8))}${ref} ${fit(e.body, width - 22)}`);
+    }
+  }
+  console.log("");
+}
+
+/**
+ * Maps a name a human would type onto the agent key its records are under.
+ *
+ * Matches a LIVE session's name first, then falls back to any name frozen on a
+ * work row — so a record still answers to its author's name after that session
+ * has exited, which is the whole point of keeping records past the session.
+ */
+function resolveAgentId(store: StoreHandle, query: string, nowMs: number): string | undefined {
+  const live = store.findByName(query, nowMs);
+  if (live) return agentKey(live.title, live.sessionId);
+  const q = query.toLowerCase();
+  const all = store.work.items({ includeClosed: true });
+  return all.find((i) => i.agentName.toLowerCase() === q)?.agentId;
+}
+
+/**
  * Deregisters a session, leaving its OS process alone.
  *
  * DEREGISTER, NEVER KILL (user ruling, 2026-07-31). Terminating a `claude.exe`
@@ -520,6 +819,78 @@ switch (cmd) {
     quit(target);
     break;
   }
+  case "doing": {
+    // `--plan` takes ONE argument, so the steps must be quoted as a unit;
+    // everything before it is the subject, joined so it need not be.
+    const args = [...rest];
+    let plan = "";
+    const pi = args.indexOf("--plan");
+    if (pi >= 0) {
+      plan = args[pi + 1] ?? "";
+      args.splice(pi, 2);
+    }
+    const subject = args.join(" ").trim();
+    if (!subject) {
+      console.error('usage: cli.ts doing "<subject>" [--plan "step a; step b; step c"]');
+      process.exit(1);
+    }
+    doing(subject, plan);
+    break;
+  }
+  case "did": {
+    const args = [...rest];
+    const n = Number(args.shift());
+    const match = takeFlag(args, "--item");
+    if (!Number.isInteger(n) || n < 1) {
+      console.error('usage: cli.ts did <n> ["<what changed>"] [--item <subject match>]');
+      process.exit(1);
+    }
+    did(n, args.join(" ").trim(), match);
+    break;
+  }
+  case "step": {
+    const args = [...rest];
+    const n = Number(args.shift());
+    const match = takeFlag(args, "--item");
+    const status = args.join(" ").trim();
+    if (!Number.isInteger(n) || n < 1 || !status) {
+      console.error('usage: cli.ts step <n> "<status>" [--item <subject match>]');
+      process.exit(1);
+    }
+    step(n, status, match);
+    break;
+  }
+  case "add": {
+    const args = [...rest];
+    const match = takeFlag(args, "--item");
+    const text = args.join(" ").trim();
+    if (!text) {
+      console.error('usage: cli.ts add "<step>" [--item <subject match>]');
+      process.exit(1);
+    }
+    addStep(text, match);
+    break;
+  }
+  case "done": {
+    const args = [...rest];
+    const abandoned = args.includes("--abandoned");
+    if (abandoned) args.splice(args.indexOf("--abandoned"), 1);
+    const body = takeFlag(args, "--note");
+    doneWork(args.join(" ").trim(), abandoned, body);
+    break;
+  }
+  case "board": {
+    const args = [...rest];
+    const history = args.includes("--history");
+    if (history) args.splice(args.indexOf("--history"), 1);
+    const all = args.includes("--all");
+    if (all) args.splice(args.indexOf("--all"), 1);
+    board(args.join(" ").trim(), { history, all });
+    break;
+  }
+  case "mine":
+    mine();
+    break;
   case "clear":
     clear();
     break;
@@ -530,7 +901,19 @@ switch (cmd) {
     console.error(
       `unknown command: ${cmd}\n` +
         "usage: who | log [n] | msg <name> \"<text>\" [--from <name>] | say <text> | " +
-        "quit <name> | clear | where",
+        "quit <name> | clear | where\n" +
+        '       doing "<subject>" [--plan "a; b; c"] | did <n> ["<what changed>"] | ' +
+        'step <n> "<status>" | add "<step>"\n' +
+        "       done [<subject match>] [--abandoned] | board [<agent>] [--history] [--all] | mine",
     );
     process.exit(1);
+}
+
+/** Pulls `--flag <value>` out of an arg list, returning "" when absent. */
+function takeFlag(args: string[], flag: string): string {
+  const i = args.indexOf(flag);
+  if (i < 0) return "";
+  const value = args[i + 1] ?? "";
+  args.splice(i, 2);
+  return value;
 }

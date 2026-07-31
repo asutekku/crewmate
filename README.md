@@ -178,6 +178,7 @@ bun ~/.claude/agent-presence/bin/cli.ts say "..."       # broadcast to every age
 bun ~/.claude/agent-presence/bin/cli.ts quit <name> # drop an agent from the roster
 bun ~/.claude/agent-presence/bin/cli.ts where      # which project/db this dir maps to
 bun ~/.claude/agent-presence/bin/cli.ts clear      # wipe roster (log self-prunes)
+bun ~/.claude/agent-presence/bin/cli.ts board      # the work board — see below
 ```
 
 ### Ending an agent
@@ -263,6 +264,96 @@ plain text.
 **Hook output is never colourised** — it goes into an agent's context window,
 where escape codes cost tokens and buy nothing.
 
+## The work board
+
+A durable record per unit of work — several open at once, each with a checklist
+the agent wrote. Agents already write status reports; before this they had
+nowhere to put them, so they went out as broadcasts (measured 2026-07-31: `say`
+bodies ran a median of 681 chars, 18 of the last 25 described a breaking change)
+and scrolled away. An agent joining an hour later could not ask what a peer was
+doing without reading backwards through the log.
+
+```sh
+cli.ts doing "<subject>" --plan "a; b; c"    # open an item, with a checklist
+cli.ts did   <n> ["<what changed>"]          # tick step n off
+cli.ts step  <n> "<status>"                  # working on n, not finished
+cli.ts add   "<step>"                        # a phase the plan missed
+cli.ts done  ["<match>"] [--abandoned]       # close ONE item
+cli.ts board [<agent>] [--history] [--all]   # read the board
+cli.ts mine                                  # my open items
+```
+
+```
+$ cli.ts board
+
+  ada                                                              2 open
+    ▸ retiring the old net core  1/4              2h · updated 4m
+      ✓ 1  delete buildGraph
+      ▪ 2  migrate the 12 call sites   ← current
+      ▪ 3  re-record baselines
+    ▸ junction sliver fix  0/2                    40m · updated 12m
+      ▪ 1  a cut shared by 2+ alignments is never absorbed   ← current
+```
+
+**Several items open at once**, because agents genuinely multitask — a junction
+fix lands in the middle of a core retirement, and collapsing those into one line
+loses both. A bare command means **the most recently touched item**; a subject
+substring picks another (`cli.ts done sliver`).
+
+### The checklist is optional, and that is load-bearing
+
+`--plan` can be omitted. An item with no steps is a legitimate end state, not a
+half-filled form — the agent judges whether the work has phases worth tracking,
+and quick checks do not need one. Whether a checklist *exists* then becomes a
+real signal: it is what will gate the planned idle check, so an agent doing a
+five-minute fix can never be nagged about a plan it never wrote.
+
+`add` exists because a plan written at the start is always wrong by the middle,
+and an agent that cannot record a discovered phase abandons the checklist
+instead of correcting it.
+
+### It is a timeline, not a status
+
+Every state change appends to `work_events`; nothing is overwritten. Current
+state is a **fold** over those events, so `board` and `board --history` read the
+same rows and cannot disagree:
+
+```
+$ cli.ts board ada --history
+
+  retiring the old net core started 2h ago
+      2h  started   delete buildGraph → migrate callers → re-record
+    1h40  did      1 delete buildGraph: the core flag went with it
+    1h05  landed   2f2ac31
+    1h04  breaks   seed 42 goes 143→213 strokes; re-record before this lands
+      38m  did      2 12 call sites migrated, 2 needed a different fix
+```
+
+`⚠ breaks` is the line the feature is for. Today that fact exists only inside a
+2500-char broadcast that has already scrolled past, and it is asked about days
+later ("who moved the baselines?").
+
+### Records outlive their session
+
+Work is keyed on the **agent**, not the session — a restarted terminal is a new
+session id, so a session-keyed record would split one agent's timeline exactly
+when it matters. The key is the **conversation title**, chosen by measuring three
+candidates against a live 5-agent roster rather than by reasoning:
+
+| Key | Distinct | Verdict |
+|---|---|---|
+| worktree + branch | 2 of 5 | four agents collapse onto `Traffic#master` |
+| worktree only | 2 of 5 | same collapse |
+| **conversation title** | **5 of 5** | unique for every agent |
+
+Worktree+branch is the intuitive answer and it is **wrong**: most agents work in
+the main tree. An untitled session falls back to its own id, degrading to one
+timeline per run rather than to nothing. `/clear` starts a new title and so a new
+timeline, which is arguably correct — a cleared conversation *is* new work.
+
+So an **open** record survives the roster's 90-minute stale sweep; a **closed**
+one is kept 7 days (`board --all`) and then pruned with its steps and events.
+
 ## Files
 
 Three folders by role: `hooks/` is the event surface, `core/` is everything they
@@ -303,16 +394,23 @@ replaces `bin/` wholesale so a module that moves cannot leave a stale twin.
 | `transcript.ts` | Bounded tail read of a session's own JSONL — conversation title, recent prose. |
 | `summary.ts` | Prompts Haiku for a "what is it doing now" line; spawns, never waits. |
 | `summarize-worker.ts` | The detached process that call runs in, so no hook ever blocks on it. |
+| `layout.ts` | Roster layout arithmetic — widths, file summarising, background processes. |
+| `work.ts` | The work board's tables, agent key, and the event fold. Its own lifetime rule. |
+| `board.ts` | Rendering the board — takes a paint callback, so it is testable without a terminal. |
 
 ### Top level
 
 | File | Role |
 |---|---|
-| `cli.ts` | Human inspection + broadcast. |
+| `cli.ts` | Human inspection + broadcast + the work board. |
 | `install.ts` | Copy to `~/.claude/agent-presence/bin/`, register hooks. |
 | `test/store.test.ts` | Delivery + identity, against a real throwaway db. |
 | `test/topic.test.ts` | What may become a roster label, and what may not. |
 | `test/roster.test.ts` | Roster layout, asserted with colour codes stripped. |
+| `test/layout.test.ts` | Width arithmetic and path classification. |
+| `test/transcript.test.ts` | Tail reads of real transcript shapes. |
+| `test/work.test.ts` | The timeline property, and several items open at once. |
+| `test/board.test.ts` | Board rendering — widths measured on UNPAINTED text. |
 
 ## Tests
 
