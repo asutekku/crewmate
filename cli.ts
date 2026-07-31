@@ -16,7 +16,7 @@
  * times. It posts under a fixed handle so agents can tell it from a peer.
  */
 
-import { agoText, displayName, withStore } from "./store.ts";
+import { agoText, claimName, displayName, withStore } from "./store.ts";
 import { installedVersion, resolveProject } from "./repo.ts";
 import { listAgents } from "./agents.ts";
 import {
@@ -151,7 +151,12 @@ function who(): void {
       console.log();
       console.log(red(`⚠ ${contested.length} file(s) claimed by more than one agent:`));
       for (const [path, n] of contested) {
-        const who = claims.filter((c) => c.path === path).map((c) => handleColour(c.handle)(c.handle));
+        // The session name, not the internal handle: `knuth` means nothing to
+        // someone whose terminals are all called `traffic-NN`, and the roster
+        // three lines above already resolved it.
+        const who = claims
+          .filter((c) => c.path === path)
+          .map((c) => handleColour(c.handle)(claimName(c)));
         console.log(`    ${path} ${dim("—")} ${who.join(dim(", "))} ${dim(`(${n} agents)`)}`);
       }
     }

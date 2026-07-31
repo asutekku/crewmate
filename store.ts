@@ -106,6 +106,14 @@ export interface Message {
 
 export interface Claim {
   readonly handle: string;
+  /**
+   * The claimant's Claude session name (`traffic-07`), or "" before one is
+   * known. Carried alongside the handle because a handle is an internal
+   * allocation detail: showing `knuth` to someone whose terminals are all
+   * called `traffic-NN` forces them to map the two by hand, and the roster
+   * already resolves it everywhere else.
+   */
+  readonly name: string;
   readonly path: string;
   /** The claimant's working tree — same tree means a real on-disk collision. */
   readonly worktree: string;
@@ -675,7 +683,8 @@ export class Store {
   conflictingClaims(sessionId: string, path: string, nowMs: number): Claim[] {
     const rows = this.db
       .query(
-        `SELECT s.handle AS handle, s.worktree AS worktree, c.path AS path, c.ts_ms AS ts_ms
+        `SELECT s.handle AS handle, s.name AS name, s.worktree AS worktree,
+                c.path AS path, c.ts_ms AS ts_ms
            FROM claims c JOIN sessions s ON s.session_id = c.session_id
           WHERE c.path = ? AND c.session_id != ? AND s.last_seen_ms > ?`,
       )
@@ -707,7 +716,8 @@ export class Store {
   allClaims(nowMs: number): Claim[] {
     const rows = this.db
       .query(
-        `SELECT s.handle AS handle, s.worktree AS worktree, c.path AS path, c.ts_ms AS ts_ms
+        `SELECT s.handle AS handle, s.name AS name, s.worktree AS worktree,
+                c.path AS path, c.ts_ms AS ts_ms
            FROM claims c JOIN sessions s ON s.session_id = c.session_id
           WHERE s.last_seen_ms > ? ORDER BY c.ts_ms ASC`,
       )
@@ -745,10 +755,16 @@ function toMessage(r: Record<string, string | number>): Message {
 function toClaim(r: Record<string, string | number>): Claim {
   return {
     handle: String(r["handle"]),
+    name: String(r["name"] ?? ""),
     path: String(r["path"]),
     worktree: String(r["worktree"]),
     tsMs: Number(r["ts_ms"]),
   };
+}
+
+/** The name a human should see for a claim: the session's, else its handle. */
+export function claimName(c: Claim): string {
+  return c.name !== "" ? c.name : c.handle;
 }
 
 export function agoText(fromMs: number, nowMs: number): string {

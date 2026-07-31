@@ -32,8 +32,9 @@ function session(over: Partial<Session> = {}): Session {
   };
 }
 
-const claim = (path: string, handle = "ada"): Claim => ({
+const claim = (path: string, handle = "ada", name = "traffic-4b"): Claim => ({
   handle,
+  name,
   worktree: "I:/Projects/Traffic",
   path,
   tsMs: 900,
@@ -86,6 +87,32 @@ describe("formatRoster layout", () => {
       "I:/Projects/Traffic",
     ).map(plain);
     expect(head).toContain("fix the lane solver");
+  });
+
+  test("names sessions the way the user does, never by internal handle", () => {
+    // Handles (`knuth`, `turing`, `lovelace`) are an allocation detail. Showing
+    // them next to Claude's own `traffic-NN` names forced the user to map the
+    // two by hand — "Why's there agent names & claude names mixed?"
+    const lines = formatRoster(
+      [session({ name: "traffic-07", handle: "knuth" })],
+      [claim("src/config.ts", "knuth", "traffic-07")],
+      2_000,
+      "I:/Projects/Traffic",
+    ).map(plain);
+    const all = lines.join("\n");
+    expect(all).toContain("traffic-07");
+    expect(all).not.toContain("knuth");
+  });
+
+  test("falls back to the handle when a session has no name yet", () => {
+    const [head] = formatRoster(
+      [session({ name: "", handle: "knuth" })],
+      [],
+      2_000,
+      "I:/Projects/Traffic",
+    ).map(plain);
+    // A blank sender is worse than an internal one.
+    expect(head).toContain("knuth");
   });
 
   test("blocked outranks status, because it is the cause not the symptom", () => {

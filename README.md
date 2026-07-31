@@ -232,7 +232,16 @@ where escape codes cost tokens and buy nothing.
 
 ```sh
 bun test ./.claude/hooks/presence/*.test.ts        # the leading ./ is required
+PRESENCE_TEST_DB=/tmp/x.db bun pre-edit.ts < payload.json   # run a hook safely
 ```
+
+**`PRESENCE_TEST_DB` redirects every hook to a throwaway db, and anything that
+runs a hook must set it.** Testing a hook means *running* it, and running it
+writes to whatever db it resolves — so a test payload lands in the live roster
+as a real session with real claims and real log lines. That happened on
+2026-07-31: probe sessions left 26 junk messages and a false contested-file
+warning naming a session on a file it never edited, which the user had to read
+past and which made a fake collision look real.
 
 **The path must be explicit.** `bun test` skips dot-directories, so this file is
 invisible to the repo-wide sweep and a bare `bun test .claude/...` matches

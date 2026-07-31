@@ -10,7 +10,7 @@
  * rather than by luck.
  */
 
-import { agoText, withStore } from "./store.ts";
+import { agoText, claimName, withStore } from "./store.ts";
 import { emit, readPayload } from "./shared.ts";
 import { currentBranch, relPath, resolveProject, worktreeRoot } from "./repo.ts";
 
@@ -65,7 +65,9 @@ async function main(): Promise<void> {
 
     // Announce the overlap to the log too, so the other agent learns about it on
     // its next turn rather than only at commit time.
-    const who = others.map((o) => o.handle).join(", ");
+    // Session names, not handles: this text is read by an agent that may go on
+    // to message the peer, and `cli.ts msg knuth` works only by luck.
+    const who = others.map((o) => claimName(o)).join(", ");
     store.post(handle, "claim", `also editing ${path} (already claimed by ${who})`, now);
 
     // Same tree means their edits are literally in these files right now; a
@@ -75,7 +77,7 @@ async function main(): Promise<void> {
     const here = others.filter((o) => !o.worktree || o.worktree === tree);
     const away = others.filter((o) => o.worktree && o.worktree !== tree);
     const names = (cs: typeof others): string =>
-      cs.map((o) => `${o.handle} (claimed ${agoText(o.tsMs, now)})`).join(", ");
+      cs.map((o) => `${claimName(o)} (claimed ${agoText(o.tsMs, now)})`).join(", ");
 
     // Stated as consequences rather than orders: HOOKS.MD warns that imperative
     // injected text can read as an out-of-band command and trip Claude's

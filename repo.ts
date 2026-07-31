@@ -123,8 +123,23 @@ function cacheResolve(cwdNorm: string, ctx: RepoContext): void {
   }
 }
 
+/**
+ * Redirects every hook to a throwaway db.
+ *
+ * Testing a hook means RUNNING it, and running it writes to whatever db it
+ * resolves — so a test payload lands in the live project roster as a real
+ * session with real claims and real log lines. That happened here on
+ * 2026-07-31: probe sessions left 26 junk messages and a false contested-file
+ * warning naming this session on a file it never edited, all of which the user
+ * had to read past. A test must not be able to reach the shared store at all.
+ */
+const TEST_DB = process.env["PRESENCE_TEST_DB"] ?? "";
+
 export function resolveProject(cwd: string): RepoContext {
   const cwdNorm = cwd.replace(/\\/g, "/").replace(/\/$/, "");
+  if (TEST_DB !== "") {
+    return { key: TEST_DB, root: cwdNorm, name: "test", isGit: false, dbPath: TEST_DB };
+  }
   const hit = cachedResolve(cwdNorm);
   if (hit) return hit;
   const commonDir = git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
