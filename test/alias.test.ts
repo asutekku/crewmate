@@ -11,7 +11,7 @@ import { unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, test } from "bun:test";
 
-import { displayName, STALE_MS, withStore } from "../core/store.ts";
+import { displayName, rosterName, STALE_MS, withStore } from "../core/store.ts";
 import { validateAlias } from "../core/topic.ts";
 
 let n = 0;
@@ -341,6 +341,69 @@ describe("a name survives a restart", () => {
       const handle = store.findBySession(ID)!.handle;
       store.post(handle, "say", "back again", now);
       expect(store.recent(1)[0]?.from).toBe("tooling");
+    });
+  });
+});
+
+/**
+ * The roster and `msg` must agree about who someone is.
+ *
+ * These are two functions with two audiences, and they drifted: `rosterName`
+ * resolved a name from `handle` while `displayName` resolved it from `alias`,
+ * so one agent read `Tooling — Tooling Master` on the roster and answered to
+ * `hopper` at `msg`. The operator caught it before any test did, because every
+ * test compared a name to a literal instead of comparing the two functions.
+ */
+describe("the roster name and the addressable name are the same name", () => {
+  const ID = "roster-agreement";
+
+  test("a chosen name is what the roster leads with", () => {
+    fresh((store) => {
+      const now = Date.now();
+      store.register(ID, "/tree", "master", now);
+      store.setAlias(ID, "hopper", now);
+      store.setRole(ID, "Tooling Master");
+
+      const s = store.findBySession(ID)!;
+      expect(rosterName(s)).toBe("Hopper — Tooling Master");
+      // The invariant, not the literal: whatever a peer types is what the
+      // operator reads, modulo capitalisation and the role suffix.
+      expect(rosterName(s).split(" — ")[0]?.toLowerCase()).toBe(displayName(s).toLowerCase());
+    });
+  });
+
+  test("the topic handle becomes the role when no role is set", () => {
+    fresh((store) => {
+      const now = Date.now();
+      store.register(ID, "/tree", "master", now);
+      store.setAlias(ID, "turing", now);
+
+      const s = store.findBySession(ID)!;
+      // NOT "Turing — ..." with the handle leading: the handle describes the
+      // work, so it stands in for the missing role, never for the name.
+      expect(rosterName(s).startsWith("Turing")).toBe(true);
+      expect(displayName(s)).toBe("turing");
+    });
+  });
+
+  test("the two agree for every combination of the three name fields", () => {
+    fresh((store) => {
+      const now = Date.now();
+      for (const [alias, role] of [
+        ["", ""],
+        ["hopper", ""],
+        ["", "Tooling Master"],
+        ["hopper", "Tooling Master"],
+      ] as const) {
+        const id = `${ID}-${alias}-${role}`;
+        store.register(id, "/tree", "master", now);
+        if (alias !== "") store.setAlias(id, alias, now);
+        if (role !== "") store.setRole(id, role);
+
+        const s = store.findBySession(id)!;
+        const lead = rosterName(s).split(" — ")[0] ?? "";
+        expect(lead.toLowerCase()).toBe(displayName(s).toLowerCase());
+      }
     });
   });
 });

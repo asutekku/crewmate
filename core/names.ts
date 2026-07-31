@@ -104,11 +104,11 @@ export function pickName(taken: ReadonlySet<string>): string {
  * the role are not part of it, so the composed string does not resolve.)
  * Nothing accepts this as input.
  *
- * `slug` is a self-chosen name standing in when no role is set — `Turing —
- * Water Dynamic` — which keeps what those slugs were already good at: saying
- * what someone works on. It is never Claude Code's `traffic-a9`; using that
- * produced "Traffic A9 Terrain Perf", a role nobody chose, built from the one
- * label here that is not stable.
+ * `slug` is the topic handle standing in when no role is set — `Turing — Water
+ * Dynamic` — which keeps what those slugs were already good at: saying what
+ * someone works on. It is never Claude Code's `traffic-a9`; using that produced
+ * "Traffic A9 Terrain Perf", a role nobody chose, built from the one label here
+ * that is not stable.
  *
  * The suffix is dropped when it would repeat the name, so an agent whose chosen
  * name IS its role does not read as the same word twice.

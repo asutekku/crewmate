@@ -52,7 +52,6 @@ import {
 } from "./core/layout.ts";
 import { agentKey, BOARD_OPEN_SHOWN, foldEvents, parsePlan, progress } from "./core/work.ts";
 import { validateAlias, validateRole } from "./core/topic.ts";
-import { titleCase } from "./core/names.ts";
 import { dirtyFiles } from "./core/dirty.ts";
 import { agentTally, briefAge, briefAgo, itemLines } from "./core/board.ts";
 import type { BoardPaint } from "./core/board.ts";
@@ -597,7 +596,10 @@ function callYou(role: string, target: string): void {
     if (!self) return;
     store.setRole(self.sessionId, check.role);
     const name = displayName(self);
-    console.log(`${green("✓")} ${bold(handleColour(name)(`${check.role} ${titleCase(name)}`))}`);
+    // Formatted by `rosterName`, never by hand: this line built its own
+    // "<role> <name>" string and so kept printing the old word order for a
+    // release after the roster had moved to "<name> — <role>".
+    console.log(`${green("✓")} ${bold(handleColour(name)(rosterName({ ...self, role: check.role })))}`);
     console.log(dim(`  Peers still reach them at \`${name}\` — the role is for you to read.`));
   });
 }

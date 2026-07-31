@@ -197,16 +197,19 @@ export function operatorNames(sessions: readonly Session[]): (name: string) => s
 }
 
 export function rosterName(s: Session): string {
-  // THE GIVEN NAME IS ALWAYS THE NAME, even when the agent has chosen another —
-  // otherwise a self-named agent reads "Tooling Master Tooling", the same word
-  // twice. A chosen name stands in FRONT, as the role does, because that is what
-  // it actually is: a statement of what this agent is for.
+  // THE NAME IS WHATEVER PEERS TYPE, so it comes from `displayName` and from
+  // nowhere else. Resolving it here independently is what made one agent read
+  // `Tooling — Tooling Master` on the roster while `msg` answered to `hopper`:
+  // this function treated `handle` as the name and `alias` as a role-fallback,
+  // which is the exact inverse of `displayName`'s precedence. One agent, two
+  // names, depending on which function you asked.
   //
-  // The prefix is never Claude Code's `traffic-a9`: that label is the unstable
-  // thing this design moved away from, and using it produced "Traffic A9
-  // Terrain Perf" — a role nobody chose.
-  const given = s.handle !== "" ? s.handle : displayName(s);
-  return fullName(given, s.role, s.alias);
+  // The role-fallback slug is therefore the HANDLE — a topic slug like
+  // `water-dynamic` says what an agent works on, which is what an unset role
+  // wants to say. It is never Claude Code's `traffic-a9`; that label is the
+  // unstable thing this design moved away from, and using it produced "Traffic
+  // A9 Terrain Perf", a role nobody chose.
+  return fullName(displayName(s), s.role, s.handle);
 }
 
 export interface Message {
