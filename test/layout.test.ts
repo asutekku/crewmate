@@ -14,6 +14,7 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  backgroundProcesses,
   commonDir,
   fit,
   isScratchPath,
@@ -172,6 +173,82 @@ describe("renderFileLine", () => {
 
   test("returns empty for no pieces instead of a stray separator", () => {
     expect(renderFileLine([], 40, paint)).toBe("");
+  });
+});
+
+describe("backgroundProcesses", () => {
+  const root = "I:/Projects/Traffic";
+  const proc = (sessionId: string, cwd: string, startedAtMs = 0) => ({
+    sessionId,
+    cwd,
+    startedAtMs,
+  });
+
+  test("finds a process in this repo that no roster row accounts for", () => {
+    // The case that motivated this: two sessions had been running 48 hours in
+    // worktrees no longer in use, invisible in every UI because their terminals
+    // were closed.
+    const found = backgroundProcesses(
+      [proc("live", root), proc("orphan", `${root}/.claude/worktrees/footprint-merge`)],
+      new Set(["live"]),
+      root,
+    );
+    expect(found.map((p) => p.sessionId)).toEqual(["orphan"]);
+  });
+
+  test("ignores processes belonging to other projects", () => {
+    // `claude agents --json` is machine-wide; without scoping, a session in an
+    // unrelated repo is reported as this one's stray.
+    const found = backgroundProcesses(
+      [proc("elsewhere", "C:/Users/akU/Documents/Nimikko")],
+      new Set(),
+      root,
+    );
+    expect(found).toEqual([]);
+  });
+
+  test("does not treat a sibling repo with a shared prefix as inside this one", () => {
+    // A bare startsWith puts `/Traffic-old` inside `/Traffic`, so an unrelated
+    // checkout would be listed as this repo's abandoned process.
+    const found = backgroundProcesses([proc("sibling", "I:/Projects/Traffic-old")], new Set(), root);
+    expect(found).toEqual([]);
+  });
+
+  test("keeps worktrees, which live beneath the root", () => {
+    const found = backgroundProcesses(
+      [proc("wt", `${root}/.claude/worktrees/water-sim-timberborn`)],
+      new Set(),
+      root,
+    );
+    expect(found).toHaveLength(1);
+  });
+
+  test("reports oldest first, since age is what makes one worth acting on", () => {
+    const found = backgroundProcesses(
+      [proc("new", root, 5_000), proc("ancient", root, 1_000), proc("mid", root, 3_000)],
+      new Set(),
+      root,
+    );
+    expect(found.map((p) => p.sessionId)).toEqual(["ancient", "mid", "new"]);
+  });
+
+  test("matches the root itself, not only its children", () => {
+    expect(backgroundProcesses([proc("here", root)], new Set(), root)).toHaveLength(1);
+  });
+
+  test("tolerates a trailing slash and backslashes in either path", () => {
+    // Windows paths arrive both ways depending on the producer.
+    const found = backgroundProcesses(
+      [proc("win", "I:\\Projects\\Traffic\\.claude\\worktrees\\x")],
+      new Set(),
+      `${root}/`,
+    );
+    expect(found).toHaveLength(1);
+  });
+
+  test("reports nothing when every process is registered", () => {
+    const found = backgroundProcesses([proc("a", root), proc("b", root)], new Set(["a", "b"]), root);
+    expect(found).toEqual([]);
   });
 });
 

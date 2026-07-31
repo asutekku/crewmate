@@ -21,6 +21,7 @@ import { installedVersion, resolveProject } from "./core/repo.ts";
 import { listAgents } from "./core/agents.ts";
 import { refreshSummary, SUMMARY_TTL_MS } from "./core/summary.ts";
 import {
+  backgroundProcesses,
   fit,
   pad,
   renderFileLine,
@@ -253,6 +254,26 @@ function who(): void {
       }
     };
 
+    // Processes with no roster row: a closed terminal leaves `claude.exe`
+    // running, and nothing else in the system reports them. Listed rather than
+    // acted on — see `quit` for why nothing here is ever killed.
+    const known = new Set(sessions.map((s) => s.sessionId));
+    // Only when the sample SUCCEEDED: an empty `agents --json` (an old CLI, a
+    // timeout) would otherwise read as "every process is a stray".
+    const background = agents.length > 0 ? backgroundProcesses(agents, known, PROJECT.root) : [];
+    if (background.length > 0) {
+      console.log();
+      console.log(
+        dim(`${background.length} background process(es) — no window, not on the roster:`),
+      );
+      for (const b of background.slice(0, 8)) {
+        const age = b.startedAtMs > 0 ? agoText(b.startedAtMs, now) : "unknown";
+        const leaf = b.cwd === PROJECT.root ? "" : ` ${b.cwd.split("/").pop() ?? ""}`;
+        console.log(dim(`    pid ${String(b.pid).padEnd(7)} ${b.name || "(unnamed)"}${leaf}  started ${age}`));
+      }
+      if (background.length > 8) console.log(dim(`    … ${background.length - 8} more`));
+    }
+
     if (sameTree.length > 0) {
       console.log();
       console.log(red(`⚠ ${sameTree.length} file(s) held by two agents in ONE tree:`));
@@ -399,6 +420,61 @@ function where(): void {
   console.log(`${dim("db:     ")} ${PROJECT.dbPath}`);
 }
 
+/**
+ * Deregisters a session, leaving its OS process alone.
+ *
+ * DEREGISTER, NEVER KILL (user ruling, 2026-07-31). Terminating a `claude.exe`
+ * destroys whatever that agent held in context, unrecoverably, and this tool
+ * cannot tell a session whose terminal was closed from one merely sitting idle
+ * — measured: window handle is 0 for every session including live ones, process
+ * ancestry is byte-identical between a closed tab and this one, and CPU time
+ * looked decisive over 6 s then INVERTED over 25 s. With no reliable liveness
+ * signal, killing on a guess would eventually kill working agents. Removing the
+ * roster row is safe and reversible: any hook the session fires re-registers it.
+ */
+function quit(target: string): void {
+  const agents = listAgents();
+  withStore(PROJECT.dbPath, (store) => {
+    const now = Date.now();
+    const sessions = store.liveSessions(now);
+    const match = sessions.find(
+      (s) => displayName(s).toLowerCase() === target.toLowerCase() || s.handle === target,
+    );
+    if (!match) {
+      console.error(`no agent named ${bold(target)} in ${PROJECT.name}`);
+      console.error(dim(`  active: ${sessions.map((s) => displayName(s)).join(", ") || "(none)"}`));
+      process.exitCode = 1;
+      return;
+    }
+
+    // WARN BEFORE REMOVING, because a roster row is how peers learn that a file
+    // is spoken for: dropping a session that holds a contested path takes the
+    // only warning about that collision with it.
+    const claims = store.allClaims(now);
+    const mine = claims.filter((c) => c.handle === match.handle);
+    const counts = new Map<string, number>();
+    for (const c of claims) counts.set(c.path, (counts.get(c.path) ?? 0) + 1);
+    const contested = mine.filter((c) => (counts.get(c.path) ?? 0) > 1);
+
+    const live = agents.find((a) => a.sessionId === match.sessionId);
+    console.log(`${bold(displayName(match))} ${dim(`— ${agoText(match.lastSeenMs, now)}`)}`);
+    if (live) {
+      console.log(dim(`  process ${live.pid} is still running; this only clears the roster row`));
+    }
+    for (const c of contested) {
+      const others = claims
+        .filter((k) => k.path === c.path && k.handle !== match.handle)
+        .map((k) => claimName(k));
+      console.log(red(`  ⚠ holds ${c.path}, also held by ${others.join(", ")}`));
+    }
+    if (mine.length > 0) console.log(dim(`  releasing ${mine.length} claim(s)`));
+
+    store.post(match.handle, "done", "left the roster", now);
+    store.unregister(match.sessionId);
+    console.log(green(`  ✓ deregistered`));
+  });
+}
+
 const [cmd, ...rest] = Bun.argv.slice(2);
 switch (cmd) {
   case "who":
@@ -435,6 +511,15 @@ switch (cmd) {
     msg(target, text, from);
     break;
   }
+  case "quit": {
+    const target = rest[0];
+    if (!target) {
+      console.error("usage: cli.ts quit <name>");
+      process.exit(1);
+    }
+    quit(target);
+    break;
+  }
   case "clear":
     clear();
     break;
@@ -444,7 +529,8 @@ switch (cmd) {
   default:
     console.error(
       `unknown command: ${cmd}\n` +
-        'usage: who | log [n] | msg <name> "<text>" [--from <name>] | say <text> | clear | where',
+        "usage: who | log [n] | msg <name> \"<text>\" [--from <name>] | say <text> | " +
+        "quit <name> | clear | where",
     );
     process.exit(1);
 }

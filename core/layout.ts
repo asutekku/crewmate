@@ -176,6 +176,43 @@ export function renderFileLine(
   return out.join("  ");
 }
 
+/** The fields of a running process this module needs; see `core/agents.ts`. */
+export interface ProcessLike {
+  readonly sessionId: string;
+  readonly cwd: string;
+  readonly startedAtMs: number;
+}
+
+/**
+ * Running Claude processes in this repo that no roster row accounts for.
+ *
+ * These are sessions whose terminal was closed: the window is gone, the process
+ * is not, and nothing in any UI reports them — two were found running for 48
+ * hours in worktrees that were no longer in use.
+ *
+ * SCOPED TO THE REPO. `claude agents --json` is machine-wide, so without this
+ * filter a session in an unrelated project would be reported here as a stray of
+ * this one. Worktrees live beneath the root, so a prefix test keeps them; the
+ * boundary check stops `/Traffic` from also matching `/Traffic-old`.
+ *
+ * Oldest first — age is what makes one worth acting on.
+ */
+export function backgroundProcesses<T extends ProcessLike>(
+  processes: readonly T[],
+  registered: ReadonlySet<string>,
+  repoRoot: string,
+): T[] {
+  const root = repoRoot.replace(/\\/g, "/").replace(/\/$/, "").toLowerCase();
+  return processes
+    .filter((p) => !registered.has(p.sessionId))
+    .filter((p) => {
+      const cwd = p.cwd.replace(/\\/g, "/").replace(/\/$/, "").toLowerCase();
+      return cwd === root || cwd.startsWith(`${root}/`);
+    })
+    .slice()
+    .sort((a, b) => a.startedAtMs - b.startedAtMs);
+}
+
 /** `just now` / `2m` / `3h` — short enough for a narrow fixed column. */
 export function shortAge(tsMs: number, nowMs: number): string {
   const secs = Math.max(0, Math.round((nowMs - tsMs) / 1000));

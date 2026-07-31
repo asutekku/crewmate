@@ -20,6 +20,14 @@ export interface AgentInfo {
   /** `idle` or `busy`. */
   readonly status: string;
   readonly cwd: string;
+  /**
+   * OS process id. The only way to name a background process to the user: a
+   * session whose terminal was closed is still a running `claude.exe`, and this
+   * is what lets `who` say WHICH one rather than just how many.
+   */
+  readonly pid: number;
+  /** Epoch ms the process started — its true age, not its last heartbeat. */
+  readonly startedAtMs: number;
 }
 
 /** Shape we rely on; anything else in the payload is ignored by design. */
@@ -37,6 +45,8 @@ function parseAgents(text: string): AgentInfo[] {
       name: typeof r["name"] === "string" ? r["name"] : "",
       status: typeof r["status"] === "string" ? r["status"] : "",
       cwd: typeof r["cwd"] === "string" ? r["cwd"].replace(/\\/g, "/") : "",
+      pid: typeof r["pid"] === "number" ? r["pid"] : 0,
+      startedAtMs: typeof r["startedAt"] === "number" ? r["startedAt"] : 0,
     });
   }
   return out;

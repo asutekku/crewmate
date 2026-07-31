@@ -175,9 +175,54 @@ bun ~/.claude/agent-presence/bin/cli.ts who        # roster + claims
 bun ~/.claude/agent-presence/bin/cli.ts log 20     # recent messages
 bun ~/.claude/agent-presence/bin/cli.ts msg <name> "..." # send to ONE agent
 bun ~/.claude/agent-presence/bin/cli.ts say "..."       # broadcast to every agent
+bun ~/.claude/agent-presence/bin/cli.ts quit <name> # drop an agent from the roster
 bun ~/.claude/agent-presence/bin/cli.ts where      # which project/db this dir maps to
 bun ~/.claude/agent-presence/bin/cli.ts clear      # wipe roster (log self-prunes)
 ```
+
+### Ending an agent
+
+`quit` **deregisters, it does not kill.** Terminating a `claude.exe` destroys
+whatever that agent held in context, and nothing here can reliably tell a
+session whose terminal was closed from one merely sitting idle — measured
+2026-07-31: the window handle is `0` for *every* session including live ones,
+process ancestry is byte-identical between a closed tab and a working session,
+and CPU time looked decisive over a 6-second sample then **inverted** over 25
+seconds. With no dependable liveness signal, killing on a guess eventually kills
+a working agent. Dropping the row is safe and reversible: any hook the session
+fires re-registers it.
+
+Before it drops a row, `quit` names what that row was protecting — a path two
+agents both hold loses its collision warning when one of them leaves:
+
+```
+$ cli.ts quit ada
+ada — just now
+  process 8520 is still running; this only clears the roster row
+  ⚠ holds src/shared.ts, also held by turing
+  releasing 1 claim(s)
+  ✓ deregistered
+```
+
+`who` also counts **background processes** — running Claude sessions in this
+repo that no roster row accounts for. These are the ones whose terminal was
+closed: the window is gone, the process is not, and nothing else reports them.
+Two were found running for 48 hours in worktrees no longer in use.
+
+```
+3 background process(es) — no window, not on the roster:
+    pid 37476   footprint-merge-ef footprint-merge  started 48h ago
+    pid 46020   industry-chains-c7 industry-demand  started 48h ago
+```
+
+The pid is the point — it is the only handle you have on a process with no
+window. What to do about one is your call; the tool never touches it.
+
+**A closed terminal usually deregisters itself.** `SessionEnd` fires with
+`prompt_input_exit` on a double ⌃C and the row goes; `clear` and `resume` are
+deliberately spared, since neither means the agent left. Verified against every
+documented reason. A row that lingers anyway is a session running hooks from
+*before* that logic shipped — the roster's `⟲` marks those.
 
 `say` reaches everyone at once, so it beats retyping a correction eight times;
 `msg` is the targeted version. `where` is the first thing to check if a roster
