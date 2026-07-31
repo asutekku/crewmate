@@ -5,11 +5,11 @@
  * opposite things. A name is what you TYPE (`msg luna`) — short, unique,
  * unquoted, and it must not move, because peers have learned it. A role is what
  * you READ ("Tooling Master") — evocative, several words, and free to change as
- * the work changes. Collapsing them forces `msg "Tooling Master Luna"`, which is
+ * the work changes. Collapsing them forces `msg "Luna — Tooling Master"`, which is
  * miserable to type and breaks the quoting rules names are validated against.
  *
  * Keeping the name fixed while the role moves is the point: `Tooling Master
- * Luna` becoming `Tooling Intern Luna` reads as a demotion rather than as a
+ * Luna` becoming `Luna — Tooling Intern` reads as a demotion rather than as a
  * stranger appearing on the roster. Measured motivation — this tool's own
  * conversation was relabelled `traffic-a0` -> `traffic-7c` -> `traffic-56`
  * across one afternoon, and nothing tied those three together for a reader.
@@ -90,26 +90,32 @@ export function pickName(taken: ReadonlySet<string>): string {
 }
 
 /**
- * What the OPERATOR sees: "Tooling Master Luna".
+ * What the OPERATOR sees: "Luna — Tooling Master".
+ *
+ * NAME FIRST. It is the identifier — the thing that is unique, that peers type,
+ * and that stays put — so it belongs where the eye lands when scanning a column
+ * of eight. Leading with the role put the varying, non-unique part first and
+ * made the roster read as a list of job titles that happened to have names
+ * attached; a dash separates them so neither reads as part of the other.
  *
  * READ-ONLY, and that is load-bearing. `msg` takes the bare name; a peer that
  * copied this string would be quoting three words at a command whose whole
  * validation rests on names having no spaces. Nothing accepts this as input.
  *
- * `slug` is a self-chosen name standing in when no role is set — `Water Dynamic
- * Turing` — which keeps what those slugs were already good at: saying what
- * someone works on. It is never Claude Code's `traffic-a9`; using that produced
- * "Traffic A9 Terrain Perf", a role nobody chose, built from the one label here
- * that is not stable.
+ * `slug` is a self-chosen name standing in when no role is set — `Turing —
+ * Water Dynamic` — which keeps what those slugs were already good at: saying
+ * what someone works on. It is never Claude Code's `traffic-a9`; using that
+ * produced "Traffic A9 Terrain Perf", a role nobody chose, built from the one
+ * label here that is not stable.
  *
- * The prefix is dropped when it would repeat the name, so an agent whose chosen
+ * The suffix is dropped when it would repeat the name, so an agent whose chosen
  * name IS its role does not read as the same word twice.
  */
 export function fullName(name: string, role: string, slug: string): string {
-  const prefix = role.trim() !== "" ? role.trim() : titleCase(slug);
+  const suffix = role.trim() !== "" ? role.trim() : titleCase(slug);
   const given = titleCase(name);
-  if (prefix === "" || prefix.toLowerCase() === given.toLowerCase()) return given;
-  return `${prefix} ${given}`;
+  if (suffix === "" || suffix.toLowerCase() === given.toLowerCase()) return given;
+  return `${given} — ${suffix}`;
 }
 
 /**

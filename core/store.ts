@@ -107,9 +107,11 @@ export interface Session {
    * What the agent is FOR, in words: "Tooling Master", "Keeper of Wet Things".
    * Set by the agent or by the operator, changes freely as the work does.
    *
-   * OPERATOR-FACING ONLY. It is never injected into a peer's context, because
-   * "Terrain Whisperer" is a claim of authority and a peer reading it may weight
-   * that agent's messages more heavily than it should.
+   * SHOWN TO PEERS TOO, which reverses an earlier call. The worry was that
+   * "Terrain Whisperer" reads as a claim of authority a peer might over-weight;
+   * the measured cost of withholding it was worse. Agents write "adela is
+   * fixing this same bug" in text the operator reads, and with eight windows
+   * open a bare given name identifies nobody.
    */
   readonly role: string;
   /**
@@ -160,7 +162,7 @@ export function displayName(s: Pick<Session, "name" | "handle"> & { readonly ali
 }
 
 /**
- * What the OPERATOR sees: "Tooling Master Luna".
+ * What the OPERATOR sees: "Luna — Tooling Master".
  *
  * Separate from `displayName` because the two have different audiences and
  * different rules. This is READ-ONLY — `msg` takes the bare name, and a peer
@@ -171,7 +173,7 @@ export function displayName(s: Pick<Session, "name" | "handle"> & { readonly ali
  * Names for the OPERATOR, resolved from whatever the caller has to hand.
  *
  * WHY THIS EXISTS: `who`, `log`, `board`, `files` and `blame` each had their own
- * idea of what to print, so one agent appeared as "Tooling Master Hopper",
+ * idea of what to print, so one agent appeared as "Hopper — Tooling Master",
  * "tooling" and "hopper" in three commands on one screen. Worse, `log` and
  * `board` show names FROZEN at write time, so they cannot resolve a session at
  * all — they hold a string and nothing else.

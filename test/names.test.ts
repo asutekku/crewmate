@@ -88,18 +88,20 @@ describe("titleCase", () => {
 });
 
 describe("fullName", () => {
-  test("role in front, name at the end", () => {
-    expect(fullName("luna", "Tooling Master", "tooling")).toBe("Tooling Master Luna");
+  test("name first, role after a dash", () => {
+    // NAME FIRST: it is the identifier — unique, typed at `msg`, and fixed —
+    // so it belongs where the eye lands when scanning a column of eight.
+    expect(fullName("luna", "Tooling Master", "tooling")).toBe("Luna — Tooling Master");
   });
 
   test("with no role, the slug stands in title-cased", () => {
     // Keeps what the self-chosen slugs were already good at — saying what
     // someone works on — instead of trading it for a bare given name.
-    expect(fullName("luna", "", "terrain-perf")).toBe("Terrain Perf Luna");
+    expect(fullName("luna", "", "terrain-perf")).toBe("Luna — Terrain Perf");
   });
 
-  test("never repeats the name as its own prefix", () => {
-    // An agent named `tooling` with slug `tooling` must not read `Tooling Tooling`.
+  test("never repeats the name as its own suffix", () => {
+    // An agent named `tooling` with slug `tooling` must not read `Tooling — Tooling`.
     expect(fullName("tooling", "", "tooling")).toBe("Tooling");
     expect(fullName("tooling", "Tooling", "x")).toBe("Tooling");
   });
@@ -107,8 +109,8 @@ describe("fullName", () => {
   test("a role changes while the name stays put", () => {
     // THE POINT of two fields: a demotion reads as a demotion rather than as a
     // stranger appearing on the roster.
-    expect(fullName("luna", "Tooling Master", "x")).toBe("Tooling Master Luna");
-    expect(fullName("luna", "Tooling Intern", "x")).toBe("Tooling Intern Luna");
+    expect(fullName("luna", "Tooling Master", "x")).toBe("Luna — Tooling Master");
+    expect(fullName("luna", "Tooling Intern", "x")).toBe("Luna — Tooling Intern");
   });
 
   test("with neither role nor slug, the bare name stands alone", () => {
@@ -117,10 +119,10 @@ describe("fullName", () => {
 
   test("a self-named agent does not read as the same word twice", () => {
     // Shipped briefly and caught on the live roster: passing the chosen name as
-    // BOTH the name and the slug produced "Tooling Master Tooling". The given
-    // name is always the name; a chosen name stands in front like a role.
-    expect(fullName("hopper", "Tooling Master", "tooling")).toBe("Tooling Master Hopper");
-    expect(fullName("turing", "", "water-dynamic")).toBe("Water Dynamic Turing");
+    // BOTH the name and the suffix produced "Tooling Master Tooling". The given
+    // name is always the name; a chosen name stands after it, like a role.
+    expect(fullName("hopper", "Tooling Master", "tooling")).toBe("Hopper — Tooling Master");
+    expect(fullName("turing", "", "water-dynamic")).toBe("Turing — Water Dynamic");
   });
 });
 

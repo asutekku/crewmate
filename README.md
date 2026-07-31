@@ -433,7 +433,7 @@ because a name nobody is told is just a database column.
 Beside it sits a **role**: what the agent is *for*.
 
 ```
-Tooling Master Luna       Keeper of Wet Things Vega       Terrain Whisperer Rowan
+Luna — Tooling Master       Vega — Keeper of Wet Things       Rowan — Terrain Whisperer
 ```
 
 ```sh
@@ -444,11 +444,11 @@ cli.ts call-you "…" --agent luna   # the operator setting either, for any agen
 
 **Two fields, because they want opposite things.** A name is *typed*: short,
 unique, no spaces to quote. A role is *read*: evocative, several words, free to
-change. Collapsing them forces `msg "Tooling Master Luna"`, which is miserable to
+change. Collapsing them forces `msg "Luna — Tooling Master"`, which is miserable to
 type and breaks the quoting rules names are validated against.
 
-Keeping the name fixed while the role moves is the point — `Tooling Master Luna`
-becoming `Tooling Intern Luna` reads as a demotion rather than as a stranger
+Keeping the name fixed while the role moves is the point — `Luna — Tooling Master`
+becoming `Luna — Tooling Intern` reads as a demotion rather than as a stranger
 appearing on the roster. Roles need not be unique: two agents can share a job
 title the way two people can, and only the name has to identify.
 

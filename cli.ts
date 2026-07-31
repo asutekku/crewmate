@@ -198,11 +198,19 @@ function who(raw: boolean): void {
     const width = terminalWidth();
     // One column wide enough for the longest name, capped so a single verbose
     // name cannot squeeze the description column to nothing.
-    // Measured on the ROSTER name ("Tooling Master Luna"), which is what this
+    // Measured on the ROSTER name ("Luna — Tooling Master"), which is what this
     // column prints — not on the bare name peers type. Cap raised to suit:
     // "Keeper of Wet Things Luna" is 25, and truncating the role to fit would
     // remove exactly the part that makes an agent recognisable at a glance.
-    const nameW = Math.min(30, Math.max(...ordered.map((s) => [...(raw ? displayName(s) : rosterName(s))].length)));
+    // 34 fits the longest real roster name measured ("Adela — Road Network
+    // Retirement", 31) with room for the em-dash form to grow a little. The cap
+    // exists so one verbose name cannot squeeze the description column to
+    // nothing, not to force truncation on ordinary ones — and truncating here
+    // eats the ROLE, which is the half that says who somebody is.
+    const nameW = Math.min(
+      34,
+      Math.max(...ordered.map((s) => [...(raw ? displayName(s) : rosterName(s))].length)),
+    );
     const AGE_W = 4;
     // Where the description starts, and where every continuation line aligns:
     // "  " + mark + " " + name + " " + age + "  "
@@ -573,7 +581,7 @@ function blame(path: string): void {
  * Sets what an agent IS — its role, in words.
  *
  * The given name stays put while this moves, which is the whole point:
- * "Tooling Master Luna" becoming "Tooling Intern Luna" reads as a demotion
+ * "Luna — Tooling Master" becoming "Luna — Tooling Intern" reads as a demotion
  * rather than as a stranger appearing on the roster.
  */
 function callYou(role: string, target: string): void {
