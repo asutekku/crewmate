@@ -10,16 +10,17 @@
  * NEVER ON A HOOK PATH. Measured at 7.7 s per call against a ~72 ms budget for
  * every other hook here, so a hook that waited for one would stall a turn for
  * ten times the cost of everything else combined. `refreshSummary` therefore
- * spawns a DETACHED process and returns immediately; the result lands in the db
- * for whoever reads the roster next. A roster that is one refresh out of date is
- * the price, and it is the right one — this field is a convenience for the
+ * spawns a BACKGROUND process and returns immediately; the result lands in the
+ * db for whoever reads the roster next. A roster that is one refresh out of date
+ * is the price, and it is the right one — this field is a convenience for the
  * operator, not a coordination signal agents act on.
+ *
+ * "Background" here means invisible, not detached — see `refreshSummary` for why
+ * the Windows console makes those two different things.
  *
  * COST IS BOUNDED BY TIME, NOT BY EVENTS: at most one refresh per session per
  * SUMMARY_TTL_MS however busy the session is (see `staleSummarySessions`).
  */
-
-import { spawn } from "node:child_process";
 
 /** How long a summary stays fresh. A slow-moving label; this need not be tight. */
 export const SUMMARY_TTL_MS = 15 * 60 * 1000;
@@ -77,10 +78,19 @@ export function parseSummary(raw: string): string {
 /**
  * Spawns the summariser and returns at once, having waited for nothing.
  *
- * `detached` + `unref` so this outlives the hook process that started it: a hook
- * exits in milliseconds and would otherwise kill the child mid-call. stdio is
- * fully detached for the same reason — an inherited pipe keeps the parent's
- * handle open and can hold a turn from finishing.
+ * `Bun.spawn`, NOT `child_process.spawn` with `detached`. On Windows `detached`
+ * gives the child its own console — a black window that flashes up on every
+ * `who` — and `windowsHide: true` does NOT suppress it. Measured by asking the
+ * child itself for `GetConsoleWindow()`: detached returns a real handle, this
+ * returns 0, across three runs each. (Counting `conhost.exe` machine-wide is
+ * useless here; it swings ±1 between identical runs from unrelated processes.)
+ *
+ * The child still outlives its parent, which is the property that matters: the
+ * CLI exits in well under a second and the Haiku call takes ~8 s. Note it must
+ * NOT be `unref`'d — measured, an unref'd `Bun.spawn` child is killed when the
+ * parent exits, which is the opposite of the Node convention.
+ *
+ * stdio is fully closed so no inherited pipe can hold the parent open.
  */
 export function refreshSummary(
   workerPath: string,
@@ -89,12 +99,9 @@ export function refreshSummary(
   dbPath: string,
 ): void {
   try {
-    const child = spawn("bun", [workerPath, sessionId, transcriptPath, dbPath], {
-      detached: true,
-      stdio: "ignore",
-      windowsHide: true,
+    Bun.spawn(["bun", workerPath, sessionId, transcriptPath, dbPath], {
+      stdio: ["ignore", "ignore", "ignore"],
     });
-    child.unref();
   } catch {
     // No bun on PATH, spawn refused: the roster simply keeps the summary it has.
   }
