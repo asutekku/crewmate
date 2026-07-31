@@ -33,6 +33,7 @@ function session(over: Partial<Session> = {}): Session {
 }
 
 const claim = (path: string, handle = "ada", name = "traffic-4b"): Claim => ({
+  sessionId: `sess-${handle}`,
   handle,
   name,
   worktree: "I:/Projects/Traffic",

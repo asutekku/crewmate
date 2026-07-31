@@ -128,6 +128,8 @@ export interface Message {
 }
 
 export interface Claim {
+  /** Who holds it — needed to ADDRESS an overlap notice to them, not just name them. */
+  readonly sessionId: string;
   readonly handle: string;
   /**
    * The claimant's Claude session name (`traffic-07`), or "" before one is
@@ -575,12 +577,18 @@ export class Store {
    * for the next ordinary delivery point.
    *
    * WHY: at `Stop`, injecting `additionalContext` CONTINUES the turn (HOOKS.MD:
-   * "The conversation continues so Claude can act on it"). Routine `done` and
-   * `claim` chatter must therefore never be delivered there: with several
-   * sessions in one tree, each agent's turn-end announcement would extend every
-   * other agent's turn, and two agents can bounce `done` lines off each other up
-   * to the 8-continuation cap. A question actually addressed to this session is
-   * worth continuing for; a peer's bookkeeping is not.
+   * "The conversation continues so Claude can act on it"). Routine chatter must
+   * therefore never be delivered there: with several sessions in one tree, each
+   * agent's turn-end announcement would extend every other agent's turn, and two
+   * agents can bounce `done` lines off each other up to the 8-continuation cap.
+   *
+   * THE TEST IS "ADDRESSED TO ME", NOT "IS A `say`". It was once the latter,
+   * which meant a directed `claim` — another session editing a file THIS one
+   * holds — was filtered out here and waited for the next prompt. For a session
+   * mid-autonomous-run that is a long time to keep writing a function somebody
+   * else is rewriting, and it is precisely the news worth ending a turn for.
+   * Broadcasts of every kind still wait; what changed is that a message someone
+   * deliberately sent to this session arrives whatever kind it is.
    *
    * THE CURSOR STOPS BELOW THE FIRST ROW IT SKIPPED, not at the last row it
    * delivered. A single monotonic cursor cannot express "delivered id 7 but not
@@ -607,7 +615,7 @@ export class Store {
           `SELECT id, ts_ms, handle, kind, body, to_session, from_name, to_name
              FROM messages
             WHERE ${deliverable}
-              AND (kind = 'note' OR (kind = 'say' AND to_session = ?3))
+              AND (kind = 'note' OR to_session = ?3)
             ORDER BY id ASC`,
         )
         .all(cur.last_read_id, cur.handle, sessionId) as Array<Record<string, string | number>>;
@@ -618,7 +626,7 @@ export class Store {
         .query(
           `SELECT MIN(id) AS id FROM messages
             WHERE ${deliverable}
-              AND NOT (kind = 'note' OR (kind = 'say' AND to_session = ?3))`,
+              AND NOT (kind = 'note' OR to_session = ?3)`,
         )
         .get(cur.last_read_id, cur.handle, sessionId) as { id: number | null } | null;
       const lastDelivered = Number(rows[rows.length - 1]?.["id"] ?? cur.last_read_id);
@@ -785,8 +793,8 @@ export class Store {
   conflictingClaims(sessionId: string, path: string, nowMs: number): Claim[] {
     const rows = this.db
       .query(
-        `SELECT s.handle AS handle, s.name AS name, s.worktree AS worktree,
-                c.path AS path, c.ts_ms AS ts_ms
+        `SELECT c.session_id AS session_id, s.handle AS handle, s.name AS name,
+                s.worktree AS worktree, c.path AS path, c.ts_ms AS ts_ms
            FROM claims c JOIN sessions s ON s.session_id = c.session_id
           WHERE c.path = ? AND c.session_id != ? AND s.last_seen_ms > ?
             AND c.ts_ms > ?`,
@@ -821,8 +829,8 @@ export class Store {
   allClaims(nowMs: number): Claim[] {
     const rows = this.db
       .query(
-        `SELECT s.handle AS handle, s.name AS name, s.worktree AS worktree,
-                c.path AS path, c.ts_ms AS ts_ms
+        `SELECT c.session_id AS session_id, s.handle AS handle, s.name AS name,
+                s.worktree AS worktree, c.path AS path, c.ts_ms AS ts_ms
            FROM claims c JOIN sessions s ON s.session_id = c.session_id
           WHERE s.last_seen_ms > ? AND c.ts_ms > ? ORDER BY c.ts_ms ASC`,
       )
@@ -872,6 +880,7 @@ function likeEscape(s: string): string {
 
 function toClaim(r: Record<string, string | number>): Claim {
   return {
+    sessionId: String(r["session_id"]),
     handle: String(r["handle"]),
     name: String(r["name"] ?? ""),
     path: String(r["path"]),

@@ -64,23 +64,31 @@ describe("delivery", () => {
     });
   });
 
-  test("Stop delivers directed messages and human notes, never peer chatter", () => {
-    // Injecting at Stop CONTINUES the turn, so routine chatter delivered there
-    // would let agents extend each other's turns to the continuation cap.
+  test("Stop delivers anything ADDRESSED to this session, plus human notes", () => {
+    // Injecting at Stop CONTINUES the turn, so broadcast chatter delivered there
+    // would let agents extend each other's turns to the continuation cap. The
+    // test is "addressed to me", not "is a say" — a directed `claim` (someone is
+    // editing a file I hold) is exactly the news worth ending a turn for, and
+    // filtering by kind kept it waiting for the next prompt.
     fresh((store) => {
       const now = Date.now();
       store.register("me", "/t", "main", now);
       store.register("peer", "/t", "main", now);
       const peer = store.findBySession("peer")!;
+      const to = { sessionId: "me", name: "me" };
 
       store.post(peer.handle, "done", "reached a stopping point", now);
+      store.post(peer.handle, "say", "broadcast to everyone", now);
       store.post("human", "note", "everyone commit please", now);
-      store.post(peer.handle, "say", "to you only", now, { sessionId: "me", name: "me" });
+      store.post(peer.handle, "say", "to you only", now, to);
+      store.post(peer.handle, "claim", "also editing src/x.ts (held by you)", now, to);
 
       const bodies = store.drainDirected("me").map((m) => m.body);
       expect(bodies).toContain("to you only");
+      expect(bodies).toContain("also editing src/x.ts (held by you)");
       expect(bodies).toContain("everyone commit please");
       expect(bodies).not.toContain("reached a stopping point");
+      expect(bodies).not.toContain("broadcast to everyone");
     });
   });
 

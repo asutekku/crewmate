@@ -10,9 +10,17 @@
  * rather than by luck.
  */
 
+import type { Claim } from "../core/store.ts";
 import { agoText, claimName, withStore } from "../core/store.ts";
 import { emit, readPayload } from "../core/shared.ts";
 import { currentBranch, relPath, resolveProject, worktreeRoot } from "../core/repo.ts";
+
+/** One notice per peer, however many claim rows they hold on the path. */
+function dedupeBySession(claims: readonly Claim[]): Claim[] {
+  const seen = new Map<string, Claim>();
+  for (const c of claims) if (!seen.has(c.sessionId)) seen.set(c.sessionId, c);
+  return [...seen.values()];
+}
 
 async function main(): Promise<void> {
   const payload = await readPayload();
@@ -93,8 +101,19 @@ async function main(): Promise<void> {
     // still fires every time — this session needs it before each edit — but the
     // shared log does not need the same sentence ten times while an agent works
     // through a contested file.
+    //
+    // ADDRESSED TO THE PEERS IT CONCERNS, not broadcast. A broadcast reaches a
+    // peer only at its next PROMPT: `Stop` delivers directed mail only, so a
+    // session mid-autonomous-run would not learn that someone else is rewriting
+    // the file it holds until its human next typed something. "Another agent is
+    // editing the function you are in" is exactly the news worth ending a turn
+    // for. One message per affected peer, so each is addressed rather than
+    // relying on one of them noticing a shared line.
     if (!store.announcedOverlapRecently(handle, path, now)) {
-      store.post(handle, "claim", `also editing ${path} (held by ${parts.join("; ")})`, now);
+      const body = `also editing ${path} (held by ${parts.join("; ")})`;
+      for (const o of dedupeBySession(others)) {
+        store.post(handle, "claim", body, now, { sessionId: o.sessionId, name: claimName(o) });
+      }
     }
     const names = (cs: typeof others): string =>
       cs.map((o) => `${claimName(o)} (claimed ${agoText(o.tsMs, now)})`).join(", ");
@@ -111,9 +130,29 @@ async function main(): Promise<void> {
       );
     }
     if (away.length > 0) {
+      // NOT "there is no collision, carry on". The absence of an on-disk clash
+      // is the least interesting fact about this case: both sessions are editing
+      // the same logical code, and two divergent rewrites of one function are
+      // discovered at MERGE, when both are finished and expensive to unpick.
+      // The earlier wording led with "no on-disk collision", which reads as
+      // permission to ignore it.
       lines.push(
-        `- ${names(away)} — in a separate worktree. There is no on-disk collision, ` +
-          `though the two versions have to merge later.`,
+        `- ${names(away)} — in a separate worktree, so nothing is overwritten on ` +
+          `disk. The two versions of ${path} still have to reconcile: changes to ` +
+          `the same functions diverge silently until the merge, and behaviour ` +
+          `changes here can invalidate the other session's measurements or tests ` +
+          `even where the text does not conflict.`,
+      );
+    }
+    // The channel is named at the point of use. An agent that has just been told
+    // a peer is in the same code is exactly where "you can ask them" belongs —
+    // stating it once at session start is too far from the moment it is needed.
+    if (others.length > 0) {
+      const first = claimName(others[0] as Claim);
+      lines.push(
+        `Reaching them: \`bun ~/.claude/agent-presence/bin/cli.ts msg ${first} "<text>"\`. ` +
+          `What each of you is changing, and which parts are load-bearing, is ` +
+          `knowledge the other cannot derive from the file.`,
       );
     }
     return lines.join("\n");
