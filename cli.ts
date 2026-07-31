@@ -118,11 +118,20 @@ function who(): void {
       const branch = s.branch !== "" ? dim(` (${s.branch})`) : "";
       const seen = activityColour(age)(agoText(s.lastSeenMs, now));
       const mine = claims.filter((c) => c.handle === s.handle);
+      // BEST AVAILABLE SOURCE, not all of them. The title and the summary below
+      // are both better descriptions than `intent`, which is guessed from a
+      // single prompt and gets it wrong in ways the other two cannot: a
+      // compaction summary took the slot on one live session, listing it as
+      // "<analysis> Let me chronologically work through this convers…". Where a
+      // title exists it carries the line, and `intent` is left to sessions that
+      // have none.
+      //
       // With no stated task, nothing goes here: the `editing` line directly
       // below already lists these exact files, so a summary would be a strict
       // subset of the detail beneath it. Only a session holding NO files needs
       // the explicit "(no stated task yet)".
-      const task = s.intent !== "" ? s.intent : mine.length > 0 ? "" : dim("(no stated task yet)");
+      const stated = s.title !== "" ? "" : s.intent;
+      const task = stated !== "" ? stated : mine.length > 0 ? "" : dim("(no stated task yet)");
       const t = taskCounts.get(s.sessionId);
       // No leading space: the separator between fields is added when the line is
       // assembled, so a field that is present cannot smuggle in spacing that a
@@ -146,16 +155,17 @@ function who(): void {
       // concatenated and then trimmed. A field's colour codes come BEFORE its
       // text, so `.trim()` cannot reach a leading space tucked inside them —
       // an empty task left "master)   [6/6]" with three spaces.
+      // Claude Code's own name for the conversation, on the headline where the
+      // guessed intent used to be — it is the label the user sees in their
+      // session list, so the roster and their windows agree. Quoted to mark it
+      // as a title rather than another status field.
+      const headline = s.title !== "" ? dim(`"${s.title}"`) : task;
       const fields = [
         `${paint(bold(displayName(s)))}${state}${stale}${where}${branch}`,
-        task,
+        headline,
         prog,
       ].filter((f) => f !== "");
       console.log(`  ${fields.join("  ")}  ${dim("·")} ${seen}`);
-      // Claude Code's own name for the conversation — the label the user sees in
-      // their session list, so the roster and their windows agree. Quoted to
-      // mark it as a title rather than another status field.
-      if (s.title !== "") console.log(`      ${dim(`"${s.title}"`)}`);
       // What the session is doing NOW, which the title cannot say: a title is
       // set from the opening subject and does not move as the work does.
       if (s.summary !== "") console.log(`      ${cyan("doing")} ${s.summary}`);
