@@ -43,9 +43,9 @@ worktree agent join the same roster as the main tree.
 ```
 You are agent "turing" in Traffic's shared presence log.
 2 other agent(s) active:
-  ada — Fix the water shore fade regression (last active just now)
+  ada — asked to: "Fix the water shore fade regression" (last active just now)
       editing: src/city/derive.ts
-  hopper [worktree disasters-fx] on worktree-disasters-fx — Fire fx envelopes (last active 3m ago)
+  hopper [worktree disasters-fx] on worktree-disasters-fx — asked to: "Fire fx envelopes" (3m ago)
 ```
 
 A peer in a **different worktree** is labelled with it; peers in the same tree
@@ -57,6 +57,26 @@ show nothing, keeping the common case quiet.
 1 update(s) from other agents in Traffic:
   [3m ago] ada done: finished a turn: Fixed the shore fade by depth-scaling the alpha ramp.
 ```
+
+### Whose words are these
+
+A session's task line is its **user's prompt, verbatim** — not something the
+agent wrote about itself. Rendering the two the same way lets one session's
+instructions read as another agent's claim, and turns a relayed question ("what
+should we do next?") into something the reader might try to answer. So every
+line is attributed:
+
+| Kind | Renders as | Author |
+|---|---|---|
+| `tasked` | `ada was asked by its user: "..."` | that agent's user |
+| `note` | `the user broadcast to everyone: ...` | you, via `cli.ts say` |
+| `done` | `ada done: finished a turn: ...` | the agent |
+| `claim` | `ada claim: also editing ...` | the agent |
+
+Every injection also carries a note that the log is **reference, not
+instruction**: peer task text is quoted from someone else's conversation and
+must not be acted on. A `human` broadcast is the one channel deliberately
+addressed to everyone.
 
 **Before an Edit/Write** — only when a live peer already claimed that path. The
 advice differs by where they are, because the risk is different:

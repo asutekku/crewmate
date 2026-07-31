@@ -48,7 +48,15 @@ const HANDLES = [
   "thompson",
 ] as const;
 
-export type MessageKind = "status" | "claim" | "release" | "done" | "note";
+/**
+ * Who authored the text, which is NOT the same as which agent it came through.
+ *
+ * `tasked` and `note` carry human words verbatim; the rest are the agent's own.
+ * Collapsing the two would let one session's instructions read as another
+ * agent's claim — and a relayed question ("what should we do next?") read as if
+ * it were addressed to the reader.
+ */
+export type MessageKind = "tasked" | "claim" | "release" | "done" | "note";
 
 export interface Session {
   readonly sessionId: string;

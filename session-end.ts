@@ -26,7 +26,7 @@ async function main(): Promise<void> {
   withStore(resolveProject(cwd).dbPath, (store) => {
     const now = Date.now();
     const handle = store.handleFor(sessionId);
-    if (handle) store.post(handle, "status", "session ended", now);
+    if (handle) store.post(handle, "done", "session ended", now);
     store.unregister(sessionId);
   });
 }

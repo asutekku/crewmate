@@ -13,7 +13,14 @@
  */
 
 import { withStore } from "./store.ts";
-import { emit, formatMessages, formatRoster, readPayload, summarize } from "./shared.ts";
+import {
+  emit,
+  formatMessages,
+  formatRoster,
+  readPayload,
+  summarize,
+  TRUST_NOTE,
+} from "./shared.ts";
 import { resolveProject, worktreeRoot } from "./repo.ts";
 
 /** Intent is a roster label, not a description; one short line is the point. */
@@ -46,9 +53,13 @@ async function main(): Promise<void> {
     if (!handle) return null;
 
     if (self && shouldSetIntent(self.intent) && payload.prompt) {
+      // This is the USER's wording, not the agent's. It is published because it
+      // is the earliest and most accurate statement of what the session is for,
+      // but it is marked `tasked` and quoted so no reader mistakes a peer's
+      // instructions for a peer's own claim about its work.
       const intent = summarize(payload.prompt, INTENT_MAX);
       store.setIntent(sessionId, intent);
-      store.post(handle, "status", `started: ${intent}`, now);
+      store.post(handle, "tasked", `"${intent}"`, now);
     }
 
     const unread = store.drainUnread(sessionId);
@@ -64,6 +75,7 @@ async function main(): Promise<void> {
       lines.push("", "Currently active:");
       lines.push(...formatRoster(peers, claims, now, tree));
     }
+    lines.push("", TRUST_NOTE);
     return { text: lines.join("\n"), count: unread.length };
   });
 

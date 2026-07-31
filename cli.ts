@@ -15,8 +15,8 @@
  * times. It posts under a fixed handle so agents can tell it from a peer.
  */
 
-import { agoText, withStore } from "./store.ts";
-import { formatRoster } from "./shared.ts";
+import { withStore } from "./store.ts";
+import { formatMessages, formatRoster } from "./shared.ts";
 import { resolveProject } from "./repo.ts";
 
 const HUMAN_HANDLE = "human";
@@ -52,9 +52,8 @@ function log(limit: number): void {
       console.log("Log is empty.");
       return;
     }
-    for (const m of msgs) {
-      console.log(`[${agoText(m.tsMs, now)}] ${m.handle} ${m.kind}: ${m.body}`);
-    }
+    // The same rendering agents get, so what you read here is what they read.
+    console.log(formatMessages(msgs, now).map((l) => l.trimStart()).join("\n"));
   });
 }
 

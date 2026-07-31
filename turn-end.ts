@@ -16,7 +16,7 @@
  */
 
 import { withStore } from "./store.ts";
-import { emit, formatMessages, readPayload, summarize } from "./shared.ts";
+import { emit, formatMessages, readPayload, summarize, TRUST_NOTE } from "./shared.ts";
 import { resolveProject } from "./repo.ts";
 
 /** Long enough to say what happened, short enough that a roster stays readable. */
@@ -48,6 +48,7 @@ async function main(): Promise<void> {
     ];
     lines.push(...formatMessages(unread, now));
     lines.push("", "Mention anything here that affects what you just did or plan to do next.");
+    lines.push("", TRUST_NOTE);
     return { text: lines.join("\n"), count: unread.length };
   });
 

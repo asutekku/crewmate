@@ -8,7 +8,7 @@
  */
 
 import { withStore } from "./store.ts";
-import { emit, formatMessages, formatRoster, readPayload } from "./shared.ts";
+import { emit, formatMessages, formatRoster, readPayload, TRUST_NOTE } from "./shared.ts";
 import { currentBranch, resolveProject, worktreeRoot } from "./repo.ts";
 
 /** Enough log to see what the others are up to, short enough to stay skimmable. */
@@ -34,7 +34,10 @@ async function main(): Promise<void> {
 
     const lines = [`You are agent "${handle}" in ${project.name}'s shared presence log.`];
     if (peers.length === 0) {
-      lines.push("No other agents are active right now.");
+      lines.push(
+        "No other agents are active right now. Check the roster before editing a file",
+        "another agent has claimed if that changes.",
+      );
     } else {
       lines.push(`${peers.length} other agent(s) active:`);
       lines.push(...formatRoster(peers, claims, now, tree));
@@ -42,12 +45,9 @@ async function main(): Promise<void> {
         lines.push("", "Recent activity:");
         lines.push(...formatMessages(recent, now));
       }
+      // The trust note only earns its space once there is peer text to mistrust.
+      lines.push("", TRUST_NOTE);
     }
-    lines.push(
-      "",
-      "State your task in one line early on (it is published to peers automatically),",
-      "and check the roster before editing a file another agent has claimed.",
-    );
     return { text: lines.join("\n"), handle, peerCount: peers.length };
   });
 
