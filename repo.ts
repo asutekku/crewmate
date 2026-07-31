@@ -18,7 +18,7 @@
  * stray files.
  */
 
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 
 export interface RepoContext {
@@ -82,24 +82,77 @@ function slug(key: string, name: string): string {
  * The two keys cannot collide: a git key always ends in `/.git`, a plain
  * directory never does.
  */
+/**
+ * Project identity is derived from a `git rev-parse` subprocess, measured at
+ * ~31 ms — cheap once per session, but `PostToolBatch` fires after every batch
+ * of tool calls, where it dominates the hook's cost.
+ *
+ * A repo's git common dir cannot change for a given directory (moving the repo
+ * changes the directory too), so the answer is cached on disk beside the state.
+ * The cache is keyed by cwd and holds only derived paths — nothing that goes
+ * stale within a session.
+ */
+function cachedResolve(cwdNorm: string): RepoContext | null {
+  try {
+    const f = Bun.file(`${BASE_DIR}/paths.json`);
+    if (!f.size) return null;
+    const map = JSON.parse(readFileSync(`${BASE_DIR}/paths.json`, "utf8")) as Record<
+      string,
+      RepoContext
+    >;
+    return map[cwdNorm] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function cacheResolve(cwdNorm: string, ctx: RepoContext): void {
+  try {
+    ensureBaseDir();
+    const path = `${BASE_DIR}/paths.json`;
+    let map: Record<string, RepoContext> = {};
+    try {
+      map = JSON.parse(readFileSync(path, "utf8")) as Record<string, RepoContext>;
+    } catch {
+      map = {};
+    }
+    map[cwdNorm] = ctx;
+    writeFileSync(path, JSON.stringify(map));
+  } catch {
+    // A cache that cannot be written is not an error; the next call recomputes.
+  }
+}
+
 export function resolveProject(cwd: string): RepoContext {
   const cwdNorm = cwd.replace(/\\/g, "/").replace(/\/$/, "");
+  const hit = cachedResolve(cwdNorm);
+  if (hit) return hit;
   const commonDir = git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
   if (commonDir) {
     // The main working tree is the common dir's parent. Deriving the NAME from
     // it rather than from cwd keeps every worktree of one repo under one label.
     const root = commonDir.replace(/\/\.git\/?$/, "");
     const name = root.split("/").filter(Boolean).pop() ?? "repo";
-    return { key: commonDir, root, name, isGit: true, dbPath: `${BASE_DIR}/${slug(commonDir, name)}.db` };
+    const ctx: RepoContext = {
+      key: commonDir,
+      root,
+      name,
+      isGit: true,
+      dbPath: `${BASE_DIR}/${slug(commonDir, name)}.db`,
+    };
+    cacheResolve(cwdNorm, ctx);
+    return ctx;
   }
   const name = cwdNorm.split("/").filter(Boolean).pop() ?? "project";
-  return {
+  const ctx: RepoContext = {
     key: cwdNorm,
     root: cwdNorm,
     name,
     isGit: false,
     dbPath: `${BASE_DIR}/${slug(cwdNorm, name)}.db`,
   };
+  cacheResolve(cwdNorm, ctx);
+  return ctx;
 }
 
 /**

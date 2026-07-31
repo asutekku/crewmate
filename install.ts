@@ -57,8 +57,24 @@ const REGISTRATIONS: ReadonlyArray<readonly [string, unknown]> = [
   ["SessionStart", entry("session-start.ts", { statusMessage: "Checking for other agents…" })],
   ["UserPromptSubmit", entry("prompt-submit.ts")],
   ["PreToolUse", { matcher: "Edit|Write|MultiEdit", ...(entry("pre-edit.ts") as object) }],
+  // Mid-turn delivery. Fires after every batch of tool calls, so the script's
+  // own fast path (see tool-batch.ts) is what keeps it affordable.
+  ["PostToolBatch", entry("tool-batch.ts")],
   ["Stop", entry("turn-end.ts")],
-  ["SessionEnd", entry("session-end.ts")],
+  // Runs INSTEAD OF Stop when a turn dies, which is why it cannot be folded in.
+  ["StopFailure", entry("turn-failed.ts")],
+  // Only the notification types that say why a session is stuck.
+  [
+    "Notification",
+    { matcher: "permission_prompt", ...(entry("notify.ts") as object) },
+  ],
+  ["SubagentStart", entry("subagent-start.ts")],
+  ["PostCompact", entry("compacted.ts")],
+  ["CwdChanged", entry("cwd-changed.ts")],
+  ["TaskCreated", entry("task-changed.ts")],
+  ["TaskCompleted", entry("task-changed.ts")],
+  // 1.5 s total budget for all SessionEnd hooks, so this one is kept tight.
+  ["SessionEnd", entry("session-end.ts", { timeout: 5 })],
 ];
 
 /** Identifies OUR hook entries, so removal never touches anyone else's. */

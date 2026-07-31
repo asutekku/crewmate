@@ -13,45 +13,10 @@
  */
 
 import { withStore } from "./store.ts";
-import {
-  emit,
-  formatMessages,
-  formatRoster,
-  readPayload,
-  summarize,
-  TRUST_NOTE,
-} from "./shared.ts";
+import { emit, formatMessages, formatRoster, readPayload, TRUST_NOTE } from "./shared.ts";
 import { resolveProject, worktreeRoot } from "./repo.ts";
+import { topicOf } from "./topic.ts";
 
-/** A roster label, not a description — short enough to scan a column of them. */
-const INTENT_MAX = 60;
-
-/**
- * Anything that looks like a secret. Not a scrubber — a REJECTER: if a prompt
- * trips one of these the topic is dropped entirely rather than published with
- * the interesting part removed, because a redacted secret still reveals that a
- * secret was pasted and often what kind.
- */
-const SENSITIVE =
-  /(?:api[_-]?key|secret|token|password|passwd|credential|bearer|authorization|ssh-rsa|BEGIN [A-Z ]*PRIVATE KEY|\.env|[A-Za-z0-9_-]{32,})/i;
-
-/**
- * A coarse topic for the roster, derived from the user's first prompt.
- *
- * Deliberately LOSSY. It takes the opening clause only, drops anything that
- * smells like a credential, and caps hard — a peer needs "roughly what is this
- * session for", not the user's words. Anything richer is the session's own to
- * share, via an explicit `say`.
- */
-function topicOf(prompt: string): string {
-  const flat = prompt.replace(/\s+/g, " ").trim();
-  if (flat === "" || SENSITIVE.test(flat)) return "";
-  // First sentence or clause: later ones are usually detail and caveats.
-  const head = flat.split(/(?<=[.!?])\s|[:;\n]/)[0] ?? flat;
-  const short = summarize(head, INTENT_MAX);
-  // A bare continuation ("go", "yes", "now fix it") describes nothing.
-  return short.split(/\s+/).length < 3 ? "" : short;
-}
 
 /**
  * The first prompt of a session is treated as its stated task. Later prompts do

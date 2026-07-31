@@ -1,26 +1,30 @@
 /**
- * Stop: publish that this session finished a turn, and surface anything a peer
- * said while the turn was running.
+ * Stop: publish that this session reached a stopping point, and hand over
+ * anything a peer addressed to it directly.
  *
  * WHY THIS HOOK EXISTS AT ALL: "have they finished?" is the question the roster
  * alone cannot answer — an idle session and a working one look identical from the
  * outside. A turn ending is the only reliable "I am at a stopping point" signal
  * available, so it is the one published.
  *
- * It also closes part of the prompt-boundary gap. A long autonomous run misses
- * peer news until its next prompt; delivering unread messages here means the
- * agent at least sees them before it goes quiet, while it can still act.
+ * INJECTING HERE CONTINUES THE TURN. HOOKS.MD is explicit that `Stop`'s
+ * `additionalContext` keeps the conversation going, "through the same loop
+ * protections as decision: block, namely the stop_hook_active input and the
+ * 8-consecutive-continuation cap". So delivery here is deliberately narrow:
+ *   - only messages addressed to THIS session, and human broadcasts
+ *   - never while `stop_hook_active`, which means a hook is already continuing
+ * Routine `done`/`claim` chatter waits for the next prompt or tool batch. With
+ * several sessions in one tree, delivering it here would let every agent's
+ * turn-end announcement extend every other agent's turn, and two agents could
+ * bounce `done` lines off each other until the cap cut them off.
  *
- * NEVER BLOCKS. A Stop hook can refuse to let a session finish, and using that
- * for peer messages would trap an agent in a loop the user did not ask for.
+ * NEVER BLOCKS. `decision: "block"` would trap a session in a loop the user did
+ * not ask for.
  */
 
 import { withStore } from "./store.ts";
-import { emit, formatMessages, readPayload, summarize, TRUST_NOTE } from "./shared.ts";
+import { emit, formatMessages, readPayload, TRUST_NOTE } from "./shared.ts";
 import { resolveProject } from "./repo.ts";
-
-/** Long enough to say what happened, short enough that a roster stays readable. */
-const SUMMARY_MAX = 160;
 
 async function main(): Promise<void> {
   const payload = await readPayload();
@@ -28,32 +32,40 @@ async function main(): Promise<void> {
   const cwd = payload?.cwd;
   if (!sessionId || !cwd) return;
 
+  // Already inside a hook-driven continuation: record the stop, deliver nothing.
+  // Chaining another continuation here is how a turn stops ever ending.
+  const continuing = payload.stop_hook_active === true;
+  // Present from v2.1.145; absent on older versions, which read as "not paused".
+  const background = payload.background_tasks ?? [];
+
   const report = withStore(resolveProject(cwd).dbPath, (store) => {
     const now = Date.now();
     store.touch(sessionId, now);
     const handle = store.handleFor(sessionId);
     if (!handle) return null;
 
-    const last = payload.last_assistant_message ?? "";
-    if (last.trim().length > 0) {
-      store.post(handle, "done", `finished a turn: ${summarize(last, SUMMARY_MAX)}`, now);
+    // A session waiting on a background task has NOT finished, and saying it has
+    // is the roster's most misleading possible claim about a peer.
+    if (background.length > 0) {
+      const kinds = [...new Set(background.map((t) => t.type ?? "task"))].join(", ");
+      store.post(handle, "done", `paused, waiting on background work (${kinds})`, now);
     } else {
-      store.post(handle, "done", "finished a turn", now);
+      // The assistant's own words are NOT republished: same leak class as user
+      // prompts, and a peer needs the fact of a stop, not its content.
+      store.post(handle, "done", "reached a stopping point", now);
     }
 
-    const unread = store.drainUnread(sessionId);
+    if (continuing) return null;
+    const unread = store.drainDirected(sessionId);
     if (unread.length === 0) return null;
-    const lines = [
-      `${unread.length} update(s) arrived from other agents while you were working:`,
-    ];
+    const lines = [`${unread.length} message(s) addressed to this session:`];
     lines.push(...formatMessages(unread, now));
-    lines.push("", "Mention anything here that affects what you just did or plan to do next.");
     lines.push("", TRUST_NOTE);
     return { text: lines.join("\n"), count: unread.length };
   });
 
   if (!report) return;
-  emit("Stop", report.text, `presence: ${report.count} peer update(s)`);
+  emit("Stop", report.text, `presence: ${report.count} message(s) for you`);
 }
 
 try {

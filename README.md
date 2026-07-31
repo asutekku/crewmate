@@ -83,8 +83,28 @@ the real session name, the fallback handle, or a unique prefix.
 > stops four agents acting on one instruction. It is **not** a channel for
 > anything you would not want all your sessions to see.
 
-Delivery lands on the recipient's **next turn**. A `busy` peer is mid-turn and
-will not see it until that finishes — `msg` says so when it happens.
+### When a message actually lands
+
+| Recipient is | Arrives |
+|---|---|
+| mid-turn, using tools | **between tool batches** (`PostToolBatch`) — seconds |
+| ending a turn | at `Stop`, but **only if addressed to it** |
+| at a prompt | on its next `UserPromptSubmit` |
+| idle at a prompt | not until the human prompts it |
+
+`PostToolBatch` is what makes this usable: a busy agent — the one actually
+editing files — picks up "waterSim.ts is mine" within seconds instead of at the
+end of a 20-minute run.
+
+**Stop delivery is deliberately narrow.** Injecting at `Stop` *continues the
+turn* (HOOKS.MD: "The conversation continues so Claude can act on it"), under the
+same 8-continuation cap as blocking. So only messages addressed to that session
+and human broadcasts are delivered there; routine `done`/`claim` chatter waits.
+Otherwise every agent's turn-end announcement would extend every other agent's
+turn, and two agents could bounce `done` lines off each other until the cap cut
+them off. `stop_hook_active` suppresses delivery entirely.
+
+**Nothing wakes an idle session** — that limit is real and unfixed here.
 
 ### Whose words are these
 
@@ -168,9 +188,17 @@ where escape codes cost tokens and buy nothing.
 
 | File | Role |
 |---|---|
-| `repo.ts` | Project identity + db path. The only file that knows about platforms. |
+| `repo.ts` | Project identity + db path (cached — a `git rev-parse` costs 31 ms). |
 | `agents.ts` | Reads `claude agents --json` for real names + idle/busy. |
+| `topic.ts` | Lossy, credential-rejecting text → one-line roster label. |
 | `colour.ts` | ANSI for the CLI only. Never reaches an agent's context. |
+| `tool-batch.ts` | **PostToolBatch** — mid-turn delivery. |
+| `turn-failed.ts` | **StopFailure** — a dead turn stops reading as "still working". |
+| `notify.ts` | **Notification** — records "waiting for permission". |
+| `subagent-start.ts` | **SubagentStart** — tells a subagent what peers hold. |
+| `compacted.ts` | **PostCompact** — refreshes intent from the compaction summary. |
+| `cwd-changed.ts` | **CwdChanged** — keeps worktree/branch true after a `cd`. |
+| `task-changed.ts` | **TaskCreated/Completed** — mirrors per-session tasks to a shared board. |
 | `store.ts` | SQLite schema + all state access. The only file that knows SQL. |
 | `shared.ts` | Payload reading, report formatting, `emit`. |
 | `session-start.ts` | Register; inject roster. |
@@ -233,12 +261,31 @@ answer "is this someone else's work?", and a wedged agent is worse than a visibl
 conflict. `turn-end` never uses `Stop`'s blocking form, which would trap a
 session in a loop nobody asked for.
 
+## Cost
+
+Hooks are synchronous — every one blocks its agent. Measured 2026-07-31:
+
+| Path | Cost | Frequency |
+|---|---|---|
+| bare Bun startup | **52 ms** | the floor for every hook |
+| `PostToolBatch`, nothing to deliver | **76 ms** | after each tool batch |
+| `SessionStart` (samples `claude agents --json`) | ~1 s | once per session |
+| everything else | ~72 ms | rare (per turn, per `cd`, per failure) |
+
+`PostToolBatch` is the only one on a hot path: ~0.3 s per turn over 5 batches,
+~2.2 s over 30. Acceptable beside this repo's 7 s-per-edit typecheck hook, but
+not free — if it bites, the fix is fewer firings, not a faster script.
+
+Two things were tried and rejected on measurement: `bun build --compile` (85 ms,
+**slower** than the script, for a 98 MB binary per hook), and calling
+`claude agents --json` anywhere per-prompt (950 ms). Caching the git-derived
+project paths took `PostToolBatch` from 93 ms to 76 ms.
+
 ## Known limits
 
-- **Messages land on turn boundaries** (prompt submit, turn end). A session deep
-  in a long autonomous run does not see a peer's message until its current turn
-  ends. There is no supported way to inject into a running turn; `turn-end.ts`
-  narrows the gap but cannot close it.
+- **Nothing wakes an idle session.** A session sitting at a prompt runs no hooks.
+  `PostToolBatch` closes the gap for a *busy* agent — the one actually editing —
+  but an idle peer reads its mail whenever you next prompt it.
 - **Claims are per-path, not per-region.** Two agents in different functions of
   one large file still read as an overlap.
 - **A stated task is the session's first prompt.** Later prompts do not update it

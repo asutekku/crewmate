@@ -71,6 +71,7 @@ function who(): void {
     // Assigned across the roster so no two agents share a colour — hashing a
     // name cannot promise that once names are arbitrary (`traffic-12`).
     const palette = rosterColours(sessions, (s) => displayName(s));
+    const taskCounts = store.taskCounts();
     console.log(bold(`${sessions.length} active agent(s) in ${PROJECT.name}:`));
     for (const s of sessions) {
       const paint = palette.get(displayName(s)) ?? handleColour(s.handle);
@@ -79,11 +80,20 @@ function who(): void {
       const branch = s.branch !== "" ? dim(` (${s.branch})`) : "";
       const seen = activityColour(age)(agoText(s.lastSeenMs, now));
       const task = s.intent !== "" ? s.intent : dim("(no stated task yet)");
-      // busy is the one state worth colouring: it explains why a message has not
-      // landed yet, and why the roster line may be about to change.
-      const state = s.status === "busy" ? yellow(" busy") : s.status === "idle" ? dim(" idle") : "";
+      const t = taskCounts.get(s.sessionId);
+      const prog = t && t.open + t.done > 0 ? dim(` [${t.done}/${t.open + t.done}]`) : "";
+      // A blocked session is the one that wants your attention, so it reads red
+      // and outranks idle/busy — those describe the symptom, this the cause.
+      const state =
+        s.blocked !== ""
+          ? red(` ${s.blocked}`)
+          : s.status === "busy"
+            ? yellow(" busy")
+            : s.status === "idle"
+              ? dim(" idle")
+              : "";
       console.log(
-        `  ${paint(bold(displayName(s)))}${state}${where}${branch}  ${task}  ${dim("·")} ${seen}`,
+        `  ${paint(bold(displayName(s)))}${state}${where}${branch}  ${task}${prog}  ${dim("·")} ${seen}`,
       );
 
       const mine = claims.filter((c) => c.handle === s.handle);

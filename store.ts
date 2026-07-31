@@ -78,6 +78,8 @@ export interface Session {
   readonly handle: string;
   /** `idle` / `busy` from Claude Code, or "" when it has not been sampled. */
   readonly status: string;
+  /** Why the session is stuck, when it is; "" otherwise. Beats `status`. */
+  readonly blocked: string;
   /** The session's working tree — differs per worktree within one repo. */
   readonly worktree: string;
   readonly branch: string;
@@ -110,6 +112,43 @@ export interface Claim {
   readonly tsMs: number;
 }
 
+/**
+ * Answers "is there anything at all for this session?" without opening the
+ * write path or building any objects.
+ *
+ * WHY THIS EXISTS: `PostToolBatch` fires after every batch of tool calls — many
+ * times per turn — and the honest answer is almost always "nothing new". Doing
+ * the full open-drain-format round trip there would tax every batch to deliver
+ * a message that arrives a few times an hour. This is a read-only open and one
+ * indexed MAX(), so the common case costs a query rather than a transaction.
+ *
+ * Returns false when the db does not exist yet, which is the very first hook of
+ * the very first session.
+ */
+export function hasUnread(dbPath: string, sessionId: string): boolean {
+  try {
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      const row = db
+        .query(
+          `SELECT EXISTS(
+             SELECT 1 FROM messages m
+               JOIN sessions s ON s.session_id = ?1
+              WHERE m.id > s.last_read_id
+                AND m.handle != s.handle
+                AND (m.to_session = '' OR m.to_session = ?1)
+           ) AS any_unread`,
+        )
+        .get(sessionId) as { any_unread: number } | null;
+      return (row?.any_unread ?? 0) === 1;
+    } finally {
+      db.close();
+    }
+  } catch {
+    return false;
+  }
+}
+
 function openDb(dbPath: string): Database {
   ensureBaseDir();
   const db = new Database(dbPath, { create: true });
@@ -125,6 +164,10 @@ function openDb(dbPath: string): Database {
       handle       TEXT NOT NULL,
       name         TEXT NOT NULL DEFAULT '',
       status       TEXT NOT NULL DEFAULT '',
+      -- Why a session is stuck, when it is: "waiting for permission", "turn
+      -- failed: rate_limit". Distinct from the status column, which a
+      -- "claude agents --json" sample overwrites wholesale.
+      blocked      TEXT NOT NULL DEFAULT '',
       worktree     TEXT NOT NULL,
       branch       TEXT NOT NULL DEFAULT '',
       intent       TEXT NOT NULL DEFAULT '',
@@ -150,6 +193,17 @@ function openDb(dbPath: string): Database {
       -- is to still make sense afterwards.
       from_name  TEXT NOT NULL DEFAULT '',
       to_name    TEXT NOT NULL DEFAULT ''
+    );
+    -- Claude Code's own task list is PER-SESSION (verified: ~/.claude/tasks/ is
+    -- one directory per session id), so peers cannot see each other's. Mirroring
+    -- it here is the only way a shared board exists.
+    CREATE TABLE IF NOT EXISTS tasks (
+      session_id   TEXT NOT NULL,
+      task_id      TEXT NOT NULL,
+      subject      TEXT NOT NULL,
+      created_ms   INTEGER NOT NULL,
+      completed_ms INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (session_id, task_id)
     );
     CREATE TABLE IF NOT EXISTS claims (
       path       TEXT NOT NULL,
@@ -183,7 +237,7 @@ export class Store {
   liveSessions(nowMs: number): Session[] {
     const rows = this.db
       .query(
-        `SELECT session_id, handle, name, status, worktree, branch, intent,
+        `SELECT session_id, handle, name, status, blocked, worktree, branch, intent,
                 last_seen_ms, started_ms
            FROM sessions WHERE last_seen_ms > ? ORDER BY started_ms ASC`,
       )
@@ -193,6 +247,7 @@ export class Store {
       handle: String(r["handle"]),
       name: String(r["name"] ?? ""),
       status: String(r["status"] ?? ""),
+      blocked: String(r["blocked"] ?? ""),
       worktree: String(r["worktree"]),
       branch: String(r["branch"]),
       intent: String(r["intent"]),
@@ -260,8 +315,15 @@ export class Store {
    * Recent history is surfaced separately by `recent()`, which is a deliberate
    * one-off summary rather than unread mail.
    */
+  /**
+   * Heartbeat. Also clears `blocked`: a session doing something is by definition
+   * no longer waiting on the permission prompt or dead from the API error that
+   * set it, and a stale "stuck" label is worse than none.
+   */
   touch(sessionId: string, nowMs: number): void {
-    this.db.query(`UPDATE sessions SET last_seen_ms = ? WHERE session_id = ?`).run(nowMs, sessionId);
+    this.db
+      .query(`UPDATE sessions SET last_seen_ms = ?, blocked = '' WHERE session_id = ?`)
+      .run(nowMs, sessionId);
   }
 
   handleFor(sessionId: string): string | null {
@@ -273,6 +335,18 @@ export class Store {
 
   setIntent(sessionId: string, intent: string): void {
     this.db.query(`UPDATE sessions SET intent = ? WHERE session_id = ?`).run(intent, sessionId);
+  }
+
+  /**
+   * A state Claude Code's own `idle`/`busy` cannot express: waiting on a
+   * permission prompt, or dead after an API error.
+   *
+   * Kept separate from `status` because that column is overwritten wholesale by
+   * the next `claude agents --json` sample, which would erase this. Cleared by
+   * any activity, since a session that just did something is not stuck.
+   */
+  setBlocked(sessionId: string, blocked: string): void {
+    this.db.query(`UPDATE sessions SET blocked = ? WHERE session_id = ?`).run(blocked, sessionId);
   }
 
   /**
@@ -347,6 +421,52 @@ export class Store {
    * Read and cursor-advance are one transaction so two hooks racing on the same
    * session cannot both deliver the same range.
    */
+  /**
+   * Like `drainUnread`, but delivers only messages a human or a peer addressed
+   * deliberately — directed `say` and human `note` — and leaves everything else
+   * for the next ordinary delivery point.
+   *
+   * WHY: at `Stop`, injecting `additionalContext` CONTINUES the turn (HOOKS.MD:
+   * "The conversation continues so Claude can act on it"). Routine `done` and
+   * `claim` chatter must therefore never be delivered there: with several
+   * sessions in one tree, each agent's turn-end announcement would extend every
+   * other agent's turn, and two agents can bounce `done` lines off each other up
+   * to the 8-continuation cap. A question actually addressed to this session is
+   * worth continuing for; a peer's bookkeeping is not.
+   *
+   * The cursor advances only past what was DELIVERED, so a skipped `done` line
+   * still arrives on the next prompt rather than being silently dropped.
+   */
+  drainDirected(sessionId: string): Message[] {
+    const drain = this.db.transaction((): Message[] => {
+      const cur = this.db
+        .query(`SELECT handle, last_read_id FROM sessions WHERE session_id = ?`)
+        .get(sessionId) as { handle: string; last_read_id: number } | null;
+      if (!cur) return [];
+      const rows = this.db
+        .query(
+          `SELECT id, ts_ms, handle, kind, body, to_session, from_name, to_name
+             FROM messages
+            WHERE id > ? AND handle != ?
+              AND (to_session = '' OR to_session = ?)
+              AND (kind = 'note' OR (kind = 'say' AND to_session = ?))
+            ORDER BY id ASC`,
+        )
+        .all(cur.last_read_id, cur.handle, sessionId, sessionId) as Array<
+        Record<string, string | number>
+      >;
+      if (rows.length === 0) return [];
+      // Only past the last row actually handed over — undelivered chatter keeps
+      // its place in the queue for the next prompt.
+      const lastId = Number(rows[rows.length - 1]?.["id"] ?? cur.last_read_id);
+      this.db
+        .query(`UPDATE sessions SET last_read_id = ? WHERE session_id = ?`)
+        .run(lastId, sessionId);
+      return rows.map(toMessage);
+    });
+    return drain();
+  }
+
   drainUnread(sessionId: string): Message[] {
     const drain = this.db.transaction((): Message[] => {
       const cur = this.db
@@ -399,6 +519,39 @@ export class Store {
       )
       .all(forSession ?? null, limit) as Array<Record<string, string | number>>;
     return rows.map(toMessage).reverse();
+  }
+
+  /** Mirrors a task from a session's private list onto the shared board. */
+  upsertTask(sessionId: string, taskId: string, subject: string, nowMs: number): void {
+    this.db
+      .query(
+        `INSERT INTO tasks (session_id, task_id, subject, created_ms) VALUES (?, ?, ?, ?)
+           ON CONFLICT (session_id, task_id) DO UPDATE SET subject = excluded.subject`,
+      )
+      .run(sessionId, taskId, subject, nowMs);
+  }
+
+  completeTask(sessionId: string, taskId: string, nowMs: number): void {
+    this.db
+      .query(`UPDATE tasks SET completed_ms = ? WHERE session_id = ? AND task_id = ?`)
+      .run(nowMs, sessionId, taskId);
+  }
+
+  /** Open/done counts per session, for the roster's progress column. */
+  taskCounts(): Map<string, { open: number; done: number }> {
+    const rows = this.db
+      .query(
+        `SELECT session_id,
+                SUM(CASE WHEN completed_ms = 0 THEN 1 ELSE 0 END) AS open,
+                SUM(CASE WHEN completed_ms > 0 THEN 1 ELSE 0 END) AS done
+           FROM tasks GROUP BY session_id`,
+      )
+      .all() as Array<Record<string, string | number>>;
+    const out = new Map<string, { open: number; done: number }>();
+    for (const r of rows) {
+      out.set(String(r["session_id"]), { open: Number(r["open"]), done: Number(r["done"]) });
+    }
+    return out;
   }
 
   claim(sessionId: string, path: string, nowMs: number): void {

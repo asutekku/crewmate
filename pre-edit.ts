@@ -54,21 +54,23 @@ async function main(): Promise<void> {
     const names = (cs: typeof others): string =>
       cs.map((o) => `${o.handle} (claimed ${agoText(o.tsMs, now)})`).join(", ");
 
-    const lines = [`OVERLAP on ${path}:`];
+    // Stated as consequences rather than orders: HOOKS.MD warns that imperative
+    // injected text can read as an out-of-band command and trip Claude's
+    // prompt-injection defenses. The facts carry the same weight.
+    const lines = [`Another session is editing ${path}.`];
     if (here.length > 0) {
       lines.push(
-        `- ${names(here)} — editing it in THIS working tree. Their changes are ` +
-          `uncommitted here: stage only the files you authored (never \`git add .\`), ` +
-          `and do not revert or stash their work.`,
+        `- ${names(here)} — in THIS working tree. Their changes are uncommitted here, ` +
+          `so \`git add .\` would stage their work and a revert or stash would discard ` +
+          `it. CLAUDE.md's commit rules cover this case.`,
       );
     }
     if (away.length > 0) {
       lines.push(
-        `- ${names(away)} — editing it in a separate worktree. No on-disk collision, ` +
-          `but these changes have to merge later.`,
+        `- ${names(away)} — in a separate worktree. There is no on-disk collision, ` +
+          `though the two versions have to merge later.`,
       );
     }
-    lines.push(`If your change would conflict with theirs, say so rather than overwriting it.`);
     return lines.join("\n");
   });
 

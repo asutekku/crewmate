@@ -25,11 +25,11 @@ const RECENT_LINES = 8;
  * next turn.
  */
 const HOW_TO_MESSAGE =
-  "To message a peer, run:\n" +
-  "  bun ~/.claude/agent-presence/bin/cli.ts msg <name> \"<text>\"\n" +
-  "It reaches only that agent, on its next turn (a `busy` peer is mid-turn and " +
-  "will not see it until then). Use it to hand over a finding, warn about a file " +
-  "you are both in, or ask a question — not to give another agent orders.";
+  "Peers are reachable with `bun ~/.claude/agent-presence/bin/cli.ts msg <name> " +
+  '"<text>"`. A message reaches only the named agent; `say` reaches every agent. ' +
+  "Delivery happens between the recipient's tool batches, or at its next turn — a " +
+  "`busy` peer is mid-turn and reads it when that turn ends. The channel carries " +
+  "findings, warnings about shared files, and questions between agents.";
 
 async function main(): Promise<void> {
   const payload = await readPayload();
@@ -66,7 +66,7 @@ async function main(): Promise<void> {
       );
     } else {
       lines.push(`${peers.length} other agent(s) active:`);
-      lines.push(...formatRoster(peers, claims, now, tree));
+      lines.push(...formatRoster(peers, claims, now, tree, store.taskCounts()));
       if (recent.length > 0) {
         lines.push("", "Recent activity:");
         lines.push(...formatMessages(recent, now));
