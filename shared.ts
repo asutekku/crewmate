@@ -10,8 +10,6 @@
 import type { Claim, Message, Session } from "./store.ts";
 import { agoText } from "./store.ts";
 
-export const REPO = "I:/Projects/Traffic";
-
 export interface HookPayload {
   readonly session_id?: string;
   readonly cwd?: string;
@@ -39,35 +37,31 @@ export function emit(event: string, context: string, systemMessage?: string): vo
   console.log(JSON.stringify(out));
 }
 
-export function currentBranch(): string {
-  try {
-    const proc = Bun.spawnSync(["git", "rev-parse", "--abbrev-ref", "HEAD"], {
-      cwd: REPO,
-      stdout: "pipe",
-      stderr: "ignore",
-    });
-    return proc.stdout.toString().trim();
-  } catch {
-    return "";
-  }
-}
-
 /**
- * One line per peer. The cwd is shown only when it differs from this session's,
- * which is how a worktree shows up as somewhere else without adding noise when
- * everyone is in the main tree.
+ * One line per peer.
+ *
+ * A peer in a DIFFERENT worktree is called out explicitly, because it changes
+ * what its claims mean: it is editing its own checkout, so an overlapping path
+ * is not a shared-tree collision, only a merge to think about later. Peers in
+ * the same tree show nothing, keeping the common case quiet.
  */
 export function formatRoster(
   peers: readonly Session[],
   claims: readonly Claim[],
   nowMs: number,
-  selfCwd: string,
+  selfWorktree: string,
 ): string[] {
   const lines: string[] = [];
   for (const p of peers) {
-    const where = p.cwd && p.cwd !== selfCwd ? ` [${p.cwd}]` : "";
+    // A branch is the tell that this is a git worktree at all; without one there
+    // is only ever a single directory, so naming it adds nothing.
+    const elsewhere = p.worktree !== "" && p.worktree !== selfWorktree && p.branch !== "";
+    const where = elsewhere ? ` [worktree ${p.worktree.split("/").pop() ?? p.worktree}]` : "";
+    const branch = elsewhere ? ` on ${p.branch}` : "";
     const doing = p.intent ? ` — ${p.intent}` : " — (no stated task yet)";
-    lines.push(`  ${p.handle}${where}${doing} (last active ${agoText(p.lastSeenMs, nowMs)})`);
+    lines.push(
+      `  ${p.handle}${where}${branch}${doing} (last active ${agoText(p.lastSeenMs, nowMs)})`,
+    );
     const mine = claims.filter((c) => c.handle === p.handle);
     if (mine.length > 0) {
       const shown = mine.slice(0, 6).map((c) => c.path);

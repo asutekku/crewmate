@@ -22,15 +22,8 @@
  */
 
 import { Database } from "bun:sqlite";
-import { mkdirSync } from "node:fs";
 
-/**
- * State lives beside the hooks rather than in the system temp dir so it shares
- * the repo's lifetime, and under `.state/` because `typecheck.ts` already keeps
- * its baseline there — one gitignored spot for hook scratch.
- */
-const STATE_DIR = "I:/Projects/Traffic/.claude/hooks/.state";
-const DB_PATH = `${STATE_DIR}/presence.db`;
+import { ensureBaseDir } from "./repo.ts";
 
 /**
  * A session with no heartbeat for this long is treated as gone. Sessions die by
@@ -60,7 +53,8 @@ export type MessageKind = "status" | "claim" | "release" | "done" | "note";
 export interface Session {
   readonly sessionId: string;
   readonly handle: string;
-  readonly cwd: string;
+  /** The session's working tree — differs per worktree within one repo. */
+  readonly worktree: string;
   readonly branch: string;
   readonly intent: string;
   readonly lastSeenMs: number;
@@ -78,12 +72,14 @@ export interface Message {
 export interface Claim {
   readonly handle: string;
   readonly path: string;
+  /** The claimant's working tree — same tree means a real on-disk collision. */
+  readonly worktree: string;
   readonly tsMs: number;
 }
 
-function openDb(): Database {
-  mkdirSync(STATE_DIR, { recursive: true });
-  const db = new Database(DB_PATH, { create: true });
+function openDb(dbPath: string): Database {
+  ensureBaseDir();
+  const db = new Database(dbPath, { create: true });
   // WAL survives across connections once set, but setting it every open is
   // cheap and means a deleted db file comes back correctly configured.
   db.exec("PRAGMA journal_mode = WAL");
@@ -94,7 +90,7 @@ function openDb(): Database {
     CREATE TABLE IF NOT EXISTS sessions (
       session_id   TEXT PRIMARY KEY,
       handle       TEXT NOT NULL,
-      cwd          TEXT NOT NULL,
+      worktree     TEXT NOT NULL,
       branch       TEXT NOT NULL DEFAULT '',
       intent       TEXT NOT NULL DEFAULT '',
       last_seen_ms INTEGER NOT NULL,
@@ -124,8 +120,8 @@ function openDb(): Database {
  * when a caller throws, which matters because a leaked WAL handle keeps the
  * -wal file from checkpointing.
  */
-export function withStore<T>(fn: (s: Store) => T): T {
-  const db = openDb();
+export function withStore<T>(dbPath: string, fn: (s: Store) => T): T {
+  const db = openDb(dbPath);
   try {
     return fn(new Store(db));
   } finally {
@@ -140,14 +136,14 @@ export class Store {
   liveSessions(nowMs: number): Session[] {
     const rows = this.db
       .query(
-        `SELECT session_id, handle, cwd, branch, intent, last_seen_ms, started_ms
+        `SELECT session_id, handle, worktree, branch, intent, last_seen_ms, started_ms
            FROM sessions WHERE last_seen_ms > ? ORDER BY started_ms ASC`,
       )
       .all(nowMs - STALE_MS) as Array<Record<string, string | number>>;
     return rows.map((r) => ({
       sessionId: String(r["session_id"]),
       handle: String(r["handle"]),
-      cwd: String(r["cwd"]),
+      worktree: String(r["worktree"]),
       branch: String(r["branch"]),
       intent: String(r["intent"]),
       lastSeenMs: Number(r["last_seen_ms"]),
@@ -163,14 +159,14 @@ export class Store {
    * of an agent that died hours ago is what keeps a 4-agent setup on the first
    * four names instead of drifting down the list every restart.
    */
-  register(sessionId: string, cwd: string, branch: string, nowMs: number): string {
+  register(sessionId: string, worktree: string, branch: string, nowMs: number): string {
     const existing = this.db
       .query(`SELECT handle FROM sessions WHERE session_id = ?`)
       .get(sessionId) as { handle: string } | null;
     if (existing) {
       this.db
-        .query(`UPDATE sessions SET last_seen_ms = ?, cwd = ?, branch = ? WHERE session_id = ?`)
-        .run(nowMs, cwd, branch, sessionId);
+        .query(`UPDATE sessions SET last_seen_ms = ?, worktree = ?, branch = ? WHERE session_id = ?`)
+        .run(nowMs, worktree, branch, sessionId);
       return existing.handle;
     }
 
@@ -180,10 +176,10 @@ export class Store {
     this.db
       .query(
         `INSERT INTO sessions
-           (session_id, handle, cwd, branch, intent, last_seen_ms, started_ms, last_read_id)
+           (session_id, handle, worktree, branch, intent, last_seen_ms, started_ms, last_read_id)
          VALUES (?, ?, ?, ?, '', ?, ?, (SELECT COALESCE(MAX(id), 0) FROM messages))`,
       )
-      .run(sessionId, handle, cwd, branch, nowMs, nowMs);
+      .run(sessionId, handle, worktree, branch, nowMs, nowMs);
     return handle;
   }
 
@@ -291,32 +287,24 @@ export class Store {
   conflictingClaims(sessionId: string, path: string, nowMs: number): Claim[] {
     const rows = this.db
       .query(
-        `SELECT s.handle AS handle, c.path AS path, c.ts_ms AS ts_ms
+        `SELECT s.handle AS handle, s.worktree AS worktree, c.path AS path, c.ts_ms AS ts_ms
            FROM claims c JOIN sessions s ON s.session_id = c.session_id
           WHERE c.path = ? AND c.session_id != ? AND s.last_seen_ms > ?`,
       )
       .all(path, sessionId, nowMs - STALE_MS) as Array<Record<string, string | number>>;
-    return rows.map((r) => ({
-      handle: String(r["handle"]),
-      path: String(r["path"]),
-      tsMs: Number(r["ts_ms"]),
-    }));
+    return rows.map(toClaim);
   }
 
   /** Every live claim, for the roster. */
   allClaims(nowMs: number): Claim[] {
     const rows = this.db
       .query(
-        `SELECT s.handle AS handle, c.path AS path, c.ts_ms AS ts_ms
+        `SELECT s.handle AS handle, s.worktree AS worktree, c.path AS path, c.ts_ms AS ts_ms
            FROM claims c JOIN sessions s ON s.session_id = c.session_id
           WHERE s.last_seen_ms > ? ORDER BY c.ts_ms ASC`,
       )
       .all(nowMs - STALE_MS) as Array<Record<string, string | number>>;
-    return rows.map((r) => ({
-      handle: String(r["handle"]),
-      path: String(r["path"]),
-      tsMs: Number(r["ts_ms"]),
-    }));
+    return rows.map(toClaim);
   }
 
   /** Drops rows for sessions that stopped heartbeating. */
@@ -332,12 +320,13 @@ export class Store {
   }
 }
 
-/** Repo-relative and forward-slashed, so two sessions naming one file agree. */
-export function relPath(p: string, repo: string): string {
-  const s = p.replace(/\\/g, "/");
-  const lower = s.toLowerCase();
-  const repoLower = repo.replace(/\\/g, "/").toLowerCase();
-  return lower.startsWith(repoLower) ? s.slice(repo.length).replace(/^\//, "") : s;
+function toClaim(r: Record<string, string | number>): Claim {
+  return {
+    handle: String(r["handle"]),
+    path: String(r["path"]),
+    worktree: String(r["worktree"]),
+    tsMs: Number(r["ts_ms"]),
+  };
 }
 
 export function agoText(fromMs: number, nowMs: number): string {

@@ -10,18 +10,20 @@
 
 import { withStore } from "./store.ts";
 import { readPayload } from "./shared.ts";
+import { resolveProject } from "./repo.ts";
 
 async function main(): Promise<void> {
   const payload = await readPayload();
   const sessionId = payload?.session_id;
-  if (!sessionId) return;
+  const cwd = payload?.cwd;
+  if (!sessionId || !cwd) return;
 
   // `clear` and `resume` end a session without the agent leaving the repo, and
   // deregistering there would drop a still-live agent off the roster.
   const reason = payload.reason ?? "other";
   if (reason === "clear" || reason === "resume") return;
 
-  withStore((store) => {
+  withStore(resolveProject(cwd).dbPath, (store) => {
     const now = Date.now();
     const handle = store.handleFor(sessionId);
     if (handle) store.post(handle, "status", "session ended", now);

@@ -13,14 +13,8 @@
  */
 
 import { withStore } from "./store.ts";
-import {
-  emit,
-  formatMessages,
-  formatRoster,
-  readPayload,
-  REPO,
-  summarize,
-} from "./shared.ts";
+import { emit, formatMessages, formatRoster, readPayload, summarize } from "./shared.ts";
+import { resolveProject, worktreeRoot } from "./repo.ts";
 
 /** Intent is a roster label, not a description; one short line is the point. */
 const INTENT_MAX = 120;
@@ -37,10 +31,13 @@ function shouldSetIntent(existing: string): boolean {
 async function main(): Promise<void> {
   const payload = await readPayload();
   const sessionId = payload?.session_id;
-  if (!sessionId) return;
-  const cwd = payload.cwd ?? REPO;
+  const cwd = payload?.cwd;
+  if (!sessionId || !cwd) return;
 
-  const report = withStore((store) => {
+  const project = resolveProject(cwd);
+  const tree = worktreeRoot(cwd);
+
+  const report = withStore(project.dbPath, (store) => {
     const now = Date.now();
     store.touch(sessionId, now);
 
@@ -61,11 +58,11 @@ async function main(): Promise<void> {
     // are always delivered together.
     const peers = store.liveSessions(now).filter((s) => s.sessionId !== sessionId);
     const claims = store.allClaims(now);
-    const lines = [`${unread.length} update(s) from other agents in this repo:`];
+    const lines = [`${unread.length} update(s) from other agents in ${project.name}:`];
     lines.push(...formatMessages(unread, now));
     if (peers.length > 0) {
       lines.push("", "Currently active:");
-      lines.push(...formatRoster(peers, claims, now, cwd));
+      lines.push(...formatRoster(peers, claims, now, tree));
     }
     return { text: lines.join("\n"), count: unread.length };
   });

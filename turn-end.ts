@@ -17,6 +17,7 @@
 
 import { withStore } from "./store.ts";
 import { emit, formatMessages, readPayload, summarize } from "./shared.ts";
+import { resolveProject } from "./repo.ts";
 
 /** Long enough to say what happened, short enough that a roster stays readable. */
 const SUMMARY_MAX = 160;
@@ -24,9 +25,10 @@ const SUMMARY_MAX = 160;
 async function main(): Promise<void> {
   const payload = await readPayload();
   const sessionId = payload?.session_id;
-  if (!sessionId) return;
+  const cwd = payload?.cwd;
+  if (!sessionId || !cwd) return;
 
-  const report = withStore((store) => {
+  const report = withStore(resolveProject(cwd).dbPath, (store) => {
     const now = Date.now();
     store.touch(sessionId, now);
     const handle = store.handleFor(sessionId);

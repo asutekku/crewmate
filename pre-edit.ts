@@ -10,24 +10,28 @@
  * rather than by luck.
  */
 
-import { relPath, withStore } from "./store.ts";
-import { agoText } from "./store.ts";
-import { emit, readPayload, REPO } from "./shared.ts";
+import { agoText, withStore } from "./store.ts";
+import { emit, readPayload } from "./shared.ts";
+import { relPath, resolveProject, worktreeRoot } from "./repo.ts";
 
 async function main(): Promise<void> {
   const payload = await readPayload();
   const sessionId = payload?.session_id;
+  const cwd = payload?.cwd;
   const filePath = payload?.tool_input?.file_path;
-  if (!sessionId || !filePath) return;
+  if (!sessionId || !cwd || !filePath) return;
 
-  const path = relPath(filePath, REPO);
-  // The presence db is itself written by these hooks; claiming it is noise.
-  if (path.includes(".claude/hooks/.state/")) return;
+  const project = resolveProject(cwd);
+  const tree = worktreeRoot(cwd);
+  // Relative to THIS session's worktree, so two checkouts of one repo name the
+  // same file identically and their claims actually meet.
+  const path = relPath(filePath, tree);
 
-  const warning = withStore((store) => {
+  const warning = withStore(project.dbPath, (store) => {
     const now = Date.now();
     store.touch(sessionId, now);
-    const handle = store.handleFor(sessionId);
+    const self = store.liveSessions(now).find((s) => s.sessionId === sessionId);
+    const handle = self?.handle ?? store.handleFor(sessionId);
     if (!handle) return null;
 
     // Read peers' claims BEFORE recording our own, so this session's claim
@@ -41,15 +45,31 @@ async function main(): Promise<void> {
     const who = others.map((o) => o.handle).join(", ");
     store.post(handle, "claim", `also editing ${path} (already claimed by ${who})`, now);
 
-    const detail = others
-      .map((o) => `${o.handle} (claimed ${agoText(o.tsMs, now)})`)
-      .join(", ");
-    return (
-      `OVERLAP: ${path} is also being edited by ${detail}.\n` +
-      `Their changes may be uncommitted in this shared tree. Per CLAUDE.md, stage only ` +
-      `the files you authored — never \`git add .\` — and do not revert or stash their work. ` +
-      `If your change would conflict with theirs, say so rather than overwriting it.`
-    );
+    // Same tree means their edits are literally in these files right now; a
+    // separate worktree is an independent checkout, so the risk is a merge later
+    // rather than an overwrite now. The two need different advice, so they are
+    // reported separately instead of averaged into one vague warning.
+    const here = others.filter((o) => !o.worktree || o.worktree === tree);
+    const away = others.filter((o) => o.worktree && o.worktree !== tree);
+    const names = (cs: typeof others): string =>
+      cs.map((o) => `${o.handle} (claimed ${agoText(o.tsMs, now)})`).join(", ");
+
+    const lines = [`OVERLAP on ${path}:`];
+    if (here.length > 0) {
+      lines.push(
+        `- ${names(here)} — editing it in THIS working tree. Their changes are ` +
+          `uncommitted here: stage only the files you authored (never \`git add .\`), ` +
+          `and do not revert or stash their work.`,
+      );
+    }
+    if (away.length > 0) {
+      lines.push(
+        `- ${names(away)} — editing it in a separate worktree. No on-disk collision, ` +
+          `but these changes have to merge later.`,
+      );
+    }
+    lines.push(`If your change would conflict with theirs, say so rather than overwriting it.`);
+    return lines.join("\n");
   });
 
   if (!warning) return;
