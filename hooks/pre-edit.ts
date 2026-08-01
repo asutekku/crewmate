@@ -16,6 +16,8 @@ import { emit, readPayload } from "../core/shared.ts";
 import { currentBranch, relPath, resolveProject, worktreeRoot } from "../core/repo.ts";
 import { dirtyFiles } from "../core/dirty.ts";
 import { LOUD_KINDS } from "../core/diary.ts";
+import { agentKey, normalisePlanPath } from "../core/work.ts";
+import { fit } from "../core/layout.ts";
 
 /**
  * How recent a claim must be to count as "they are mid-edit, leave it alone".
@@ -40,6 +42,79 @@ const LOUD_SHOWN = 2;
 
 /** `withStore`'s callback argument, so a helper can take one. */
 type StoreHandle = Parameters<Parameters<typeof withStore>[1]>[0];
+
+/**
+ * Does this path look like a plan document?
+ *
+ * NAME AND PLACE BOTH, deliberately narrow. `audit_reports/` and `docs/plans/`
+ * are where this repo keeps them, and the PLAN/ROADMAP/EFFORT stems are what it
+ * calls them — measured against the 82 real ones. A looser rule (any `.md`
+ * under `docs/`) would fire on every system note and turn the suggestion into
+ * the kind of line agents learn to scroll past.
+ *
+ * Cheap by construction: a regex against a string already in hand, on a hook
+ * that runs before every edit.
+ */
+export function looksLikePlan(path: string): boolean {
+  const p = path.replace(/\\/g, "/");
+  if (!/\.md$/i.test(p)) return false;
+  // A DEDICATED PLANS FOLDER IS ENOUGH ON ITS OWN. `docs/plans/junction-editor.md`
+  // is a plan and its filename never says so — measured against this repo's real
+  // corpus, where requiring the stem missed 6 of 76 for exactly that reason. The
+  // folder has already made the claim; asking the filename to repeat it rejects
+  // the files whose authors trusted the folder.
+  if (/(?:^|\/)(?:docs\/plans|plans)\//i.test(p)) return true;
+  // Elsewhere the NAME has to carry it. `audit_reports/` holds findings and
+  // audits as well as plans, so a bare `.md` there is usually neither.
+  if (!/(?:^|\/)audit_reports\//i.test(p)) return false;
+  return /(?:^|\/)[^/]*(?:PLAN|ROADMAP|EFFORT)[^/]*\.md$/i.test(p);
+}
+
+/**
+ * Offers to link the open work item to the plan being edited.
+ *
+ * WHY THIS EXISTS AT ALL. `--plan-doc` and `link` shipped and nothing pointed
+ * at them, which is the exact shape of the `breaks`/`needs` failure: two verbs
+ * that worked, were advertised nowhere, and were used by nobody but their
+ * author. `cli.ts plans` is only as good as the links it has, and as of writing
+ * it holds ONE plan out of 82.
+ *
+ * THREE CONDITIONS, and each one is a way this could become noise:
+ *   - the path must look like a plan (see above);
+ *   - the agent must have an open item — with none there is nothing to link,
+ *     and suggesting `doing` here would be a different, unasked-for lecture;
+ *   - that item must not already name a plan. This covers both "already linked
+ *     to THIS one" and "deliberately linked to another": in the second case the
+ *     agent has already decided, and a hook that argues with a decision is one
+ *     that gets ignored on the occasion it is right.
+ *
+ * IT REPEATS while all three hold, and that is deliberate rather than an
+ * oversight. The condition is not "have we said this" but "is the item still
+ * unlinked" — a state the agent clears in one command. Recording a
+ * said-it-once flag would add a column whose only job is to SUPPRESS true
+ * advice, and this tool has already shipped one row nobody ever cleared.
+ *
+ * Silent whenever any condition fails. A hook that speaks on every plan edit
+ * gets scrolled past, and then the diary lines above it get scrolled past too.
+ */
+export function planLinkLine(store: StoreHandle, sessionId: string, path: string): string[] {
+  if (!looksLikePlan(path)) return [];
+  const item = store.work.target(agentKey("", sessionId));
+  if (!item || item.planDoc !== "") return [];
+  const plan = normalisePlanPath(path);
+  if (plan === "") return [];
+  // THE COMMAND GETS ITS OWN LINE, and the subject is not interpolated into it.
+  // Measured by driving this against a real item: putting both inline produced
+  // a 156-character line, because a work subject is a sentence and a plan path
+  // is 40-odd characters. The command is the part meant to be copied, so it is
+  // the part that must not wrap.
+  return [
+    `You are editing a plan and your open item does not name one.`,
+    `  \`cli.ts link ${plan}\``,
+    `  links it to "${fit(item.subject, 44)}", so \`cli.ts plans\` can report what`,
+    `  actually shipped against this plan rather than what it claims.`,
+  ];
+}
 
 /**
  * What the diary knows about the folder this edit lands in.
@@ -165,6 +240,10 @@ async function main(): Promise<void> {
     // about this code"), and gating the diary on an overlap would surface it
     // almost never. Bounded by path depth against an index — see `scopeCandidates`.
     const diary = diaryLines(store, path);
+    // Appended to the diary block rather than carried separately: both answer
+    // "what should you know before touching this file", and a second delivery
+    // path is a second place for one of them to be silently dropped.
+    diary.push(...planLinkLine(store, sessionId, path));
 
     /** The diary alone, when there is no overlap to report alongside it. */
     const diaryOnly = (): string | null => (diary.length > 0 ? diary.join("\n") : null);
