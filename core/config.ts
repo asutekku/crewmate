@@ -1,11 +1,12 @@
 /**
  * Tunable lifetimes, read from `~/.claude/agent-presence/config.json`.
  *
- * WHY A FILE RATHER THAN MORE CONSTANTS. There are now five separate horizons —
- * how long a session is alive, how long a claim means "mine", how long a name is
- * held, how long a closed work record is kept, how long edit history survives —
- * and they answer genuinely different questions. A fifth hardcoded constant is
- * where that stops being reviewable.
+ * WHY A FILE RATHER THAN MORE CONSTANTS. There are ten separate horizons here —
+ * how long a session is alive, a claim means "mine", a name is held, a work
+ * record is kept, edit history survives, a subagent is believed to be running, a
+ * finding stays, a retired finding stays, and how long an open item can sit
+ * before its agent is asked about it. They answer genuinely different questions,
+ * and a tenth hardcoded constant is well past where that stays reviewable.
  *
  * THE FILE IS OPTIONAL AND ALWAYS HAS BEEN. Every value below has a default that
  * applies when the file is missing, unreadable, or malformed. A config that must
@@ -66,6 +67,16 @@ export interface PresenceConfig {
    * outlives the claim rather than dying with it.
    */
   readonly diaryDeprecatedKeepMs: number;
+  /**
+   * How long an open work item can sit untouched before its agent is asked
+   * whether it is still real.
+   *
+   * An hour, because that is roughly the span over which "I am still on this"
+   * stops being obviously true. Shorter and the nudge interrupts work that is
+   * genuinely in progress; much longer and the board spends most of a working
+   * day advertising items nobody is doing.
+   */
+  readonly workStaleMs: number;
 }
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -80,6 +91,7 @@ export const DEFAULTS: PresenceConfig = {
   minionStaleMs: 60 * 60 * 1000, // 1 h
   diaryKeepMs: 365 * DAY,
   diaryDeprecatedKeepMs: 90 * DAY,
+  workStaleMs: 60 * 60 * 1000, // 1 h
 };
 
 export function configPath(): string {
@@ -143,5 +155,6 @@ function readConfig(): PresenceConfig {
     minionStaleMs: pick("minionStaleMs"),
     diaryKeepMs: pick("diaryKeepMs"),
     diaryDeprecatedKeepMs: pick("diaryDeprecatedKeepMs"),
+    workStaleMs: pick("workStaleMs"),
   };
 }

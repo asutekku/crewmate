@@ -12,12 +12,74 @@
  * design leans on the Stop hook to catch news at the end of a turn instead.
  */
 
-import { withStore } from "../core/store.ts";
+import { agoText, withStore } from "../core/store.ts";
+import { agentKey, progress } from "../core/work.ts";
+import { loadConfig } from "../core/config.ts";
 import { emit, formatMessages, formatRoster, readPayload, TRUST_NOTE } from "../core/shared.ts";
 import { currentBranch, resolveProject, worktreeRoot } from "../core/repo.ts";
 import { topicOf } from "../core/topic.ts";
 import { readTranscript } from "../core/transcript.ts";
 
+
+/** At most this many items are raised at once; a wall of them gets skipped. */
+const STALE_SHOWN = 3;
+
+/**
+ * Asks about open work items that have not moved in a while.
+ *
+ * WHY: an item is opened, the work finishes, the agent moves on and never
+ * closes it — so the board keeps advertising work nobody is doing. Observed
+ * live 2026-08-01: an item sat 13 hours at "1/3 · updated 12h" while its agent
+ * had shipped four unrelated commits since. The operator reads that board to
+ * see who is doing what, and a dangling item is a lie it tells about a
+ * specific agent.
+ *
+ * NEVER AUTO-CLOSED. Only the agent knows whether the work finished, was
+ * abandoned, or is genuinely parked, and a timer that closed it would swap a
+ * stale "open" for an equally wrong "done" — worse, because "done" is believed.
+ * So this asks; the decision stays where the knowledge is.
+ *
+ * ASKED ONCE PER ITEM. `markAsked` records it, so an agent that judges an item
+ * still live is not asked again next turn. A reminder that repeats is a
+ * reminder that gets skipped, and then the one that mattered is skipped too.
+ * (The column and setter for this shipped months ago with NO CALLER — the
+ * nudge was scaffolded and never wired, which is why the board dangled.)
+ */
+function staleWorkLines(
+  store: Parameters<Parameters<typeof withStore>[1]>[0],
+  sessionId: string,
+  nowMs: number,
+): string[] {
+  const mine = store.work.staleItems(
+    agentKey("", sessionId),
+    nowMs,
+    loadConfig().workStaleMs,
+  );
+  if (mine.length === 0) return [];
+
+  const shown = mine.slice(0, STALE_SHOWN);
+  const lines = [
+    shown.length === 1
+      ? "One of your work-board items has not moved in a while:"
+      : `${shown.length} of your work-board items have not moved in a while:`,
+  ];
+  for (const item of shown) {
+    const p = progress(store.work.steps(item.workId));
+    const done = p.total > 0 ? ` (${p.done}/${p.total})` : "";
+    lines.push(`  - "${item.subject}"${done}, last touched ${agoText(item.updatedMs, nowMs)}`);
+    // Marked here rather than after the agent answers: there is no signal for
+    // "it answered", and asking every turn until it does is the noise this is
+    // trying not to be.
+    store.work.markAsked(item.workId, nowMs);
+  }
+  lines.push(
+    "If one is finished or abandoned, `cli.ts done \"<subject match>\"` (add `--abandoned` if it" +
+      " was dropped) closes it. If it is still live, `cli.ts did <n> \"<what changed>\"` or" +
+      " `cli.ts step <n> \"<status>\"` moves it on. Either way the board stops advertising work" +
+      " nobody is doing — you will not be asked about these again.",
+  );
+  return lines;
+}
 
 async function main(): Promise<void> {
   const payload = await readPayload();
@@ -77,8 +139,17 @@ async function main(): Promise<void> {
       if (title !== "") store.setTitle(sessionId, title);
     }
 
+    // ASKED BEFORE the unread check, because an item dangles regardless of
+    // whether a peer happened to message you — gating it on peer traffic would
+    // make the nudge arrive on a schedule set by other agents' chatter.
+    const stale = staleWorkLines(store, sessionId, now);
+
     const unread = store.drainUnread(sessionId);
-    if (unread.length === 0) return null;
+    if (unread.length === 0) {
+      return stale.length > 0
+        ? { text: stale.join("\n"), count: 0, stale: stale.length }
+        : null;
+    }
 
     // A message is only actionable next to the roster it refers to, so the two
     // are always delivered together.
@@ -93,11 +164,16 @@ async function main(): Promise<void> {
       );
     }
     lines.push("", TRUST_NOTE);
-    return { text: lines.join("\n"), count: unread.length };
+    if (stale.length > 0) lines.push("", ...stale);
+    return { text: lines.join("\n"), count: unread.length, stale: stale.length };
   });
 
   if (!report) return;
-  emit("UserPromptSubmit", report.text, `presence: ${report.count} peer update(s)`);
+  const what =
+    report.count > 0
+      ? `presence: ${report.count} peer update(s)`
+      : `presence: ${report.stale} work item(s) may be finished`;
+  emit("UserPromptSubmit", report.text, what);
 }
 
 try {

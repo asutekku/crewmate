@@ -515,7 +515,9 @@ describe("board ordering", () => {
   });
 });
 
-describe("the idle-check guard (stored in P0, read in P2)", () => {
+describe("asking about items that stopped moving", () => {
+  const HOUR = 60 * 60 * 1000;
+
   test("markAsked records the turn so one item cannot be asked twice", () => {
     fresh((store) => {
       const w = store.work;
@@ -526,6 +528,86 @@ describe("the idle-check guard (stored in P0, read in P2)", () => {
       // Asking must NOT count as activity — a reminder the agent ignored should
       // not reorder the board or make the item look freshly worked on.
       expect(w.target(AGENT)?.updatedMs).toBe(1000);
+    });
+  });
+
+  test("an item that has not moved for an hour is raised", () => {
+    // The live case: an item sat 13 hours at "1/3 · updated 12h" while its
+    // agent had shipped four unrelated commits, so the board advertised work
+    // nobody was doing and named a specific agent while doing it.
+    fresh((store) => {
+      const w = store.work;
+      const now = 10 * HOUR;
+      w.open(AGENT, "a", "stale one", ["one"], now - 2 * HOUR);
+      expect(w.staleItems(AGENT, now, HOUR).map((i) => i.subject)).toEqual(["stale one"]);
+    });
+  });
+
+  test("an item worked on recently is left alone", () => {
+    fresh((store) => {
+      const w = store.work;
+      const now = 10 * HOUR;
+      w.open(AGENT, "a", "live one", ["one"], now - 5 * 60 * 1000);
+      expect(w.staleItems(AGENT, now, HOUR)).toEqual([]);
+    });
+  });
+
+  test("TICKING A STEP MAKES IT FRESH, so an agent mid-work is not nagged", () => {
+    fresh((store) => {
+      const w = store.work;
+      const now = 10 * HOUR;
+      const id = w.open(AGENT, "a", "moving", ["one", "two"], now - 3 * HOUR);
+      expect(w.staleItems(AGENT, now, HOUR).length).toBe(1);
+      w.tick(id, 1, "did the first bit", now - 60 * 1000);
+      expect(w.staleItems(AGENT, now, HOUR)).toEqual([]);
+    });
+  });
+
+  test("asked ONCE — an agent that judges it still live is not asked again", () => {
+    // A reminder that repeats is a reminder that gets skipped, and then the one
+    // that mattered is skipped too.
+    fresh((store) => {
+      const w = store.work;
+      const now = 10 * HOUR;
+      const id = w.open(AGENT, "a", "stale one", ["one"], now - 2 * HOUR);
+      expect(w.staleItems(AGENT, now, HOUR).length).toBe(1);
+      w.markAsked(id, now);
+      expect(w.staleItems(AGENT, now, HOUR)).toEqual([]);
+      // Still true an hour later, without the agent having touched it.
+      expect(w.staleItems(AGENT, now + HOUR, HOUR)).toEqual([]);
+    });
+  });
+
+  test("a closed item is never raised", () => {
+    fresh((store) => {
+      const w = store.work;
+      const now = 10 * HOUR;
+      const id = w.open(AGENT, "a", "finished", ["one"], now - 5 * HOUR);
+      w.close(id, "done", "shipped it", now - 4 * HOUR);
+      expect(w.staleItems(AGENT, now, HOUR)).toEqual([]);
+    });
+  });
+
+  test("only THIS agent's items — you are not asked about a peer's", () => {
+    fresh((store) => {
+      const w = store.work;
+      const now = 10 * HOUR;
+      w.open(AGENT, "a", "mine", ["one"], now - 2 * HOUR);
+      w.open("session:someone-else", "b", "theirs", ["one"], now - 2 * HOUR);
+      expect(w.staleItems(AGENT, now, HOUR).map((i) => i.subject)).toEqual(["mine"]);
+    });
+  });
+
+  test("the oldest comes first, since the display is capped", () => {
+    fresh((store) => {
+      const w = store.work;
+      const now = 10 * HOUR;
+      w.open(AGENT, "a", "recent-ish", ["one"], now - 2 * HOUR);
+      w.open(AGENT, "a", "ancient", ["one"], now - 8 * HOUR);
+      expect(w.staleItems(AGENT, now, HOUR).map((i) => i.subject)).toEqual([
+        "ancient",
+        "recent-ish",
+      ]);
     });
   });
 });

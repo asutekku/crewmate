@@ -298,6 +298,38 @@ export class WorkStore {
     return rows.map(rowToItem);
   }
 
+  /**
+   * This agent's open items that have not moved in a while, and that it has not
+   * already been asked about.
+   *
+   * WHY THIS EXISTS: an item is opened, the work finishes, the agent moves on
+   * and never closes it — so the board keeps advertising work nobody is doing.
+   * Observed live 2026-08-01: an item sat 13 hours at "1/3 · updated 12h" while
+   * its agent had shipped four unrelated commits since. The board's whole claim
+   * is that it says what is happening NOW, and a dangling item is a lie it tells
+   * about a specific agent.
+   *
+   * NOT AUTO-CLOSED. Only the agent knows whether the work finished, was
+   * abandoned, or is genuinely parked — and closing it from a timer would swap a
+   * stale "open" for an equally wrong "done". So this only supplies the nudge;
+   * the decision stays where the knowledge is.
+   *
+   * ASKED ONCE PER ITEM, tracked in `asked_turn_ms`. An agent that judges an
+   * item still live must not be asked again next turn, or the reminder becomes
+   * noise it learns to skip — which is how a nudge stops working.
+   */
+  staleItems(agentId: string, nowMs: number, staleMs: number): WorkItem[] {
+    const rows = this.db
+      .query(
+        `SELECT ${WORK_COLUMNS} FROM work
+          WHERE agent_id = ? AND closed_ms = 0
+            AND updated_ms < ? AND asked_turn_ms = 0
+          ORDER BY updated_ms ASC`,
+      )
+      .all(agentId, nowMs - staleMs) as Array<Record<string, string | number>>;
+    return rows.map(rowToItem);
+  }
+
   /** Every item on the board, open first, most recently touched first. */
   items(opts: { agentId?: string; includeClosed?: boolean }): WorkItem[] {
     const where: string[] = [];
