@@ -68,6 +68,7 @@ import { agentKey, BOARD_OPEN_SHOWN, foldEvents, parsePlan, progress } from "./c
 import { validateAlias, validateRole } from "./core/topic.ts";
 import { minionName } from "./core/names.ts";
 import { checkNote, nearTopic, parseTags } from "./core/diary.ts";
+import { checkMemory, withPersonal } from "./core/personal.ts";
 import type { DiaryEntry, DiaryKind } from "./core/diary.ts";
 import { dirtyFiles } from "./core/dirty.ts";
 import { agentTally, briefAge, briefAgo, itemLines } from "./core/board.ts";
@@ -915,7 +916,7 @@ function board(who: string, opts: { history: boolean; all: boolean; raw: boolean
       if (g) g.push(i);
       else byAgent.set(i.agentId, [i]);
     }
-    for (const [, group] of byAgent) {
+    for (const [agentId, group] of byAgent) {
       const first = group[0];
       if (!first) continue;
       const open = group.filter((i) => i.closedMs === 0);
@@ -924,10 +925,19 @@ function board(who: string, opts: { history: boolean; all: boolean; raw: boolean
       // "1 closed" beside a board that shows none is a claim the reader cannot
       // check. The `--all` hint below is how they get at them instead.
       const tally = agentTally(open.length, opts.all || opts.history ? closed : 0);
-      // Through the same resolver `who` and `log` use, so one agent reads the
-      // same way in all three. `--raw` keeps the frozen name for debugging.
+      // THE HEADING NAMES THE AGENT, SO IT COMES FROM THE AGENT — resolved from
+      // the group's key, which is `session:<uuid>`, and not from whichever row
+      // happens to sort first. Reading `group[0]`'s frozen name made the heading
+      // depend on the SORT: rows are ordered by `updated_ms`, so closing the
+      // most recent item promoted an older row and the same agent's group
+      // silently relabelled itself from `Hopper` to `tooling` between two board
+      // reads. `showName` still handles an agent that has exited, whose frozen
+      // string is the only name left.
       const stored = first.agentName !== "" ? first.agentName : first.agentId;
-      const name = opts.raw ? stored : showName(stored);
+      const live = agentId.startsWith("session:")
+        ? store.findBySession(agentId.slice("session:".length))
+        : null;
+      const name = opts.raw ? stored : live ? rosterName(live) : showName(stored);
       const gap = Math.max(1, width - 2 - [...name].length - tally.length);
       console.log("");
       console.log(`  ${bold(handleColour(name)(name))}${" ".repeat(gap)}${dim(tally)}`);
@@ -1228,6 +1238,211 @@ function tags(): void {
   });
 }
 
+/** Marks an entry no longer true, with the reason that is the point of it. */
+function deprecateNote(idRaw: string, why: string): void {
+  const id = Number(idRaw);
+  if (!Number.isFinite(id) || id <= 0 || why.trim() === "") {
+    console.error('usage: cli.ts note-deprecate <id> "<why it stopped being true>"');
+    console.error(dim("  The reason is required — it is usually worth more than the claim was."));
+    process.exitCode = 1;
+    return;
+  }
+  withStore(PROJECT.dbPath, (store) => {
+    const e = store.diary.get(id);
+    if (!e) {
+      console.error(`no diary entry #${id} in ${PROJECT.name}`);
+      process.exitCode = 1;
+      return;
+    }
+    if (!store.diary.deprecate(id, why, Date.now())) {
+      console.error(`${red("✗")} #${id} is already marked no longer true`);
+      console.error(dim(`  ${e.deprecatedWhy}`));
+      process.exitCode = 1;
+      return;
+    }
+    console.log(`${green("✓")} #${id} ${dim("marked no longer true")}`);
+    console.log(dim(`  ${e.title}`));
+    console.log(dim(`  it stays searchable behind \`cli.ts recall --all\``));
+  });
+}
+
+/** Points a stale entry at the one that replaced it. */
+function supersedeNote(idRaw: string, byRaw: string): void {
+  const id = Number(idRaw);
+  const by = Number(byRaw);
+  if (!Number.isFinite(id) || !Number.isFinite(by) || id <= 0 || by <= 0) {
+    console.error("usage: cli.ts note-supersede <old-id> <new-id>");
+    process.exitCode = 1;
+    return;
+  }
+  withStore(PROJECT.dbPath, (store) => {
+    if (!store.diary.supersede(id, by, Date.now())) {
+      console.error(`${red("✗")} could not supersede #${id} with #${by}`);
+      console.error(dim("  both must exist, and an entry cannot supersede itself"));
+      process.exitCode = 1;
+      return;
+    }
+    console.log(`${green("✓")} #${id} ${dim("→")} #${by}`);
+    console.log(dim("  a search lands on the new one and can still walk back to the old"));
+  });
+}
+
+/** Folds one topic into another. */
+function mergeTopics(from: string, into: string): void {
+  withStore(PROJECT.dbPath, (store) => {
+    const n = store.diary.mergeTopic(from, into);
+    if (n === 0) {
+      console.error(`${red("✗")} nothing moved — check both names with \`cli.ts topics\``);
+      process.exitCode = 1;
+      return;
+    }
+    console.log(`${green("✓")} moved ${n} ${n === 1 ? "entry" : "entries"} from ${bold(from)} to ${bold(into)}`);
+  });
+}
+
+/** What is wrong with the diary as an organised thing. */
+function diaryCheck(): void {
+  withStore(PROJECT.dbPath, (store) => {
+    const problems = store.diary.check(Date.now());
+    if (problems.length === 0) {
+      console.log(`${green("✓")} the ${PROJECT.name} diary looks healthy`);
+      return;
+    }
+    console.log(bold(`${problems.length} thing(s) worth a look in ${PROJECT.name}`));
+    for (const p of problems) {
+      console.log(`  ${yellow("•")} ${p.detail}`);
+      if (p.fix !== "") console.log(dim(`      ${p.fix}`));
+    }
+  });
+}
+
+/** Records something about the operator, for THIS agent only. */
+function remember(args: string[]): void {
+  const body = takeFlag(args, "--body");
+  const tagList = takeFlag(args, "--tags");
+  const isGlobal = args.includes("--global");
+  if (isGlobal) args.splice(args.indexOf("--global"), 1);
+  const title = args.join(" ").trim();
+
+  const check = checkMemory(title, body, tagList.split(",").filter((t) => t.trim() !== ""));
+  if (!check.ok) {
+    console.error(`${red("✗")} ${check.why}`);
+    process.exitCode = 1;
+    return;
+  }
+  if (ENV_SESSION === "") {
+    notAnAgent("`remember`");
+    return;
+  }
+  const name = withStore(PROJECT.dbPath, (store) => {
+    const self = store.findBySession(ENV_SESSION);
+    return self ? displayName(self) : "";
+  });
+  withPersonal((personal) => {
+    const id = personal.remember(
+      ENV_SESSION,
+      name,
+      check,
+      isGlobal ? "" : PROJECT.name,
+      isGlobal,
+      Date.now(),
+    );
+    console.log(`${green("✓")} ${bold(`#${id}`)} ${check.title}`);
+    console.log(
+      dim(
+        isGlobal
+          ? "  global — you will carry this into every project"
+          : `  ${PROJECT.name} only — add \`--global\` if it is true of them everywhere`,
+      ),
+    );
+  });
+}
+
+/**
+ * What an agent believes about the operator.
+ *
+ * READABLE BY THE OPERATOR, and that is load-bearing: these are injected every
+ * session and a wrong one compounds. A private model of a person that the
+ * person cannot inspect is the one shape this feature must not take.
+ */
+function aboutMe(args: string[]): void {
+  const target = takeFlag(args, "--agent");
+  const allProjects = args.includes("--all-projects");
+
+  const resolved = withStore(PROJECT.dbPath, (store) => {
+    if (target !== "") {
+      const s = store.findByName(target, Date.now());
+      return s ? { sessionId: s.sessionId, name: displayName(s) } : null;
+    }
+    if (ENV_SESSION === "") return null;
+    const self = store.findBySession(ENV_SESSION);
+    return { sessionId: ENV_SESSION, name: self ? displayName(self) : "" };
+  });
+
+  withPersonal((personal) => {
+    if (!resolved) {
+      // No agent named: show WHO holds memories, so the operator can pick one.
+      const agents = personal.agents();
+      if (agents.length === 0) {
+        console.log(dim("no agent has recorded anything about you yet."));
+        return;
+      }
+      console.log(bold("agents holding memories about you"));
+      for (const a of agents) {
+        const who = a.agent !== "" ? a.agent : a.sessionId.slice(0, 8);
+        console.log(`  ${cyan(who)} ${dim(`— ${a.count}`)}  ${dim(`cli.ts about-me --agent ${who}`)}`);
+      }
+      return;
+    }
+    const mine = personal.forSession(resolved.sessionId, PROJECT.name, { allProjects });
+    if (mine.length === 0) {
+      console.log(dim(`${resolved.name || "this agent"} has recorded nothing about you here.`));
+      if (!allProjects) console.log(dim("  `--all-projects` looks in every repo."));
+      return;
+    }
+    const now = Date.now();
+    const width = terminalWidth();
+    console.log(bold(`what ${resolved.name || "this agent"} remembers about you`));
+    for (const m of mine) {
+      // The qualifiers go on their OWN line. Run together, "…screenshot loop
+      // test now" reads as though the scope and age were part of what the agent
+      // remembers — which is exactly the sentence the operator is checking.
+      const head = `  ${dim(`#${m.id}`)} `;
+      const headLen = [...`  #${m.id} `].length;
+      for (const [i, l] of wrap(m.title, Math.max(20, width - headLen)).entries()) {
+        console.log(i === 0 ? head + l : " ".repeat(headLen) + l);
+      }
+      const where = m.global ? cyan("everywhere") : dim(`${m.project} only`);
+      console.log(`${" ".repeat(headLen)}${where} ${dim(`· ${shortAge(m.tsMs, now)}`)}`);
+      if (m.body !== "") {
+        for (const l of wrap(m.body, Math.max(20, width - headLen))) {
+          console.log(dim(" ".repeat(headLen) + l));
+        }
+      }
+    }
+    console.log(dim("  `cli.ts forget <id>` removes one."));
+  });
+}
+
+/** Removes a memory outright — see `PersonalStore.forget` for why not a tombstone. */
+function forget(idRaw: string): void {
+  const id = Number(idRaw);
+  if (!Number.isFinite(id) || id <= 0) {
+    console.error("usage: cli.ts forget <id>");
+    process.exitCode = 1;
+    return;
+  }
+  withPersonal((personal) => {
+    const m = personal.get(id);
+    if (!m || !personal.forget(id)) {
+      console.error(`no memory #${id}`);
+      process.exitCode = 1;
+      return;
+    }
+    console.log(`${green("✓")} forgotten: ${dim(m.title)}`);
+  });
+}
+
 const [cmd, ...rest] = Bun.argv.slice(2);
 switch (cmd) {
   case "who":
@@ -1407,10 +1622,21 @@ switch (cmd) {
     break;
   case "topic": {
     const args = [...rest];
+    // `topic merge <from> <into>` before the read, so the reader is not the
+    // thing that swallows a subcommand.
+    if (args[0] === "merge") {
+      if (args.length !== 3) {
+        console.error("usage: cli.ts topic merge <from> <into>");
+        process.exit(1);
+      }
+      mergeTopics(args[1] ?? "", args[2] ?? "");
+      break;
+    }
     const limit = Number(takeFlag(args, "--limit")) || 20;
     const name = args.join(" ").trim();
     if (!name) {
       console.error("usage: cli.ts topic <name> [--limit n]");
+      console.error(dim("       cli.ts topic merge <from> <into>"));
       process.exit(1);
     }
     recall(["--topic", name, "--limit", String(limit)]);
@@ -1418,6 +1644,35 @@ switch (cmd) {
   }
   case "tags":
     tags();
+    break;
+  case "note-deprecate": {
+    const args = [...rest];
+    const id = args.shift() ?? "";
+    deprecateNote(id, args.join(" "));
+    break;
+  }
+  case "note-supersede":
+    supersedeNote(rest[0] ?? "", rest[1] ?? "");
+    break;
+  case "diary": {
+    // `diary check` is the only subcommand; anything else is a typo worth
+    // naming rather than silently doing nothing.
+    const sub = rest[0] ?? "";
+    if (sub === "check") diaryCheck();
+    else {
+      console.error("usage: cli.ts diary check");
+      process.exit(1);
+    }
+    break;
+  }
+  case "remember":
+    remember([...rest]);
+    break;
+  case "about-me":
+    aboutMe([...rest]);
+    break;
+  case "forget":
+    forget(rest[0] ?? "");
     break;
   case "call-you":
   case "role": {

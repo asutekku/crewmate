@@ -55,6 +55,29 @@ export const BODY_MAX = 2000;
 /** Belt and braces on the tag list; the real limit is that tags are for finding. */
 export const MAX_TAGS = 8;
 
+/**
+ * How old a live entry gets before `diary check` calls it unverified.
+ *
+ * NOT an expiry — the entry stays, stays searchable, and is probably still
+ * true. It is a prompt to re-check, because a claim about code that nobody has
+ * looked at in three months is a different kind of thing from one made last
+ * week, and saying so is cheaper than letting a reader guess.
+ */
+export const STALE_ENTRY_MS = 90 * 24 * 60 * 60 * 1000;
+
+/** Something wrong with the diary as a whole, with the command that fixes it. */
+export interface DiaryProblem {
+  readonly kind:
+    | "near-duplicate-topic"
+    | "dangling-reference"
+    | "unscoped"
+    | "deprecated-without-reason"
+    | "unverified";
+  readonly detail: string;
+  /** A command the reader can actually run. Empty when there is nothing to run. */
+  readonly fix: string;
+}
+
 export interface DiaryEntry {
   readonly id: number;
   readonly tsMs: number;
@@ -530,6 +553,100 @@ export class DiaryStore {
       return n;
     });
     return run.immediate();
+  }
+
+  /**
+   * What is wrong with the diary as an organised thing, rather than with any
+   * one entry.
+   *
+   * WHY THIS SHIPS WITH THE FEATURE and not after it: the memory dir this
+   * replaces has 4 dangling wikilinks out of 99 targets, all near-misses of
+   * notes that exist, because nothing ever checked. A graph with no integrity
+   * check rots silently, and the rot is invisible precisely to the person who
+   * would fix it.
+   */
+  check(nowMs: number): DiaryProblem[] {
+    const problems: DiaryProblem[] = [];
+
+    // Topics one hyphen apart. The duplicate that actually happens, and the one
+    // that quietly halves every search that uses either name.
+    const all = this.topics();
+    const seen = new Set<string>();
+    for (const a of all) {
+      for (const b of all) {
+        if (a.topic === b.topic) continue;
+        const key = [a.topic, b.topic].sort().join(" ");
+        if (seen.has(key) || !nearTopic(a.topic, b.topic)) continue;
+        seen.add(key);
+        problems.push({
+          kind: "near-duplicate-topic",
+          detail: `\`${a.topic}\` (${a.count}) and \`${b.topic}\` (${b.count}) look like one topic`,
+          fix: `cli.ts topic merge ${a.count <= b.count ? `${a.topic} ${b.topic}` : `${b.topic} ${a.topic}`}`,
+        });
+      }
+    }
+
+    // A superseded_by pointing at an entry that was pruned or never existed.
+    // The exact failure the old wikilinks had: a reference that reads as a
+    // promise and delivers nothing.
+    const dangling = this.db
+      .query(
+        `SELECT d.id AS id, d.superseded_by AS target FROM diary d
+          WHERE d.superseded_by != 0
+            AND NOT EXISTS (SELECT 1 FROM diary o WHERE o.id = d.superseded_by)`,
+      )
+      .all() as Array<Record<string, number>>;
+    for (const r of dangling) {
+      problems.push({
+        kind: "dangling-reference",
+        detail: `#${r["id"]} says it was superseded by #${r["target"]}, which does not exist`,
+        fix: `cli.ts note ${r["id"]}`,
+      });
+    }
+
+    // An entry with no scope is findable but never volunteered — it cannot
+    // reach anyone through `pre-edit`, which is where the diary earns its keep.
+    const unscoped = this.db
+      .query(`SELECT COUNT(*) AS n FROM diary WHERE scope = '' AND deprecated_ms = 0`)
+      .get() as { n: number };
+    if (Number(unscoped.n) > 0) {
+      const n = Number(unscoped.n);
+      problems.push({
+        kind: "unscoped",
+        detail: `${n} live ${n === 1 ? "entry has" : "entries have"} no --scope, so nothing surfaces them at edit time`,
+        // No single command repairs these — each needs a human decision about
+        // which folder it is about. Listing them is the honest next step.
+        fix: "cli.ts recall --limit 100",
+      });
+    }
+
+    // Deprecated without a reason. "This stopped being true" and nothing else
+    // is the least useful thing an entry can say — the reason IS the value.
+    const noWhy = this.db
+      .query(`SELECT id FROM diary WHERE deprecated_ms != 0 AND deprecated_why = ''`)
+      .all() as Array<{ id: number }>;
+    for (const r of noWhy) {
+      problems.push({
+        kind: "deprecated-without-reason",
+        detail: `#${r.id} is marked no-longer-true but does not say why`,
+        fix: `cli.ts note ${r.id}`,
+      });
+    }
+
+    // Entries old enough that the code they describe has probably moved. NOT
+    // an error: an old finding is not wrong, it is UNVERIFIED, which is a
+    // different thing and cheaper to say than to guess at.
+    const stale = this.db
+      .query(`SELECT COUNT(*) AS n FROM diary WHERE deprecated_ms = 0 AND ts_ms < ?`)
+      .get(nowMs - STALE_ENTRY_MS) as { n: number };
+    if (Number(stale.n) > 0) {
+      problems.push({
+        kind: "unverified",
+        detail: `${stale.n} live ${Number(stale.n) === 1 ? "entry is" : "entries are"} over ${Math.round(STALE_ENTRY_MS / (24 * 60 * 60 * 1000))} days old — not wrong, but unverified against the code as it is now`,
+        fix: "cli.ts recall --all",
+      });
+    }
+    return problems;
   }
 
   /** Drops entries past the retention window. Deprecated ones go early. */

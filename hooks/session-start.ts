@@ -11,6 +11,7 @@ import { displayName, withStore } from "../core/store.ts";
 import { emit, formatMessages, formatRoster, readPayload, TRUST_NOTE } from "../core/shared.ts";
 import { currentBranch, installedVersion, resolveProject, worktreeRoot } from "../core/repo.ts";
 import { listAgents } from "../core/agents.ts";
+import { withPersonal } from "../core/personal.ts";
 
 /** Enough log to see what the others are up to, short enough to stay skimmable. */
 const RECENT_LINES = 8;
@@ -148,6 +149,25 @@ async function main(): Promise<void> {
           " about a folder you edit surface on their own. Add one with" +
           ' `cli.ts note "<what you found>" --topic <t> --scope <folder>` — it outlives this' +
           " session and is readable from every worktree.",
+      );
+    }
+    // WHAT THIS AGENT KNOWS ABOUT THE OPERATOR. The one place automatic
+    // injection is clearly right: small, certainly relevant (it is about the
+    // person in the room), and the whole difference between an agent that
+    // remembers how you work and one that does not.
+    //
+    // Titles only, and only this agent's own — Hopper's read of the operator is
+    // not Luna's, deliberately.
+    const mine = withPersonal((personal) =>
+      personal.forSession(sessionId, project.name),
+    );
+    if (mine.length > 0) {
+      lines.push("", "What you have learned about the person you work with:");
+      for (const m of mine) lines.push(`  - ${m.title}${m.global ? "" : ` (in ${m.project})`}`);
+      lines.push(
+        "`cli.ts remember \"<what you learned>\"` adds one (`--global` if it is true of them" +
+          " everywhere, not just here); `cli.ts forget <id>` drops one that turned out wrong." +
+          " They can read these with `cli.ts about-me`.",
       );
     }
     return { text: lines.join("\n"), name: me, peerCount: peers.length };

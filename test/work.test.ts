@@ -436,6 +436,41 @@ describe("who the board credits", () => {
       expect(store.work.items({})[0]?.agentName).toBe("tooling");
     });
   });
+
+  test("a session named by its HANDLE resolves too, not just by alias", () => {
+    // THE CASE THE THREE TESTS ABOVE ALL MISS: each of them calls `setAlias`,
+    // and `alias` was the only column the query consulted — so they passed while
+    // the ordinary session, whose name is its given handle with `alias` empty,
+    // resolved to nothing and fell back to its frozen string.
+    fresh((store) => {
+      const now = Date.now();
+      const handle = store.register(ID, "/tree", "master", now);
+      store.work.open(KEY, "tooling", "some work", [], now);
+      expect(store.work.items({ agentId: KEY })[0]?.agentName).toBe(handle);
+    });
+  });
+
+  test("every row of one agent reads the same name, however it was frozen", () => {
+    // Found live on the board 2026-08-01: one agent appeared under TWO headings,
+    // `Hopper` and `tooling`, because items opened before and after it was named
+    // kept different frozen strings. Rows are ordered by `updated_ms`, so which
+    // name the group showed depended on which item had been touched last —
+    // closing the newest item relabelled the whole group.
+    fresh((store) => {
+      const now = Date.now();
+      const handle = store.register(ID, "/tree", "master", now);
+      store.work.open(KEY, "tooling", "opened under the old name", [], now - 5000);
+      const later = store.work.open(KEY, handle, "opened under the new one", [], now);
+
+      const names = () => store.work.items({ agentId: KEY, includeClosed: true }).map((i) => i.agentName);
+      expect(new Set(names())).toEqual(new Set([handle]));
+
+      // And it stays that way once the newer item closes — the sort changes, the
+      // name must not.
+      store.work.close(later, "done", "", now + 1000);
+      expect(new Set(names())).toEqual(new Set([handle]));
+    });
+  });
 });
 
 describe("board ordering", () => {

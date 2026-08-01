@@ -24,6 +24,7 @@ import {
   parseTags,
   nearTopic,
   scopeCandidates,
+  STALE_ENTRY_MS,
   TITLE_MAX,
 } from "../core/diary.ts";
 
@@ -470,6 +471,92 @@ describe("titles wrap rather than truncate", () => {
 
   test("survives empty input", () => {
     expect(wrap("", 20)).toEqual([""]);
+  });
+});
+
+describe("diary check", () => {
+  test("a clean diary reports nothing", () => {
+    fresh((store) => {
+      const now = Date.now();
+      store.diary.write("s1", "a", ok({ title: "t", topic: "water", scope: "src/sim/water" }), now);
+      expect(store.diary.check(now)).toEqual([]);
+    });
+  });
+
+  test("near-duplicate topics are reported ONCE, with the merge that fixes them", () => {
+    fresh((store) => {
+      const now = Date.now();
+      const d = store.diary;
+      d.write("s1", "a", ok({ title: "one", topic: "water", scope: "src" }), now);
+      d.write("s1", "a", ok({ title: "two", topic: "water", scope: "src" }), now);
+      d.write("s1", "a", ok({ title: "three", topic: "water-sim", scope: "src" }), now);
+
+      const dupes = d.check(now).filter((p) => p.kind === "near-duplicate-topic");
+      // ONE problem, not two — a pair reported from both ends is the same pair.
+      expect(dupes.length).toBe(1);
+      // And it merges the SMALLER into the larger, which is the cheaper edit.
+      expect(dupes[0]?.fix).toBe("cli.ts topic merge water-sim water");
+    });
+  });
+
+  test("a reference to an entry that no longer exists is caught", () => {
+    // The exact rot the memory dir it replaces already has: 4 dangling
+    // wikilinks out of 99, all near-misses, because nothing ever checked.
+    fresh((store) => {
+      const now = Date.now();
+      const d = store.diary;
+      const old = d.write("s1", "a", ok({ title: "old", topic: "x", scope: "src" }), now);
+      const fresher = d.write("s1", "a", ok({ title: "new", topic: "x", scope: "src" }), now);
+      d.supersede(old, fresher, now);
+      // The replacement is pruned away, leaving a pointer to nothing.
+      (store as unknown as { db: { query: (s: string) => { run: (n: number) => void } } }).db
+        .query(`DELETE FROM diary WHERE id = ?`)
+        .run(fresher);
+
+      const dangling = d.check(now).filter((p) => p.kind === "dangling-reference");
+      expect(dangling.length).toBe(1);
+      expect(dangling[0]?.detail).toContain(`#${old}`);
+    });
+  });
+
+  test("unscoped entries are flagged, because nothing surfaces them", () => {
+    fresh((store) => {
+      const now = Date.now();
+      store.diary.write("s1", "a", ok({ title: "no scope", topic: "x" }), now);
+      const p = store.diary.check(now).filter((x) => x.kind === "unscoped");
+      expect(p.length).toBe(1);
+      expect(p[0]?.detail).toContain("nothing surfaces them");
+    });
+  });
+
+  test("a deprecation with no reason is flagged", () => {
+    fresh((store) => {
+      const now = Date.now();
+      const d = store.diary;
+      const id = d.write("s1", "a", ok({ title: "t", topic: "x", scope: "src" }), now);
+      d.deprecate(id, "", now);
+      const p = d.check(now).filter((x) => x.kind === "deprecated-without-reason");
+      // "This stopped being true" and nothing else is the least useful thing an
+      // entry can say — the reason IS the value.
+      expect(p.length).toBe(1);
+    });
+  });
+
+  test("an old entry is UNVERIFIED, not wrong", () => {
+    fresh((store) => {
+      const now = Date.now();
+      store.diary.write(
+        "s1",
+        "a",
+        ok({ title: "ancient", topic: "x", scope: "src" }),
+        now - STALE_ENTRY_MS - 1000,
+      );
+      const p = store.diary.check(now).filter((x) => x.kind === "unverified");
+      expect(p.length).toBe(1);
+      // The wording matters: an old finding is not a wrong one, and saying so
+      // is cheaper for the next reader than letting them guess.
+      expect(p[0]?.detail).toContain("not wrong");
+    });
   });
 });
 

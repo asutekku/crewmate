@@ -171,12 +171,21 @@ export function createWorkTables(db: Database): void {
  * credited under a name nobody uses any more, and an agent that has exited has
  * no live row to resolve against at all.
  *
+ * IT MUST TRY ALL THREE COLUMNS, in `displayName`'s order: alias, then handle,
+ * then Claude Code's label. Reading `alias` alone looked right because an agent
+ * that renames itself by hand writes there — but the ORDINARY case is a session
+ * whose name is its given handle with `alias` empty, and for that one the
+ * subquery returned nothing and every row fell back to its frozen string. One
+ * agent then rendered under as many names as it had been frozen under: an item
+ * opened as `tooling` stayed `tooling` while its newer siblings read `hopper`.
+ *
  * The join is on the agent key, which is `session:<uuid>` — the conversation
  * uuid, so it still matches after a restart.
  */
 const WORK_COLUMNS = `work.work_id, work.agent_id, work.subject, work.started_ms,
      work.closed_ms, work.outcome, work.updated_ms, work.asked_turn_ms,
-     COALESCE(NULLIF((SELECT s.alias FROM sessions s
+     COALESCE(NULLIF((SELECT COALESCE(NULLIF(s.alias, ''), NULLIF(s.handle, ''), s.name)
+                        FROM sessions s
                        WHERE 'session:' || s.session_id = work.agent_id), ''),
               NULLIF(work.agent_name, ''), '') AS agent_name`;
 
