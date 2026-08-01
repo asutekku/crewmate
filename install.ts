@@ -107,6 +107,9 @@ const REGISTRATIONS: ReadonlyArray<readonly [string, unknown]> = [
   // Mid-turn delivery. Fires after every batch of tool calls, so the script's
   // own fast path (see tool-batch.ts) is what keeps it affordable.
   ["PostToolBatch", entry("tool-batch.ts")],
+  // Commits, for the work board. Matched to Bash so an Edit never pays for it,
+  // and it emits nothing back — the agent knows it just committed.
+  ["PostToolUse", { matcher: "Bash", ...(entry("commit-landed.ts") as object) }],
   ["Stop", entry("turn-end.ts")],
   // Runs INSTEAD OF Stop when a turn dies, which is why it cannot be folded in.
   ["StopFailure", entry("turn-failed.ts")],

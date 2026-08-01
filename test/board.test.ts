@@ -26,6 +26,7 @@ function item(over: Partial<WorkItem> = {}): WorkItem {
     outcome: "",
     updatedMs: NOW - 4 * 60 * 1000,
     askedTurnMs: 0,
+    auto: false,
     ...over,
   };
 }

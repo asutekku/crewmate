@@ -346,10 +346,32 @@ cli.ts doing "<subject>" --plan "a; b; c"    # open an item, with a checklist
 cli.ts did   <n> ["<what changed>"]          # tick step n off
 cli.ts step  <n> "<status>"                  # working on n, not finished
 cli.ts add   "<step>"                        # a phase the plan missed
+cli.ts breaks "<what>" [--item <match>]      # …and message the peers it affects
+cli.ts needs  "<what>" [--item <match>]      # a blocker, for whoever reads the board
 cli.ts done  ["<match>"] [--abandoned]       # close ONE item
 cli.ts board [<agent>] [--history] [--all]   # read the board
 cli.ts mine                                  # my open items
 ```
+
+**Two things fill themselves in.** A commit attaches to your current item — the
+`PostToolUse` hook reads git's own `[branch sha]` line, so a failed commit
+records nothing and a `git commit -q` (which prints nothing) is missed rather
+than guessed at. And an agent that never runs `doing` still gets a placeholder
+row carrying its conversation title, retired the moment it opens a real item.
+The board's founding problem was that agents skip optional work; a rough row
+beats a blank where the operator expects to see who is doing what.
+
+**`breaks` reaches people, `needs` does not.** A break is news somebody else has
+to act on, so it is messaged to agents whose recent edits touch a file yours do
+— addressed, never broadcast, and read from the append-only edit history so it
+still reaches whoever was in that file this morning. `needs` is a note to the
+reader of the board about what this work is waiting on; nobody is obliged by it,
+and messaging eight agents about one agent's blocker is how a channel becomes
+noise.
+
+**If an item stops moving for an hour**, your next prompt asks whether it is
+finished, abandoned or still live — once per item, and never closed for you,
+because only you know which of the three it is.
 
 ```
 $ cli.ts board

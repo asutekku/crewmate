@@ -73,7 +73,21 @@ export interface HookPayload {
   readonly last_assistant_message?: string;
   /** Which tool is about to run: `Edit`, `Write`, `NotebookEdit`. */
   readonly tool_name?: string;
-  readonly tool_input?: { readonly file_path?: string };
+  readonly tool_input?: { readonly file_path?: string; readonly command?: string };
+  /**
+   * PostToolUse: what the tool returned. Shape measured 2026-08-01 by probing a
+   * real `Bash` call — `stdout`, `stderr`, `interrupted`, `isImage`,
+   * `noOutputExpected`.
+   *
+   * `git commit` prints its `[branch sha] subject` line to STDOUT, but the two
+   * are read together: a hook that guessed wrong about which stream would
+   * silently never fire.
+   */
+  readonly tool_response?: {
+    readonly stdout?: string;
+    readonly stderr?: string;
+    readonly interrupted?: boolean;
+  };
   /** Stop: true when a hook is already driving a continuation. */
   readonly stop_hook_active?: boolean;
   /** StopFailure: why the turn died. */
@@ -248,6 +262,13 @@ export function formatMessages(msgs: readonly Message[], nowMs: number): string[
     if (m.kind === "say") {
       const audience = m.to !== "" ? `to ${m.to}` : "to everyone";
       return `  [${when}] ${m.from} ${audience}: ${m.body}`;
+    }
+    if (m.kind === "breaks") {
+      // Says what it OBLIGES the reader to do. A break reaches only agents who
+      // have edited the same files, so "you may have to change something" is
+      // true by construction — and a line that reads like chatter gets skimmed
+      // by exactly the reader who cannot afford to skim it.
+      return `  [${when}] ${m.from} BROKE something you may depend on: ${m.body}`;
     }
     return `  [${when}] ${m.from} ${m.kind}: ${m.body}`;
   });

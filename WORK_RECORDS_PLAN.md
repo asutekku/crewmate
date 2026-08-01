@@ -9,11 +9,14 @@ of P4 shipped without anyone updating this file):
 | Phase | State |
 |---|---|
 | P0 | **shipped** 2026-07-31 |
-| P1 — hook auto-fill | **not built.** No hook opens a work item; every row is agent-authored |
+| P1 — hook auto-fill | **shipped** 2026-08-01 |
 | P2 — the idle check | **shipped 2026-08-01, `074bb51`, but NOT where this plan put it** — see below |
-| P3 — commit detection | **not built.** The `landed` event kind exists with no writer |
-| P4 — `breaks`/`needs`, `board --history` | **half.** `--history` shipped; `breaks`/`needs` are event kinds with no writer |
+| P3 — commit detection | **shipped** 2026-08-01 |
+| P4 — `breaks`/`needs`, `board --history` | **shipped** 2026-08-01 |
 | P5 — prune, SessionStart, `who` status | **shipped**, all three |
+
+All phases are built. What each one turned into, where it differs from the plan
+above, is recorded in the phase table at the bottom of this file.
 
 The shipped behaviour is documented in `README.md` under *The work board* — this
 file stays as the reasoning behind it, not as its documentation.
@@ -461,10 +464,10 @@ schema with no writer, and they do not count.
 | Phase | Contents | State |
 |---|---|---|
 | **P0** | `work` + `work_steps` + `work_events`; agent key from title with session fallback; `doing --plan`/`did`/`step`/`add`/`done`/`board`/`mine` | **shipped** 2026-07-31 |
-| **P1** | Hook auto-fill: subject from title, files from claims, lifecycle from existing hooks | **not built.** No hook opens an item; every row is agent-authored |
+| **P1** | Hook auto-fill: subject from title, files from claims, lifecycle from existing hooks | **shipped**, narrower: a PLACEHOLDER row from the conversation title, opened in `prompt-submit` and retired the moment the agent runs `doing`. Files were dropped — `who` already lists claims per agent, and duplicating them onto the item would be one fact in two places that can disagree |
 | **P2** | The idle check — planned for `turn-end.ts` on unticked steps, behind a `remind`/`insist`/`require` constant | **shipped 2026-08-01 (`074bb51`) in `prompt-submit.ts`, triggered by AGE, no strictness dial.** See the note at the top of this file for why all three changed |
-| **P3** | `PostToolUse` commit detection → `landed` events | **not built.** `landed` exists as an event kind with nothing writing one |
-| **P4** | `breaks`/`needs`; `board --history`; `breaks` delivered to intersecting peers | **half.** `board --history` shipped; `breaks`/`needs` are event kinds with no CLI verb |
+| **P3** | `PostToolUse` commit detection → `landed` events | **shipped.** Reads the OUTPUT, not the command — a failed commit still ran, and git's `[branch sha]` line is the only proof one happened. `git commit -q` prints nothing and is therefore invisible: a missed event, deliberately preferred over a sha nobody can look up |
+| **P4** | `breaks`/`needs`; `board --history`; `breaks` delivered to intersecting peers | **shipped.** `breaks` messages agents whose recent EDITS intersect this agent's, read from the append-only `edits` table so it still reaches someone whose live claim has expired. `needs` messages nobody by design — a blocker obliges the reader of the board, not the roster |
 | **P5** | 7-day prune for closed records; SessionStart shows open items; `who` gains a one-line `▸ status` | **shipped**, with one narrowing: SessionStart carries a task COUNT per peer (`[3/5 tasks]`), not the items. The items are a `cli.ts board` away, and per-peer checklists would have made the roster unreadable at eight agents |
 
 **What P2 actually taught, now that it exists.** The plan called it "the riskiest
@@ -474,10 +477,15 @@ interrupting a turn was avoidable entirely by asking at the next prompt, and the
 thing that would have made it nag was RE-asking, which asked-once removes. The
 strictness dial was a fix for a problem the design did not need to have.
 
-P1 and P3 remain the open bet: whether a row nobody typed is worth having. P1 is
-the more valuable of the two — an agent that never runs `doing` is invisible on
-the board today, which is the original problem this plan opened with. P3 is
-cheap once P1 exists and near-useless before it.
+**The bet P1 and P3 represented is now placed, not settled.** Whether a row
+nobody typed is worth having is an empirical question, and the honest way to
+answer it is to look at the board in a week: if most rows are placeholders
+carrying conversation titles nobody finds useful, the auto-fill is noise wearing
+the costume of coverage, and the right move is to delete it rather than tune it.
+The measurement to make is what fraction of auto rows are superseded by a real
+`doing` — a high fraction means agents do describe their work once prompted by
+seeing a placeholder, which would be the feature working in a way nobody
+designed.
 
 **P0 must prove the timeline property**, not just that a row can be written —
 the append-only event table is the whole design, and a P0 that stores current
@@ -603,12 +611,16 @@ honest, and makes a forgotten item look like what it is.
 
 ## Open questions
 
-1. **Should a ticked step record what actually happened?** `work_steps.note` is
-   in the schema and `did <n> "<what changed>"` accepts it, but nothing requires
-   it. It is the difference between "step 2 done" and "step 2 done: 12 call sites
-   migrated, 2 needed a different fix" — which is what makes the timeline worth
-   reading later. Optional for now; if agents leave it empty, the history is
-   thinner but nothing breaks.
-2. **What is the right N for `insist`?** Only matters if `remind` proves too
-   weak, and the honest answer is that it should be picked from watching how many
-   stops agents take before ticking a step. Not decidable in advance.
+Both were answered by the operator on 2026-08-01 and are closed.
+
+1. **Should a ticked step record what actually happened?** *Ruled: optional
+   extra info.* `work_steps.note` stays accepted and never required. It is the
+   difference between "step 2 done" and "step 2 done: 12 call sites migrated, 2
+   needed a different fix", and that difference is what makes a timeline worth
+   reading later — but requiring it would turn `did` into a form to fill in, and
+   an agent that resents the form writes "done" in the box. The CLI's help asks
+   for the note; nothing enforces it.
+2. **What is the right N for `insist`?** *Moot.* `insist` does not exist:
+   asked-once (`asked_turn_ms`) replaced the whole `remind`/`insist`/`require`
+   ladder when P2 shipped. There is no N to pick because there is no second ask
+   — see the note at the top of this file.

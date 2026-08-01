@@ -74,6 +74,8 @@ export interface WorkItem {
    * against re-asking within one turn — P2 reads it, P0 only has to store it.
    */
   readonly askedTurnMs: number;
+  /** True when a hook opened this as a placeholder rather than the agent. */
+  readonly auto: boolean;
 }
 
 export interface WorkStep {
@@ -139,7 +141,13 @@ export function createWorkTables(db: Database): void {
       closed_ms  INTEGER NOT NULL DEFAULT 0,
       outcome    TEXT NOT NULL DEFAULT '',
       updated_ms INTEGER NOT NULL,
-      asked_turn_ms INTEGER NOT NULL DEFAULT 0
+      asked_turn_ms INTEGER NOT NULL DEFAULT 0,
+      -- 1 when a hook opened this rather than the agent. An auto row is a
+      -- PLACEHOLDER: it says "this session is working, here is roughly what on",
+      -- which is worth more than the blank the board showed before. The moment
+      -- the agent opens a real item the placeholder is closed, because two rows
+      -- for one piece of work is worse than none.
+      auto       INTEGER NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS work_agent ON work (agent_id, closed_ms);
     CREATE TABLE IF NOT EXISTS work_steps (
@@ -183,7 +191,7 @@ export function createWorkTables(db: Database): void {
  * uuid, so it still matches after a restart.
  */
 const WORK_COLUMNS = `work.work_id, work.agent_id, work.subject, work.started_ms,
-     work.closed_ms, work.outcome, work.updated_ms, work.asked_turn_ms,
+     work.closed_ms, work.outcome, work.updated_ms, work.asked_turn_ms, work.auto,
      COALESCE(NULLIF((SELECT COALESCE(NULLIF(s.alias, ''), NULLIF(s.handle, ''), s.name)
                         FROM sessions s
                        WHERE 'session:' || s.session_id = work.agent_id), ''),
@@ -200,6 +208,7 @@ function rowToItem(r: Record<string, string | number>): WorkItem {
     outcome: String(r["outcome"] ?? "") as WorkOutcome,
     updatedMs: Number(r["updated_ms"]),
     askedTurnMs: Number(r["asked_turn_ms"] ?? 0),
+    auto: Number(r["auto"] ?? 0) === 1,
   };
 }
 
@@ -299,6 +308,89 @@ export class WorkStore {
   }
 
   /**
+   * Opens a PLACEHOLDER row for an agent that has not opened one itself.
+   *
+   * WHY THIS EXISTS: the board's original problem was that agents skip optional
+   * work — the task board it replaced had zero rows. An agent that never runs
+   * `doing` is invisible, so the operator reading the board to see who is doing
+   * what gets a blank where that agent should be. A row saying "this session is
+   * working, roughly on this" is worth more than nothing.
+   *
+   * IDEMPOTENT AND SELF-EFFACING. One auto row per session at a time, and it is
+   * closed the moment the agent opens a real item — two rows for one piece of
+   * work is worse than none, and the agent's own subject is always better than a
+   * conversation title.
+   *
+   * Never opened when the agent already has an open item of its own: a
+   * placeholder beside real work is noise, not information.
+   */
+  autoOpen(agentId: string, agentName: string, subject: string, nowMs: number): number | null {
+    const trimmed = subject.trim();
+    if (trimmed === "") return null;
+    const run = this.db.transaction((): number | null => {
+      const existing = this.db
+        .query(`SELECT work_id, auto, subject FROM work WHERE agent_id = ? AND closed_ms = 0`)
+        .all(agentId) as Array<Record<string, string | number>>;
+      // An agent-authored item means this session is already describing itself.
+      if (existing.some((r) => Number(r["auto"]) === 0)) return null;
+
+      const mine = existing.find((r) => Number(r["auto"]) === 1);
+      if (mine) {
+        const id = Number(mine["work_id"]);
+        // The title moves as the conversation does, so the placeholder follows
+        // it. `updated_ms` moves too — the session IS active, and a placeholder
+        // frozen at its open time would be reaped by the stale-item nudge for
+        // work that is very much happening.
+        if (String(mine["subject"]) !== trimmed) {
+          this.db.query(`UPDATE work SET subject = ? WHERE work_id = ?`).run(trimmed, id);
+        }
+        this.db.query(`UPDATE work SET updated_ms = ? WHERE work_id = ?`).run(nowMs, id);
+        return id;
+      }
+      this.db
+        .query(
+          `INSERT INTO work (agent_id, agent_name, subject, started_ms, updated_ms, auto)
+           VALUES (?, ?, ?, ?, ?, 1)`,
+        )
+        .run(agentId, agentName, trimmed, nowMs, nowMs);
+      const id = Number((this.db.query(`SELECT last_insert_rowid() AS id`).get() as { id: number }).id);
+      this.db
+        .query(`INSERT INTO work_events (work_id, ts_ms, kind, body) VALUES (?, ?, 'started', ?)`)
+        .run(id, nowMs, trimmed);
+      return id;
+    });
+    return run.immediate();
+  }
+
+  /**
+   * Retires this agent's placeholder, because it has said what it is doing.
+   *
+   * Closed rather than deleted: the events under it are a real record of when
+   * that session started working, and `--history` should still find them.
+   */
+  closeAuto(agentId: string, nowMs: number): void {
+    const rows = this.db
+      .query(`SELECT work_id FROM work WHERE agent_id = ? AND closed_ms = 0 AND auto = 1`)
+      .all(agentId) as Array<{ work_id: number }>;
+    for (const r of rows) {
+      this.close(Number(r.work_id), "done", "superseded by the agent's own item", nowMs);
+    }
+  }
+
+  /**
+   * Records a commit against this agent's current item.
+   *
+   * The one thing on the board nobody has to remember to do: a sha is proof the
+   * work is real, and it is the difference between a checklist and a record.
+   */
+  recordLanded(agentId: string, sha: string, subject: string, nowMs: number): number | null {
+    const item = this.target(agentId);
+    if (!item) return null;
+    this.record(item.workId, "landed", subject, nowMs, sha);
+    return item.workId;
+  }
+
+  /**
    * This agent's open items that have not moved in a while, and that it has not
    * already been asked about.
    *
@@ -321,8 +413,12 @@ export class WorkStore {
   staleItems(agentId: string, nowMs: number, staleMs: number): WorkItem[] {
     const rows = this.db
       .query(
+        // `auto = 0`: a placeholder was never something the agent chose to
+        // track, so asking it to reconcile one is asking about the tool's own
+        // bookkeeping. They are refreshed on every prompt anyway, so they never
+        // go stale — but excluding them here says why rather than relying on it.
         `SELECT ${WORK_COLUMNS} FROM work
-          WHERE agent_id = ? AND closed_ms = 0
+          WHERE agent_id = ? AND closed_ms = 0 AND auto = 0
             AND updated_ms < ? AND asked_turn_ms = 0
           ORDER BY updated_ms ASC`,
       )

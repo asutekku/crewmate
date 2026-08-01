@@ -515,6 +515,162 @@ describe("board ordering", () => {
   });
 });
 
+/**
+ * P1 — a row for an agent that never runs `doing`.
+ *
+ * The board's founding problem: agents skip optional work, and the task board
+ * this replaced had zero rows. An agent that never opens an item is a blank
+ * where the operator expects to see who is doing what.
+ */
+describe("auto-filled rows", () => {
+  test("an agent that never opens an item still gets one", () => {
+    fresh((store) => {
+      const w = store.work;
+      expect(w.openItems(AGENT)).toEqual([]);
+      const id = w.autoOpen(AGENT, "hopper", "Investigating the water sim", 1000);
+      expect(id).not.toBeNull();
+      const items = w.openItems(AGENT);
+      expect(items.length).toBe(1);
+      expect(items[0]?.subject).toBe("Investigating the water sim");
+      expect(items[0]?.auto).toBe(true);
+    });
+  });
+
+  test("ONE placeholder, however many prompts arrive", () => {
+    fresh((store) => {
+      const w = store.work;
+      const a = w.autoOpen(AGENT, "hopper", "first title", 1000);
+      const b = w.autoOpen(AGENT, "hopper", "first title", 2000);
+      expect(b).toBe(a);
+      expect(w.openItems(AGENT).length).toBe(1);
+    });
+  });
+
+  test("the subject FOLLOWS the conversation title as it moves", () => {
+    // Claude Code rewrites the title as the work develops, and a placeholder
+    // frozen at the opening subject is the stale-label problem the roster's
+    // `intent` column already had.
+    fresh((store) => {
+      const w = store.work;
+      w.autoOpen(AGENT, "hopper", "looking at water", 1000);
+      w.autoOpen(AGENT, "hopper", "fixing the drain rate", 2000);
+      expect(w.openItems(AGENT).map((i) => i.subject)).toEqual(["fixing the drain rate"]);
+    });
+  });
+
+  test("refreshing it keeps it FRESH, so the stale nudge never asks about it", () => {
+    fresh((store) => {
+      const w = store.work;
+      const HOUR = 60 * 60 * 1000;
+      w.autoOpen(AGENT, "hopper", "a title", 1000);
+      // Two hours later, another prompt arrives.
+      w.autoOpen(AGENT, "hopper", "a title", 1000 + 2 * HOUR);
+      expect(w.staleItems(AGENT, 1000 + 2 * HOUR, HOUR)).toEqual([]);
+    });
+  });
+
+  test("a placeholder is NEVER raised by the stale nudge", () => {
+    // Belt and braces on the above: an agent asked to reconcile the tool's own
+    // bookkeeping is being asked about something it never chose to track.
+    fresh((store) => {
+      const w = store.work;
+      const HOUR = 60 * 60 * 1000;
+      w.autoOpen(AGENT, "hopper", "a title", 1000);
+      expect(w.staleItems(AGENT, 1000 + 5 * HOUR, HOUR)).toEqual([]);
+    });
+  });
+
+  test("NO placeholder while the agent has an item of its own", () => {
+    fresh((store) => {
+      const w = store.work;
+      w.open(AGENT, "hopper", "what I said I am doing", ["one"], 1000);
+      expect(w.autoOpen(AGENT, "hopper", "a conversation title", 2000)).toBeNull();
+      expect(w.openItems(AGENT).map((i) => i.subject)).toEqual(["what I said I am doing"]);
+    });
+  });
+
+  test("opening a real item RETIRES the placeholder", () => {
+    fresh((store) => {
+      const w = store.work;
+      w.autoOpen(AGENT, "hopper", "a guess at the subject", 1000);
+      w.closeAuto(AGENT, 2000);
+      w.open(AGENT, "hopper", "what I am actually doing", ["one"], 2000);
+      // Two rows for one piece of work is worse than none.
+      expect(w.openItems(AGENT).map((i) => i.subject)).toEqual(["what I am actually doing"]);
+      // Closed, not deleted — the events under it are a real record of when
+      // this session started working.
+      expect(w.items({ agentId: AGENT, includeClosed: true }).length).toBe(2);
+    });
+  });
+
+  test("an empty title opens nothing", () => {
+    fresh((store) => {
+      expect(store.work.autoOpen(AGENT, "hopper", "   ", 1000)).toBeNull();
+      expect(store.work.openItems(AGENT)).toEqual([]);
+    });
+  });
+});
+
+/** P3 — a sha is the one fact on the board nobody has to remember to record. */
+describe("commits landing on an item", () => {
+  test("a commit is recorded against the agent's current item", () => {
+    fresh((store) => {
+      const w = store.work;
+      const id = w.open(AGENT, "hopper", "the work", ["one"], 1000);
+      expect(w.recordLanded(AGENT, "074bb51", "feat: a thing", 2000)).toBe(id);
+
+      const landed = w.events(id).filter((e) => e.kind === "landed");
+      expect(landed.length).toBe(1);
+      expect(landed[0]?.ref).toBe("074bb51");
+      expect(landed[0]?.body).toBe("feat: a thing");
+    });
+  });
+
+  test("a commit with no open item records nothing rather than inventing one", () => {
+    fresh((store) => {
+      expect(store.work.recordLanded(AGENT, "074bb51", "feat: a thing", 2000)).toBeNull();
+      expect(store.work.items({ agentId: AGENT, includeClosed: true })).toEqual([]);
+    });
+  });
+
+  test("landing counts as activity, so a committing agent is not asked about it", () => {
+    fresh((store) => {
+      const w = store.work;
+      const HOUR = 60 * 60 * 1000;
+      w.open(AGENT, "hopper", "the work", ["one"], 1000);
+      w.recordLanded(AGENT, "074bb51", "feat", 1000 + 3 * HOUR);
+      expect(w.staleItems(AGENT, 1000 + 3 * HOUR + 60_000, HOUR)).toEqual([]);
+    });
+  });
+});
+
+/** P4 — breaks and needs. */
+describe("breaks and needs", () => {
+  test("both attach to the agent's current item as events", () => {
+    fresh((store) => {
+      const w = store.work;
+      const id = w.open(AGENT, "hopper", "the work", ["one"], 1000);
+      w.record(id, "breaks", "deleted buildGraph; callers must move", 2000);
+      w.record(id, "needs", "waiting on the lane seam landing", 3000);
+
+      const kinds = w.events(id).map((e) => e.kind);
+      expect(kinds).toContain("breaks");
+      expect(kinds).toContain("needs");
+    });
+  });
+
+  test("a break shows in --history, which is where a reader looks later", () => {
+    fresh((store) => {
+      const w = store.work;
+      const id = w.open(AGENT, "hopper", "the work", ["one"], 1000);
+      w.record(id, "breaks", "deleted buildGraph", 2000);
+      const fold = foldEvents(w.events(id));
+      expect(fold.breaks.length).toBe(1);
+      expect(fold.breaks[0]).toContain("buildGraph");
+    });
+  });
+});
+
 describe("asking about items that stopped moving", () => {
   const HOUR = 60 * 60 * 1000;
 

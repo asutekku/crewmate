@@ -31,9 +31,14 @@
  *   bun cli.ts did <n> ["<what changed>"]             # tick step n off
  *   bun cli.ts step <n> "<status>"                    # in progress, not finished
  *   bun cli.ts add "<step>"                           # a phase the plan missed
+ *   bun cli.ts breaks "<what>" [--item <match>]       # …and tell affected peers
+ *   bun cli.ts needs  "<what>" [--item <match>]       # a blocker, for the board
  *   bun cli.ts done [<subject match>] [--abandoned]   # close ONE item
  *   bun cli.ts board [<agent>] [--history] [--all]    # read the board  [--raw]
  *   bun cli.ts mine                                   # my open items
+ *
+ * Commits attach themselves (`PostToolUse` on Bash), and an agent that never
+ * runs `doing` still gets a placeholder row from its conversation title.
  *
  * The project is resolved from the CWD exactly as the hooks resolve it, so
  * running this from any worktree reads that repo's roster.
@@ -756,6 +761,10 @@ function doing(subject: string, plan: string): void {
     if (!me) return notAnAgent("`doing`");
     const now = Date.now();
     const steps = parsePlan(plan);
+    // The agent has said what it is doing, so the hook's guess stops earning
+    // its place — two rows for one piece of work is worse than none, and this
+    // subject is always better than a conversation title.
+    store.work.closeAuto(me.agentId, now);
     const workId = store.work.open(me.agentId, me.agentName, subject, steps, now);
     console.log(`${cyan("▸")} ${bold(subject)} ${dim(`— work #${workId}`)}`);
     for (const [i, s] of steps.entries()) console.log(`    ${dim(String(i + 1))}  ${s}`);
@@ -1238,6 +1247,69 @@ function tags(): void {
   });
 }
 
+/**
+ * Records a breaking change or an unmet dependency, and tells the peers it
+ * affects.
+ *
+ * WHY `breaks` REACHES PEOPLE AND `needs` DOES NOT. A break is news somebody
+ * else has to act on — a deleted function they may still call, a moved
+ * baseline. `needs` is a note to the reader of the board about what this work is
+ * waiting on; nobody is obliged by it, and messaging every agent about one
+ * agent's blocker is how a channel becomes noise.
+ *
+ * ADDRESSED, NOT BROADCAST. A break goes only to agents who have touched a file
+ * this one has touched — that is what makes it worth ending nobody's turn over.
+ * Broadcasting it to eight agents so that one of them cares is the cost this
+ * avoids.
+ */
+function flagWork(kind: "breaks" | "needs", text: string, match: string): void {
+  withStore(PROJECT.dbPath, (store) => {
+    const me = callerIdentity(store);
+    if (!me) return notAnAgent(`\`${kind}\``);
+    const now = Date.now();
+    const item = store.work.target(me.agentId, match);
+    if (!item) {
+      console.error(`${red("✗")} no open work item to attach this to`);
+      console.error(dim('  `cli.ts doing "<subject>"` opens one.'));
+      process.exitCode = 1;
+      return;
+    }
+    store.work.record(item.workId, kind, text, now);
+    console.log(
+      `${kind === "breaks" ? red("⚠") : yellow("•")} ${bold(item.subject)} ${dim(`— ${kind}`)}`,
+    );
+    console.log(`  ${text}`);
+
+    if (kind !== "breaks") {
+      console.log(dim("  recorded on the board; `needs` tells the reader, not the roster"));
+      return;
+    }
+
+    // WHO IS AFFECTED: agents whose recent edits touch a file this agent has
+    // also touched. Read from `edits`, which is append-only, so it still names
+    // an agent whose live claim has already expired — a break reaches the
+    // person who was in that file this morning, not only the one in it now.
+    const day = now - 24 * 60 * 60 * 1000;
+    const mine = new Set(store.editsBy(ENV_SESSION, day).map((e) => e.path));
+    const reached: string[] = [];
+    for (const peer of store.liveSessions(now)) {
+      if (peer.sessionId === ENV_SESSION) continue;
+      const theirs = store.editsBy(peer.sessionId, day);
+      if (!theirs.some((e) => mine.has(e.path))) continue;
+      store.post(me.agentName, "breaks", `${text} (in "${item.subject}")`, now, {
+        sessionId: peer.sessionId,
+        name: displayName(peer),
+      });
+      reached.push(displayName(peer));
+    }
+    console.log(
+      reached.length > 0
+        ? dim(`  told ${reached.join(", ")} — they have edited files you have`)
+        : dim("  nobody else has been in your files today, so nobody was messaged"),
+    );
+  });
+}
+
 /** Marks an entry no longer true, with the reason that is the point of it. */
 function deprecateNote(idRaw: string, why: string): void {
   const id = Number(idRaw);
@@ -1654,6 +1726,25 @@ switch (cmd) {
   case "tags":
     tags();
     break;
+  case "breaks":
+  case "needs": {
+    const args = [...rest];
+    const match = takeFlag(args, "--item");
+    const text = args.join(" ").trim();
+    if (!text) {
+      console.error(`usage: cli.ts ${cmd} "<what>" [--item <subject match>]`);
+      console.error(
+        dim(
+          cmd === "breaks"
+            ? "  Recorded on your item AND messaged to agents who have edited the same files."
+            : "  Recorded on your item, for whoever reads the board.",
+        ),
+      );
+      process.exit(1);
+    }
+    flagWork(cmd, text, match);
+    break;
+  }
   case "note-deprecate": {
     const args = [...rest];
     const id = args.shift() ?? "";

@@ -12,7 +12,7 @@
  * design leans on the Stop hook to catch news at the end of a turn instead.
  */
 
-import { agoText, withStore } from "../core/store.ts";
+import { agoText, displayName, withStore } from "../core/store.ts";
 import { agentKey, progress } from "../core/work.ts";
 import { loadConfig } from "../core/config.ts";
 import { emit, formatMessages, formatRoster, readPayload, TRUST_NOTE } from "../core/shared.ts";
@@ -137,6 +137,21 @@ async function main(): Promise<void> {
       // all, and blanking a good one because today's read came up empty would
       // lose the only description some sessions have.
       if (title !== "") store.setTitle(sessionId, title);
+    }
+
+    // A PLACEHOLDER ROW for an agent that has not opened one itself. The board's
+    // founding problem is that agents skip optional work — the task board it
+    // replaced had zero rows — so an agent that never runs `doing` is a blank
+    // where the operator expects to see who is doing what. `autoOpen` is a
+    // no-op once that agent opens a real item, and the placeholder is closed
+    // when it does.
+    //
+    // The subject is Claude Code's own conversation title, read a few lines
+    // above: model-written, moves as the work does, and costs nothing here
+    // because it has already been fetched.
+    const selfNow = store.findBySession(sessionId);
+    if (selfNow && selfNow.title !== "") {
+      store.work.autoOpen(agentKey("", sessionId), displayName(selfNow), selfNow.title, now);
     }
 
     // ASKED BEFORE the unread check, because an item dangles regardless of

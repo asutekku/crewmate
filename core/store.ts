@@ -94,7 +94,12 @@ export const HANDLES = GIVEN_NAMES;
  * peer, and produced lines like `turing was asked by its user: "go"` that say
  * nothing. A session's task now reaches peers only as its own short `intent`.
  */
-export type MessageKind = "say" | "claim" | "done" | "note";
+/**
+ * `breaks` is its own kind rather than a `say`, because it is the one message
+ * with a consequence attached: a peer reading it may have to change code it has
+ * already written. Rendering it as ordinary chatter is how it gets skimmed.
+ */
+export type MessageKind = "say" | "claim" | "done" | "note" | "breaks";
 
 export interface Session {
   readonly sessionId: string;
@@ -482,6 +487,9 @@ function openDb(dbPath: string): Database {
   addColumnIfMissing(db, "sessions", "alias", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(db, "sessions", "role", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(db, "aliases", "ts_ms", "INTEGER NOT NULL DEFAULT 0");
+  // Live dbs predate this; without it every existing board read fails on a
+  // column the queries now select.
+  addColumnIfMissing(db, "work", "auto", "INTEGER NOT NULL DEFAULT 0");
   return db;
 }
 
