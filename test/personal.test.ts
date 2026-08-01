@@ -181,3 +181,123 @@ describe("validation", () => {
     if (r.ok) expect(r.tags).toEqual(["style", "commits"]);
   });
 });
+
+describe("the project filter cannot be tricked", () => {
+  test("A PROJECT NAME THAT IS A SQL WILDCARD matches only itself", () => {
+    // `forSession` filters with `project = ?`, an equality bind — so `%` is a
+    // literal name and not a pattern. Asserted rather than assumed because the
+    // sibling filter one file over (`tags LIKE ?`) IS a pattern, and the day
+    // this becomes a LIKE for some reason, every agent starts carrying every
+    // repo's private preferences into every other repo.
+    withPersonal((p) => {
+      p.remember(HOPPER, "hopper", ok("learned in a repo literally named %"), "%", false, 1);
+      p.remember(HOPPER, "hopper", ok("learned in Traffic"), "Traffic", false, 2);
+
+      expect(p.forSession(HOPPER, "Traffic").map((m) => m.title)).toEqual(["learned in Traffic"]);
+      expect(p.forSession(HOPPER, "%").map((m) => m.title)).toEqual([
+        "learned in a repo literally named %",
+      ]);
+      // An underscore is the other LIKE metacharacter, and a one-character
+      // project name would match it if this were ever a pattern.
+      p.remember(HOPPER, "hopper", ok("underscore repo"), "_", false, 3);
+      expect(p.forSession(HOPPER, "x").length).toBe(0);
+    });
+  });
+
+  test("an EMPTY project name is a project, not a wildcard", () => {
+    // "" is the column default and the value a global carries, so a query for
+    // it must not become "everything". A hook that failed to resolve a project
+    // name would pass "" here.
+    withPersonal((p) => {
+      p.remember(LUNA, "luna", ok("no project recorded"), "", false, 1);
+      p.remember(LUNA, "luna", ok("traffic one"), "Traffic", false, 2);
+
+      expect(p.forSession(LUNA, "").map((m) => m.title)).toEqual(["no project recorded"]);
+      expect(p.forSession(LUNA, "Traffic").map((m) => m.title)).toEqual(["traffic one"]);
+    });
+  });
+
+  test("a GLOBAL learned in a named project still travels", () => {
+    // `--global` and a project name are not mutually exclusive: the column
+    // records WHERE it was learned even on a global, because "where did I learn
+    // this" is the first question when one turns out to be wrong. The travel
+    // must key on the flag, not on the project being blank.
+    withPersonal((p) => {
+      p.remember(HOPPER, "hopper", ok("wants numbers in the commit message"), "Traffic", true, 1);
+      expect(p.forSession(HOPPER, "wardatrobe").map((m) => m.title)).toEqual([
+        "wants numbers in the commit message",
+      ]);
+      expect(p.get(1)?.project).toBe("Traffic");
+      expect(p.get(1)?.global).toBe(true);
+    });
+  });
+
+  test("one agent's memories never reach another, whatever the project", () => {
+    // The isolation is per-SESSION and must not be weakened by the project
+    // filter in either direction — including for globals, which are the ones
+    // that travel furthest.
+    withPersonal((p) => {
+      p.remember(HOPPER, "hopper", ok("a global of hopper's"), "", true, 1);
+      p.remember(HOPPER, "hopper", ok("a local of hopper's"), "Traffic", false, 2);
+      for (const project of ["Traffic", "wardatrobe", "", "%"]) {
+        expect(p.forSession(LUNA, project)).toEqual([]);
+      }
+      expect(p.forSession(LUNA, "Traffic", { allProjects: true })).toEqual([]);
+    });
+  });
+});
+
+describe("the store survives what an agent will actually type", () => {
+  test("a body at the cap round-trips intact", () => {
+    withPersonal((p) => {
+      const body = "x".repeat(2000);
+      const c = checkMemory("a title", body, []);
+      expect(c.ok).toBe(true);
+      if (!c.ok) return;
+      const id = p.remember(HOPPER, "hopper", c, "Traffic", false, 1);
+      expect(p.get(id)?.body.length).toBe(2000);
+    });
+  });
+
+  test("a title is measured in CODE POINTS, not UTF-16 units", () => {
+    // An astral character is two UTF-16 units and one character. Counting units
+    // would reject a title half the stated length — and the cap is quoted to
+    // the agent in the refusal, so being wrong about it teaches a wrong lesson.
+    const astral = "\u{1D518}".repeat(MEMORY_TITLE_MAX);
+    expect([...astral].length).toBe(MEMORY_TITLE_MAX);
+    expect(astral.length).toBe(MEMORY_TITLE_MAX * 2);
+    expect(checkMemory(astral, "", []).ok).toBe(true);
+    expect(checkMemory(astral + "\u{1D518}", "", []).ok).toBe(false);
+  });
+
+  test("a multi-line title collapses to one line", () => {
+    // These are injected at session start, so a title carrying newlines would
+    // break the block it is rendered into.
+    const c = checkMemory("first line\n\n   second line", "", []);
+    expect(c.ok).toBe(true);
+    if (c.ok) expect(c.title).toBe("first line second line");
+  });
+
+  test("a renamed agent is listed ONCE, with all of its memories counted", () => {
+    // The operator reads `about-me` to audit who holds what. An agent that
+    // renamed itself must not appear as two agents, or the audit under-reports
+    // each of them and the count the operator acts on is wrong.
+    //
+    // WHAT IS NOT ASSERTED: which of the names is shown. `agents()` groups by
+    // session and selects a BARE `agent` column, so SQLite is free to pick any
+    // row in the group — measured 2026-08-01 it returns the last one INSERTED,
+    // which is not the same as the most recent by `ts_ms` (a memory written
+    // with an older timestamp after a newer one still wins). Pinning a
+    // particular name here would be asserting an implementation accident. The
+    // grouping is the contract; the label is cosmetic.
+    withPersonal((p) => {
+      p.remember(HOPPER, "tooling", ok("learned early"), "Traffic", false, 1);
+      p.remember(HOPPER, "hopper", ok("learned later"), "Traffic", false, 2);
+      const rows = p.agents().filter((a) => a.sessionId === HOPPER);
+      expect(rows.length).toBe(1);
+      expect(rows[0]?.count).toBe(2);
+      // Whichever it picked, it must be one the agent actually used.
+      expect(["tooling", "hopper"]).toContain(rows[0]?.agent ?? "");
+    });
+  });
+});

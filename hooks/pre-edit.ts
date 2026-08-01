@@ -54,7 +54,7 @@ type StoreHandle = Parameters<Parameters<typeof withStore>[1]>[0];
  * those are the ones somebody wrote down specifically so the next person would
  * not repeat them, and a pointer they have to follow is a pointer they will not.
  */
-function diaryLines(store: StoreHandle, path: string): string[] {
+export function diaryLines(store: StoreHandle, path: string): string[] {
   const total = store.diary.countForPath(path);
   if (total === 0) return [];
 
@@ -66,21 +66,46 @@ function diaryLines(store: StoreHandle, path: string): string[] {
     // the claim, which is enough to decide whether the body is worth opening.
     lines.push(`- ${e.kind}${where}: ${e.title} (${e.agent}, \`cli.ts note ${e.id}\`)`);
   }
-  const rest = total - loud.length;
-  if (rest > 0) {
+
+  // THE POINTER MUST NAME A COMMAND THAT RETURNS WHAT IT PROMISES, and the two
+  // counts here are NOT the same set. `countForPath` includes repo-wide entries
+  // (scope ""); `recall --scope` deliberately excludes them, because a repo-wide
+  // note is not "about this folder". Measured 2026-08-01 by driving this hook
+  // with two repo-wide entries and no scoped ones: it printed "2 more entries
+  // cover this folder — `cli.ts recall --scope <file>`" and that command
+  // returned nothing at all. Same defect class as the `--scope` equality bug
+  // this file already carries a note about — advice that fails when followed.
+  //
+  // So the remainder is split by what each half is reachable BY.
+  const shownIds = new Set(loud.map((e) => e.id));
+  const covering = store.diary
+    .forPath(path, { limit: 200 })
+    .filter((e) => !shownIds.has(e.id));
+  const scoped = covering.filter((e) => e.scope !== "").length;
+  const repoWide = covering.filter((e) => e.scope === "").length;
+
+  if (scoped > 0) {
     // THE PATH, not its directory. Caught live 2026-08-01 by this hook firing
     // on its own file: entries scoped to `.claude/hooks/presence` were reported
     // while the pointer read `--scope .claude/hooks/presence/hooks`, which
     // matched nothing. `--scope` covers a path the way this lookup does — every
     // enclosing folder — so handing it the file is what makes the advice true.
     lines.push(
-      `- ${rest} more diary ${rest === 1 ? "entry covers" : "entries cover"} this folder — ` +
+      `- ${scoped} more diary ${scoped === 1 ? "entry covers" : "entries cover"} this folder — ` +
         `\`cli.ts recall --scope ${path}\``,
+    );
+  }
+  if (repoWide > 0) {
+    // Named as what they are. Calling a repo-wide note an entry "about this
+    // folder" is how a reader learns to distrust the count.
+    lines.push(
+      `- ${repoWide} repo-wide diary ${repoWide === 1 ? "entry applies" : "entries apply"} ` +
+        `everywhere — \`cli.ts recall --limit ${repoWide}\``,
     );
   }
   if (lines.length === 0) return [];
   return [
-    `The diary has ${total} ${total === 1 ? "entry" : "entries"} about this folder:`,
+    `The diary has ${total} ${total === 1 ? "entry" : "entries"} covering this file:`,
     ...lines,
   ];
 }

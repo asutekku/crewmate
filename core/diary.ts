@@ -177,6 +177,12 @@ export function unpackTags(packed: string): string[] {
 export function normaliseScope(raw: string, looksLikeFile = /[^/.]\.[a-z0-9]+$/i): string {
   const s = raw.trim().replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+$/, "");
   if (s === "" || s === ".") return "";
+  // A TOP-LEVEL DOTTED NAME REDUCES TO REPO-WIDE, and that is correct for the
+  // common case (`README.md`, `package.json`) and wrong for the rare one (a
+  // folder actually named `my.module`). The text cannot tell them apart, so
+  // `cli.ts note` REPORTS the reduction rather than resolving it — see the
+  // "no --scope" line there. Scoping `README.md` to a folder named `README.md`
+  // would match no file at all, which is strictly worse than repo-wide.
   return looksLikeFile.test(s) ? s.split("/").slice(0, -1).join("/") : s;
 }
 
@@ -576,14 +582,46 @@ export class DiaryStore {
    * Merging has to exist from the start: retrofitting it after forty
    * near-duplicate topics is a data migration nobody will do.
    */
-  mergeTopic(from: string, into: string, ): number {
+  mergeTopic(from: string, into: string): number {
     const a = normaliseTerm(from);
     const b = normaliseTerm(into);
     if (a === "" || b === "" || a === b) return 0;
     const run = this.db.transaction((): number => {
+      // The rows have to be identified BEFORE the base table moves, because the
+      // FTS repair below is driven by rowid and `topic = a` stops matching the
+      // moment the UPDATE lands.
+      const moved = this.db.query(`SELECT id FROM diary WHERE topic = ?`).all(a) as Array<{
+        id: number;
+      }>;
       const n = this.db.query(`UPDATE diary SET topic = ? WHERE topic = ?`).run(b, a).changes;
-      // External-content FTS does not follow an UPDATE either.
-      this.db.query(`UPDATE diary_fts SET topic = ? WHERE topic = ?`).run(b, a);
+      // AN EXTERNAL-CONTENT INDEX IS NOT UPDATABLE BY AN ORDINARY UPDATE, and
+      // the failure is invisible from every direction a reviewer looks: a plain
+      // `UPDATE diary_fts SET topic = ?` reports rows changed, and a later
+      // `SELECT topic FROM diary_fts` reads THROUGH to the content table and so
+      // shows the new value — while the index itself still holds the old term.
+      // Measured 2026-08-01: after merging `water-sim` into `hydrology`,
+      // `MATCH "water-sim"` still returned the row and `MATCH "hydrology"`
+      // returned nothing, so a merge silently broke search under both names.
+      //
+      // The supported repair is the delete/insert pair: the 'delete' command
+      // must be handed the values CURRENTLY IN THE INDEX (the old topic) so FTS
+      // can find the terms it is retracting, and the insert then adds the new
+      // ones.
+      const del = this.db.prepare(
+        `INSERT INTO diary_fts (diary_fts, rowid, title, body, topic, tags)
+         VALUES ('delete', ?, ?, ?, ?, ?)`,
+      );
+      const ins = this.db.prepare(
+        `INSERT INTO diary_fts (rowid, title, body, topic, tags) VALUES (?, ?, ?, ?, ?)`,
+      );
+      const read = this.db.prepare(`SELECT title, body, tags FROM diary WHERE id = ?`);
+      for (const { id } of moved) {
+        const r = read.get(id) as { title: string; body: string; tags: string } | null;
+        if (!r) continue;
+        const tagText = unpackTags(r.tags).join(" ");
+        del.run(id, r.title, r.body, a, tagText);
+        ins.run(id, r.title, r.body, b, tagText);
+      }
       return n;
     });
     return run.immediate();
@@ -706,7 +744,14 @@ export class DiaryStore {
 export function ftsQuery(raw: string): string {
   const terms = raw
     .split(/\s+/)
-    .map((t) => t.replace(/"/g, "").trim())
+    // A NUL is stripped along with the quote, and for a harder reason. SQLite
+    // binds a JS string as a C string, so a NUL TRUNCATES the statement text:
+    // the closing quote this function just added lands after the cut and the
+    // driver throws `unterminated string`. Quoting made the input data for every
+    // operator character except this one, and a throw inside `pre-edit` is a
+    // hook that fails on an ordinary edit. Measured 2026-08-01: a NUL in ANY
+    // position — leading, middle, trailing, alone — threw.
+    .map((t) => t.replace(/["\u0000]/g, "").trim())
     .filter((t) => t !== "");
   if (terms.length === 0) return '""';
   return terms.map((t) => `"${t}"`).join(" OR ");

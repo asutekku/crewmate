@@ -36,7 +36,23 @@ import { agentKey } from "../core/work.ts";
  * sha. A branch name can contain almost anything, so the anchor is the SHA
  * SHAPE at the end of the bracket rather than the branch at the start.
  */
-const COMMITTED = /^\[[^\]]*?\b([0-9a-f]{7,40})\]\s*(.*)$/m;
+export const COMMITTED = /^\[[^\]]*?\b([0-9a-f]{7,40})\]\s*(.*)$/m;
+
+/**
+ * The sha and subject a git run reports, or null when nothing landed.
+ *
+ * Split out from `main` so the parse can be tested against real git output
+ * without spawning a hook. The shapes it has to survive are not guessable —
+ * see the test file, where each one is a captured `git` run rather than an
+ * invented string.
+ */
+export function parseCommit(output: string): { sha: string; subject: string } | null {
+  const m = COMMITTED.exec(output);
+  if (!m) return null;
+  const sha = (m[1] ?? "").slice(0, 7);
+  if (sha === "") return null;
+  return { sha, subject: (m[2] ?? "").trim() };
+}
 
 async function main(): Promise<void> {
   const payload = await readPayload();
@@ -50,11 +66,9 @@ async function main(): Promise<void> {
   if (!/\bgit\b[\s\S]*\bcommit\b/.test(command)) return;
 
   const output = `${payload.tool_response?.stdout ?? ""}\n${payload.tool_response?.stderr ?? ""}`;
-  const m = COMMITTED.exec(output);
-  if (!m) return;
-  const sha = (m[1] ?? "").slice(0, 7);
-  const subject = (m[2] ?? "").trim();
-  if (sha === "") return;
+  const landed = parseCommit(output);
+  if (!landed) return;
+  const { sha, subject } = landed;
 
   withStore(resolveProject(cwd).dbPath, (store) => {
     const now = Date.now();

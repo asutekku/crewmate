@@ -767,3 +767,190 @@ describe("asking about items that stopped moving", () => {
     });
   });
 });
+
+describe("the stale nudge under stress", () => {
+  const HOUR = 60 * 60 * 1000;
+
+  test("the boundary is EXCLUSIVE, so an item is never asked about early", () => {
+    // `updated_ms < now - staleMs` is a strict comparison. Asserted rather than
+    // assumed because an off-by-one here is invisible in normal use and turns
+    // into "the nudge fired while I was still working" exactly once, on a
+    // machine where the timestamps happen to line up.
+    fresh((store) => {
+      const w = store.work;
+      const now = 10 * HOUR;
+      w.open(AGENT, "a", "right on the line", [], now - HOUR);
+      // Exactly at the threshold: not yet stale.
+      expect(w.staleItems(AGENT, now, HOUR)).toEqual([]);
+      // One millisecond past it: stale.
+      expect(w.staleItems(AGENT, now + 1, HOUR).map((i) => i.subject)).toEqual(["right on the line"]);
+    });
+  });
+
+  test("a 1 ms stale window does not make every item permanently overdue", () => {
+    // A config can set `workStaleMs` to anything. The nudge has to stay
+    // ASK-ONCE under a pathological setting, or a misconfigured repo turns
+    // every prompt into a wall of reminders — which is how a nudge stops being
+    // read at all.
+    fresh((store) => {
+      const w = store.work;
+      const now = 10 * HOUR;
+      for (let i = 0; i < 5; i++) w.open(AGENT, "a", `item ${i}`, [], now);
+      const first = w.staleItems(AGENT, now + 10, 1);
+      expect(first.length).toBe(5);
+      for (const item of first) w.markAsked(item.workId, now + 10);
+      // Asked once; the next turn must be silent even though every item is
+      // still far past a 1 ms window.
+      expect(w.staleItems(AGENT, now + 10_000, 1)).toEqual([]);
+    });
+  });
+
+  test("MANY stale items drain a few per turn instead of repeating the same few", () => {
+    // The hook shows at most STALE_SHOWN and marks only those. The property
+    // that makes it work is that the SHOWN ones are marked, so the next turn
+    // advances — a version that marked all of them would lose the tail, and one
+    // that marked none would repeat the first three forever.
+    fresh((store) => {
+      const w = store.work;
+      const now = 10 * HOUR;
+      for (let i = 0; i < 10; i++) w.open(AGENT, "a", `item ${i}`, [], now - 2 * HOUR + i);
+
+      const seen: string[] = [];
+      for (let turn = 0; turn < 4; turn++) {
+        const batch = w.staleItems(AGENT, now, HOUR).slice(0, 3);
+        for (const item of batch) {
+          seen.push(item.subject);
+          w.markAsked(item.workId, now + turn);
+        }
+      }
+      // Ten distinct items, each raised exactly once — no repeats, nothing lost.
+      expect(seen.length).toBe(10);
+      expect(new Set(seen).size).toBe(10);
+      expect(w.staleItems(AGENT, now, HOUR)).toEqual([]);
+    });
+  });
+
+  test("AN ITEM ASKED ONCE IS NEVER ASKED AGAIN, even after real work on it", () => {
+    // DOCUMENTS A LIMITATION, and deliberately asserts the behaviour that
+    // exists rather than the one the comments describe.
+    //
+    // `staleItems` filters on `asked_turn_ms = 0`, so the column is a BOOLEAN
+    // in practice — the timestamp it stores is never compared to anything
+    // (verified 2026-08-01: no code path reads `asked_turn_ms` except this
+    // `= 0` test). `work.ts` says "must not be asked again NEXT TURN"; what
+    // happens is "never again for the item's whole life".
+    //
+    // The consequence: an agent that answers the nudge, works for another day,
+    // and abandons the item is never reminded a second time — the dangling item
+    // the nudge exists to catch comes back and is now permanently invisible.
+    // Left as-is because the alternative (re-ask after another stale window)
+    // is a judgement about how naggy the tool should be, not a bug fix.
+    fresh((store) => {
+      const w = store.work;
+      const now = 10 * HOUR;
+      const id = w.open(AGENT, "a", "worked on, then abandoned again", [], now - 2 * HOUR);
+      expect(w.staleItems(AGENT, now, HOUR).length).toBe(1);
+      w.markAsked(id, now);
+
+      // Genuine progress: the agent answered, and moved the item on.
+      w.record(id, "did", "made real progress", now + 60_000);
+      // ...then went quiet for a week.
+      expect(w.staleItems(AGENT, now + 7 * 24 * HOUR, HOUR)).toEqual([]);
+    });
+  });
+});
+
+describe("placeholder rows under duress", () => {
+
+  test("closeAuto with NO placeholder is a no-op, not a throw", () => {
+    // Reached whenever an agent's first board command is `doing` — the common
+    // case for a disciplined agent, and the one least likely to be exercised by
+    // hand.
+    fresh((store) => {
+      expect(() => store.work.closeAuto("session:never-seen", 1000)).not.toThrow();
+    });
+  });
+
+  test("closeAuto clears EVERY placeholder, not just the first", () => {
+    // `autoOpen` is idempotent, so two auto rows should be unreachable — but if
+    // one ever appears (a crash between transactions, a hand-edited db), the
+    // cleanup must not leave a second placeholder advertising work that has a
+    // real item beside it.
+    fresh((store) => {
+      const w = store.work;
+      const db = (store as unknown as { db: { query: (s: string) => { run: (...a: unknown[]) => void } } }).db;
+      for (const t of ["ghost one", "ghost two"]) {
+        db.query(
+          `INSERT INTO work (agent_id, agent_name, subject, started_ms, updated_ms, auto) VALUES (?,?,?,?,?,1)`,
+        ).run(AGENT, "a", t, 1000, 1000);
+      }
+      expect(w.openItems(AGENT).length).toBe(2);
+      w.closeAuto(AGENT, 2000);
+      expect(w.openItems(AGENT)).toEqual([]);
+    });
+  });
+
+  test("a placeholder subject survives a newline and an absurd length", () => {
+    // The subject is Claude Code's conversation title — model-written, so its
+    // shape is not under this tool's control. It must not be able to break the
+    // row or the board's layout.
+    fresh((store) => {
+      const w = store.work;
+      const nasty = `line one\nline two ${"x".repeat(5000)}`;
+      const id = w.autoOpen(AGENT, "a", nasty, 1000);
+      expect(id).not.toBeNull();
+      const item = w.openItems(AGENT)[0];
+      expect(item?.subject).toBe(nasty.trim());
+      // And it is still the SAME row on the next prompt, not a second one.
+      w.autoOpen(AGENT, "a", nasty, 2000);
+      expect(w.openItems(AGENT).length).toBe(1);
+    });
+  });
+
+  test("a landed commit attaches to a PLACEHOLDER when that is all there is", () => {
+    // `recordLanded` targets whatever item is open. A commit made by an agent
+    // that never ran `doing` should still be recorded rather than dropped —
+    // the sha is the one fact on the board nobody has to remember.
+    fresh((store) => {
+      const w = store.work;
+      const auto = w.autoOpen(AGENT, "a", "a conversation title", 1000);
+      expect(w.recordLanded(AGENT, "074bb51", "feat: a thing", 2000)).toBe(auto);
+      const landed = w.events(auto ?? 0).filter((e) => e.kind === "landed");
+      expect(landed.map((e) => e.ref)).toEqual(["074bb51"]);
+    });
+  });
+});
+
+describe("two processes, one db", () => {
+  test("THE PLACEHOLDER RACE IS REAL, and the transaction is what closes it", () => {
+    // Documents a measurement rather than exercising `autoOpen` directly, and
+    // that is deliberate — an end-to-end race test on this code CANNOT
+    // discriminate. Four real processes spun to one wall-clock instant all pass
+    // whether `autoOpen` uses BEGIN IMMEDIATE, a deferred transaction, or no
+    // transaction at all (measured 2026-08-01, three runs each): the whole
+    // read-then-write takes microseconds, so the workers never actually
+    // interleave and the test would pass on broken code. That is the "test
+    // stops at the first observation" shape, so it is not shipped as one.
+    //
+    // What IS established: the race is not hypothetical. The same four
+    // processes running a check-then-insert with the gap held open 40 ms
+    // produced FOUR placeholder rows against this schema. So the atomicity in
+    // `autoOpen` is load-bearing, and anyone tempted to unwrap the transaction
+    // for tidiness should reproduce that measurement first.
+    //
+    // The assertion below is the SEQUENTIAL half — the part a test can hold
+    // honestly. The concurrent half is guarded by the transaction, and by this
+    // comment telling the next reader why there is no test for it.
+    fresh((store) => {
+      const w = store.work;
+      for (let i = 0; i < 4; i++) w.autoOpen(AGENT, "racer", `title-${i}`, 1000 + i);
+      const open = w.openItems(AGENT);
+      expect(open.length).toBe(1);
+      expect(open[0]?.auto).toBe(true);
+      // The subject FOLLOWS the newest title rather than sticking at the first.
+      expect(open[0]?.subject).toBe("title-3");
+      // One 'started' event, so `--history` cannot claim the work began 4 times.
+      expect(w.events(open[0]?.workId ?? 0).filter((e) => e.kind === "started").length).toBe(1);
+    });
+  });
+});

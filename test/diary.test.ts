@@ -14,6 +14,11 @@ import { afterEach, describe, expect, test } from "bun:test";
 
 import { withStore } from "../core/store.ts";
 import { wrap } from "../core/layout.ts";
+import { loadConfig } from "../core/config.ts";
+// The hook's own formatter, exported so the contract between what it COUNTS and
+// what the command it PRINTS returns can be asserted. Driving the hook as a
+// subprocess would test the same thing far more slowly and far less precisely.
+import { diaryLines } from "../hooks/pre-edit.ts";
 import {
   BODY_MAX,
   checkNote,
@@ -293,6 +298,61 @@ describe("search", () => {
     expect(ftsQuery('a "b')).toBe('"a" OR "b"');
   });
 
+  test("A NUL BYTE IN A QUERY DOES NOT THROW, in any position", () => {
+    // Quoting each term makes every FTS operator character into data — except
+    // this one, which is not an operator at all. SQLite binds a JS string as a
+    // C string, so a NUL TRUNCATES the statement text: the closing quote
+    // `ftsQuery` just appended lands after the cut and the driver throws
+    // `unterminated string`. Measured 2026-08-01 against the unfixed code: a
+    // NUL leading, mid-term, trailing OR alone all threw.
+    //
+    // This matters because `recall` is reachable from `pre-edit`, and a throw
+    // there is a hook that fails on an ordinary edit — the failure mode the
+    // whole quoting scheme exists to prevent.
+    fresh((store) => {
+      const now = Date.now();
+      store.diary.write("s1", "a", ok({ title: "water flows downhill", topic: "water" }), now);
+      for (const q of ["\u0000abc", "ab\u0000cd", "abc\u0000", "\u0000", "a \u0000 b"]) {
+        expect(() => store.diary.recall({ query: q })).not.toThrow();
+      }
+      // Stripped, not escaped — a NUL carries no search intent, so the rest of
+      // the term must still find the entry.
+      expect(store.diary.recall({ query: "wa\u0000ter" }).length).toBe(1);
+    });
+  });
+
+  test("genuinely hostile search input returns nothing rather than throwing", () => {
+    // A user's search box reaches MATCH directly. These are the shapes that
+    // are FTS5 SYNTAX rather than words — an unpaired quote, a column filter,
+    // a NEAR operator, an unbalanced paren — plus the size and encoding
+    // extremes. Every one must be inert, because the alternative is a hook
+    // that dies on a search somebody typed in good faith.
+    fresh((store) => {
+      const now = Date.now();
+      store.diary.write("s1", "a", ok({ title: "dist2 is linear", topic: "core" }), now);
+      const hostile = [
+        '"',
+        "*",
+        "NEAR/2",
+        "^",
+        "-",
+        "...",
+        "title:foo",
+        "nosuchcolumn:foo",
+        "(",
+        "(a OR b)",
+        "{a}",
+        "x".repeat(10_000),
+        "日本語 café ñ",
+        "🔥🔥",
+        Array.from({ length: 600 }, (_, i) => `t${i}`).join(" "),
+      ];
+      for (const q of hostile) {
+        expect(() => store.diary.recall({ query: q })).not.toThrow();
+      }
+    });
+  });
+
   test("a tag filter does not match a LONGER tag with the same prefix", () => {
     // Why tags are stored comma-wrapped. `LIKE '%perf%'` matches
     // `perf-regression` and quietly widens every search that uses it.
@@ -498,6 +558,61 @@ describe("organisation", () => {
       expect(d.topics().map((t) => t.topic)).toEqual(["water"]);
       expect(d.recall({ topic: "water" }).length).toBe(2);
       expect(d.recall({ topic: "water-sim" }).length).toBe(0);
+    });
+  });
+
+  test("a merged topic is findable BY FTS MATCH under the new name, not the old", () => {
+    // The test above passes on broken code. It filters on `diary.topic`, which
+    // is an ordinary column on the base table, so it never touches the FTS
+    // index at all — and the index is where a merge silently fails.
+    //
+    // WHY THE FAILURE IS INVISIBLE FROM EVERY OTHER ANGLE. `diary_fts` is an
+    // EXTERNAL CONTENT table: an `UPDATE diary_fts SET topic = ?` reports rows
+    // changed, and a later `SELECT topic FROM diary_fts` reads THROUGH to the
+    // content table and shows the NEW value. Only `MATCH` reads the index
+    // itself. Measured 2026-08-01 against the unfixed code: after merging
+    // `water-sim` into `hydrology`, `MATCH "water-sim"` still returned the row
+    // and `MATCH "hydrology"` returned nothing — search answered under a topic
+    // that no longer existed and refused the one that did.
+    fresh((store) => {
+      const now = Date.now();
+      const d = store.diary;
+      const id = d.write("s1", "a", ok({ title: "spillover is clamped", topic: "water-sim" }), now);
+
+      expect(d.mergeTopic("water-sim", "hydrology")).toBe(1);
+      // A query is FTS-ranked, so these two go through MATCH.
+      expect(d.recall({ query: "hydrology" }).map((e) => e.id)).toEqual([id]);
+      expect(d.recall({ query: "water-sim" }).length).toBe(0);
+      // And the merge must not cost the entry its OTHER search terms — a
+      // delete/insert repair that dropped the title would pass the two above.
+      expect(d.recall({ query: "spillover" }).map((e) => e.id)).toEqual([id]);
+    });
+  });
+
+  test("a merge keeps body and tags searchable", () => {
+    // The repair rewrites the whole FTS row, so every indexed column is at risk,
+    // not just the one being merged.
+    fresh((store) => {
+      const now = Date.now();
+      const d = store.diary;
+      const id = d.write(
+        "s1",
+        "a",
+        ok({
+          title: "the guard rejects it",
+          topic: "old-topic",
+          body: "canJunctionFastPath refuses a geometry change",
+          tags: ["perf", "derive"],
+        }),
+        now,
+      );
+      d.mergeTopic("old-topic", "derive-fastpath");
+
+      expect(d.recall({ query: "canJunctionFastPath" }).map((e) => e.id)).toEqual([id]);
+      expect(d.recall({ query: "derive-fastpath" }).map((e) => e.id)).toEqual([id]);
+      // The tag COLUMN is untouched by a topic merge and must stay intact.
+      expect(d.recall({ tag: "perf" }).map((e) => e.id)).toEqual([id]);
+      expect(d.get(id)?.tags).toEqual(["perf", "derive"]);
     });
   });
 
@@ -708,6 +823,231 @@ describe("attribution", () => {
       store.unregister("sess-a");
       // No live row to resolve against, so the write-time copy is the answer.
       expect(store.diary.get(id)?.agent).toBe("hopper");
+    });
+  });
+});
+
+describe("what pre-edit actually prints", () => {
+  test("EVERY COMMAND THE HOOK PRINTS RETURNS WHAT IT PROMISES", () => {
+    // THE DEFECT THIS CATCHES, measured 2026-08-01 by driving the real hook:
+    // with two repo-wide entries and no scoped ones, `pre-edit` printed
+    //
+    //   The diary has 2 entries about this folder:
+    //   - 2 more diary entries cover this folder — `cli.ts recall --scope <file>`
+    //
+    // and that command returned ZERO rows. `countForPath` counts repo-wide
+    // entries (scope ""), `recall --scope` deliberately excludes them, and the
+    // hook subtracted one from the other as though they were one set.
+    //
+    // It is the same defect class the file already carries a note about — the
+    // `--scope` equality bug — and the same shape as a refusal that suggests a
+    // repair that does not work: an agent that follows the advice gets nothing
+    // and learns to stop following it.
+    fresh((store) => {
+      const now = Date.now();
+      const d = store.diary;
+      d.write("s1", "a", ok({ title: "CRLF defeats multiline perl", topic: "tooling" }), now);
+      d.write("s1", "a", ok({ title: "never git stash in a shared tree", topic: "tooling" }), now);
+
+      const lines = diaryLines(store, "src/sim/water/flow.ts");
+      const text = lines.join("\n");
+      // It must NOT send the reader to a scope query that cannot match, because
+      // neither entry is scoped to anything.
+      expect(text).not.toContain("--scope");
+      // Named as what they are: repo-wide, not "about this folder".
+      expect(text).toContain("repo-wide");
+    });
+  });
+
+  test("a scoped remainder still gets the --scope pointer, and it resolves", () => {
+    // The other half of the same contract: when the remainder IS reachable by
+    // `--scope`, the hook must still say so. A fix that simply deleted the
+    // pointer would pass the test above and lose the feature.
+    fresh((store) => {
+      const now = Date.now();
+      const d = store.diary;
+      const file = "src/sim/water/flow.ts";
+      for (let i = 0; i < 4; i++) {
+        d.write("s1", "a", ok({ title: `scoped ${i}`, topic: "x", scope: "src/sim/water" }), now);
+      }
+      const text = diaryLines(store, file).join("\n");
+      expect(text).toContain(`--scope ${file}`);
+      // The command named in the text has to return something.
+      expect(d.recall({ scope: file, limit: 100 }).length).toBeGreaterThan(0);
+    });
+  });
+
+  test("a MIXED folder reports each half by the command that reaches it", () => {
+    fresh((store) => {
+      const now = Date.now();
+      const d = store.diary;
+      const file = "src/sim/water/flow.ts";
+      d.write("s1", "a", ok({ title: "repo wide one", topic: "x" }), now);
+      d.write("s1", "a", ok({ title: "repo wide two", topic: "x" }), now);
+      d.write("s1", "a", ok({ title: "scoped one", topic: "x", scope: "src/sim/water" }), now);
+
+      const text = diaryLines(store, file).join("\n");
+      // Both halves named, each with the command that actually returns it.
+      expect(text).toContain("--scope");
+      expect(text).toContain("repo-wide");
+      // The counts must add up to what the header claims.
+      expect(text).toContain("3 entries");
+    });
+  });
+
+  test("a loud entry is quoted and NOT double-counted in the remainder", () => {
+    // The remainder is "everything the reader has not already been shown". An
+    // off-by-one here tells the agent to go looking for an entry it just read.
+    fresh((store) => {
+      const now = Date.now();
+      const d = store.diary;
+      const file = "src/net/lanes.ts";
+      d.write("s1", "a", ok({ title: "the loud one", topic: "x", kind: "warning", scope: "src/net" }), now);
+      d.write("s1", "a", ok({ title: "a quiet one", topic: "x", scope: "src/net" }), now);
+
+      const text = diaryLines(store, file).join("\n");
+      expect(text).toContain("the loud one");
+      // One shown, one left — not two.
+      expect(text).toContain("1 more");
+    });
+  });
+
+  test("an empty folder produces no lines at all", () => {
+    // The hook injects context on EVERY edit, so "nothing to say" has to cost
+    // nothing rather than emitting an empty header.
+    fresh((store) => {
+      expect(diaryLines(store, "src/untouched/file.ts")).toEqual([]);
+    });
+  });
+
+  test("a deprecated entry is neither counted nor pointed at", () => {
+    fresh((store) => {
+      const now = Date.now();
+      const d = store.diary;
+      const id = d.write("s1", "a", ok({ title: "was true once", topic: "x", scope: "src/net" }), now);
+      d.deprecate(id, "the guard was deleted", now);
+      expect(diaryLines(store, "src/net/lanes.ts")).toEqual([]);
+    });
+  });
+});
+
+describe("prune keeps the index honest", () => {
+  test("a pruned entry leaves NO phantom search hit", () => {
+    // An external-content index does not follow a DELETE either, so a pruned
+    // row would keep matching a search and then resolve to nothing — the
+    // dangling-reference rot, but in the search path where nothing checks it.
+    fresh((store) => {
+      const now = Date.now();
+      const d = store.diary;
+      const cfg = loadConfig();
+      d.write("s1", "a", ok({ title: "ancientuniqueterm here", topic: "x", scope: "src" }), now - cfg.diaryKeepMs - 1000);
+      const keep = d.write("s1", "a", ok({ title: "freshuniqueterm here", topic: "x", scope: "src" }), now);
+      expect(d.recall({ query: "ancientuniqueterm", all: true }).length).toBe(1);
+
+      d.prune(now);
+      expect(d.recall({ query: "ancientuniqueterm", all: true }).length).toBe(0);
+      // And the survivor is still findable — a rebuild that dropped everything
+      // would pass the assertion above.
+      expect(d.recall({ query: "freshuniqueterm", all: true }).map((e) => e.id)).toEqual([keep]);
+    });
+  });
+
+  test("pruning an empty diary is not an error", () => {
+    fresh((store) => {
+      expect(() => store.diary.prune(Date.now())).not.toThrow();
+    });
+  });
+});
+
+describe("deprecation interacts with everything else", () => {
+  test("a deprecated entry is not ALSO reported as unscoped or unverified", () => {
+    // `check` exists to name real problems. An entry that is already retired is
+    // not a scoping problem and not an unverified claim — reporting it as both
+    // would bury the live problems under noise about entries nobody will read.
+    fresh((store) => {
+      const now = Date.now();
+      const d = store.diary;
+      const id = d.write("s1", "a", ok({ title: "ancient and unscoped", topic: "x" }), now - STALE_ENTRY_MS - 1000);
+      d.deprecate(id, "the code was deleted", now);
+      expect(d.check(now)).toEqual([]);
+    });
+  });
+
+  test("a whitespace-only reason is stored as EMPTY, so it stays repairable", () => {
+    // `deprecate` trims. If "   " were stored verbatim, `check` would see a
+    // non-empty reason and never flag it, while a reader sees nothing — a
+    // problem that is invisible to the one tool meant to find it. And
+    // `explainDeprecation` only writes into a BLANK field, so it could never
+    // fix it either.
+    fresh((store) => {
+      const now = Date.now();
+      const d = store.diary;
+      const id = d.write("s1", "a", ok({ title: "t", topic: "x", scope: "src" }), now);
+      d.deprecate(id, "   ", now);
+      expect(d.get(id)?.deprecatedWhy).toBe("");
+      expect(d.check(now).some((p) => p.kind === "deprecated-without-reason")).toBe(true);
+      // ...and the repair reaches it.
+      expect(d.explainDeprecation(id, "a real reason")).toBe(true);
+      expect(d.check(now).some((p) => p.kind === "deprecated-without-reason")).toBe(false);
+    });
+  });
+
+  test("SUPERSEDING BY AN ALREADY-DEAD ENTRY IS ALLOWED, and points at a dead end", () => {
+    // Documents shipped behaviour rather than asserting it is right.
+    // `supersede` checks only that the replacement EXISTS, not that it is live,
+    // so `#a → see #b` can be printed for a `#b` that is itself retired. The
+    // reader follows the pointer and lands on another tombstone.
+    //
+    // `check`'s dangling-reference rule does NOT catch this — it looks for a
+    // target that does not exist, and this one does. Left alone because
+    // refusing it would also refuse the legitimate case where a chain is
+    // retired in one pass, and a wrong refusal is worse than a weak pointer.
+    fresh((store) => {
+      const now = Date.now();
+      const d = store.diary;
+      const a = d.write("s1", "a", ok({ title: "aaa", topic: "x", scope: "src" }), now);
+      const b = d.write("s1", "a", ok({ title: "bbb", topic: "x", scope: "src" }), now);
+      d.deprecate(b, "b stopped being true too", now);
+
+      expect(d.supersede(a, b, now)).toBe(true);
+      expect(d.get(a)?.supersededBy).toBe(b);
+      expect(d.check(now).filter((p) => p.kind === "dangling-reference")).toEqual([]);
+    });
+  });
+
+  test("a supersede CYCLE is storable and cannot hang a reader", () => {
+    // Two entries can point at each other. It is only survivable because
+    // nothing WALKS the chain — `cli.ts note` prints one hop ("→ see #n") and
+    // stops. Pinned so that anyone who later adds chain-following knows a cycle
+    // is reachable and has to bound the walk.
+    fresh((store) => {
+      const now = Date.now();
+      const d = store.diary;
+      const a = d.write("s1", "a", ok({ title: "aaa", topic: "x", scope: "src" }), now);
+      const b = d.write("s1", "a", ok({ title: "bbb", topic: "x", scope: "src" }), now);
+      d.supersede(a, b, now);
+      d.supersede(b, a, now);
+      expect(d.get(a)?.supersededBy).toBe(b);
+      expect(d.get(b)?.supersededBy).toBe(a);
+      // Both retired, so neither is volunteered at edit time.
+      expect(d.forPath("src/anything.ts")).toEqual([]);
+    });
+  });
+
+  test("forPath is CAPPED but countForPath is not, and the hook relies on both", () => {
+    // `forPath` bounds what an edit pays for; `countForPath` is the honest
+    // total. They are deliberately different numbers, and the hook subtracts
+    // one from the other — so a change that made `countForPath` respect the cap
+    // would silently make the remainder always zero.
+    fresh((store) => {
+      const now = Date.now();
+      const d = store.diary;
+      for (let i = 0; i < 50; i++) {
+        d.write("s1", "a", ok({ title: `bulk ${i}`, topic: "x", scope: "src/net" }), now);
+      }
+      expect(d.forPath("src/net/x.ts").length).toBe(5);
+      expect(d.forPath("src/net/x.ts", { limit: 2 }).length).toBe(2);
+      expect(d.countForPath("src/net/x.ts")).toBe(50);
     });
   });
 });
