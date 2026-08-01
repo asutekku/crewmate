@@ -137,11 +137,10 @@ nudge is the working precedent.
 
 ## P3 — a work item knows which plan it is executing  **[~]**
 
-*The link and `plans` shipped as `4eb260b`. Three items below are NOT built:
-backfill, the git fallback, and the `pre-edit` suggestion — so `plans` today
-shows only what agents have linked by hand, which as of writing is one plan out
-of 82. The adoption risk named at the bottom of this section is therefore live,
-not hypothetical.*
+*The link and `plans` shipped as `4eb260b`; the `pre-edit` suggestion — the
+one that makes links actually happen — as `7d4b526`. Backfill and the git
+fallback are DEFERRED by the user (2026-08-01): both are about plans nobody has
+linked, and the suggestion addresses that at the point of work instead.*
 
 **The user's complaint is the spec:** *"we have shitton of plan files, but I
 have no idea which ones we have acted on, which ones are completed."*
@@ -219,9 +218,9 @@ can ask "is this executing a plan?" once per item.
 
 - [x] `plan_doc` on `work`; `--plan-doc` on `doing`, and a `link` verb for items already open
 - [x] `cli.ts plans` — derived, storing nothing
-- [ ] backfill by filename match; ambiguous stays unlinked
-- [ ] git fallback for unlinked plans
-- [ ] `pre-edit` suggests linking when a plan doc is edited
+- [ ] backfill by filename match; ambiguous stays unlinked — DEFERRED (user, 2026-08-01)
+- [ ] git fallback for unlinked plans — DEFERRED (user, 2026-08-01)
+- [x] `pre-edit` suggests linking when a plan doc is edited
 - [x] test: a plan with a linked item and a `landed` sha reports shipped; an unlinked one reports unknown, never abandoned
 
 ---
