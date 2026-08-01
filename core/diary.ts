@@ -523,6 +523,28 @@ export class DiaryStore {
   }
 
   /**
+   * Fills in a MISSING reason on an entry already marked no longer true.
+   *
+   * Separate from `deprecate`, which refuses an entry that is already retired —
+   * a guard that also made an empty reason permanently unrepairable, so
+   * `diary check` would report a problem no command could fix. This writes only
+   * into a blank field: a reason somebody wrote is never overwritten, which is
+   * the property that guard was actually protecting.
+   */
+  explainDeprecation(id: number, why: string): boolean {
+    const trimmed = why.trim();
+    if (trimmed === "") return false;
+    return (
+      this.db
+        .query(
+          `UPDATE diary SET deprecated_why = ?
+            WHERE id = ? AND deprecated_ms != 0 AND deprecated_why = ''`,
+        )
+        .run(trimmed, id).changes > 0
+    );
+  }
+
+  /**
    * Points a stale entry at the one that replaced it, and deprecates it.
    *
    * SUPERSEDING IS ITSELF THE REASON, so it fills one in. `diary check` flags a

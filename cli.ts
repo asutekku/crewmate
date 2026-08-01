@@ -1255,6 +1255,15 @@ function deprecateNote(idRaw: string, why: string): void {
       return;
     }
     if (!store.diary.deprecate(id, why, Date.now())) {
+      // An entry retired WITHOUT a reason can still take one. Refusing outright
+      // made `diary check`'s "does not say why" unfixable by any command — a
+      // report with no repair, which is the same dead end as advice that fails
+      // when followed.
+      if (e.deprecatedWhy === "" && store.diary.explainDeprecation(id, why)) {
+        console.log(`${green("✓")} #${id} ${dim("— reason recorded")}`);
+        console.log(dim(`  it was already retired; this fills in why`));
+        return;
+      }
       console.error(`${red("✗")} #${id} is already marked no longer true`);
       console.error(dim(`  ${e.deprecatedWhy}`));
       process.exitCode = 1;

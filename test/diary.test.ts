@@ -405,6 +405,48 @@ describe("freshness", () => {
     });
   });
 
+  test("a missing reason can be filled in later, so `diary check` has a repair", () => {
+    // `deprecate` refuses an already-retired entry, which also made an EMPTY
+    // reason permanently unfixable — `diary check` would report "does not say
+    // why" forever with no command able to answer it. A report with no repair
+    // is the same dead end as advice that fails when followed.
+    fresh((store) => {
+      const now = Date.now();
+      const d = store.diary;
+      const id = d.write("s1", "a", ok({ title: "t", topic: "x", scope: "src" }), now);
+      d.deprecate(id, "", now);
+      expect(d.check(now).some((p) => p.kind === "deprecated-without-reason")).toBe(true);
+
+      expect(d.explainDeprecation(id, "measured wrong on seed 42")).toBe(true);
+      expect(d.get(id)?.deprecatedWhy).toBe("measured wrong on seed 42");
+      expect(d.check(now).some((p) => p.kind === "deprecated-without-reason")).toBe(false);
+    });
+  });
+
+  test("filling in a reason NEVER overwrites one somebody wrote", () => {
+    fresh((store) => {
+      const now = Date.now();
+      const d = store.diary;
+      const id = d.write("s1", "a", ok({ title: "t", topic: "x", scope: "src" }), now);
+      d.deprecate(id, "the original reason", now);
+      // The guard this preserves — the one the blanket refusal was protecting.
+      expect(d.explainDeprecation(id, "a later, worse reason")).toBe(false);
+      expect(d.get(id)?.deprecatedWhy).toBe("the original reason");
+    });
+  });
+
+  test("a LIVE entry cannot be given a deprecation reason", () => {
+    fresh((store) => {
+      const now = Date.now();
+      const d = store.diary;
+      const id = d.write("s1", "a", ok({ title: "t", topic: "x", scope: "src" }), now);
+      // Explaining a deprecation that has not happened would leave an entry
+      // reading as retired while still live in every query.
+      expect(d.explainDeprecation(id, "why")).toBe(false);
+      expect(d.get(id)?.deprecatedMs).toBe(0);
+    });
+  });
+
   test("an entry cannot supersede itself or a missing entry", () => {
     fresh((store) => {
       const now = Date.now();
