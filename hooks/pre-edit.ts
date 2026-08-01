@@ -62,9 +62,14 @@ export function diaryLines(store: StoreHandle, path: string): string[] {
   const lines: string[] = [];
   for (const e of loud) {
     const where = e.scope !== "" ? ` [${e.scope}]` : "";
+    // AN UNFIXED ERROR SAYS SO. `forPath` already surfaces errors here, so the
+    // gap this closes is narrow and real: without the marker an error reads the
+    // same whether someone fixed it last week or nobody ever has, and "still
+    // open" is the half that decides whether you act on it now.
+    const open = e.kind === "error" && e.fixedMs === 0 ? " STILL OPEN" : "";
     // TITLES only — the body is what `cli.ts note <id>` is for. A title states
     // the claim, which is enough to decide whether the body is worth opening.
-    lines.push(`- ${e.kind}${where}: ${e.title} (${e.agent}, \`cli.ts note ${e.id}\`)`);
+    lines.push(`- ${e.kind}${open}${where}: ${e.title} (${e.agent}, \`cli.ts note ${e.id}\`)`);
   }
 
   // THE POINTER MUST NAME A COMMAND THAT RETURNS WHAT IT PROMISES, and the two

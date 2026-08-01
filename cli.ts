@@ -786,6 +786,24 @@ function doing(subject: string, plan: string, planDoc = ""): void {
   });
 }
 
+/** Errors nobody has fixed. The diary was already a bug list; this is its state. */
+function bugs(scope: string, limit: number): void {
+  withStore(PROJECT.dbPath, (store) => {
+    const open = store.diary.openBugs(scope, limit);
+    if (open.length === 0) {
+      console.log(dim(scope !== "" ? `No open bugs under ${scope}.` : "No open bugs."));
+      return;
+    }
+    const now = Date.now();
+    for (const b of open) {
+      console.log(`${red("●")} ${bold(`#${b.id}`)} ${b.title}`);
+      const where = b.scope !== "" ? ` ${b.scope}` : "";
+      console.log(dim(`    ${b.topic}${where} — ${b.agent}, ${briefAgo(b.tsMs, now)}`));
+    }
+    console.log(dim(`  Close one by filing the fix: \`cli.ts note "<what fixed it>" --topic <t> --fixes <id>\``));
+  });
+}
+
 /** Asks a peer something, and records that an answer is owed. */
 function ask(target: string, text: string): void {
   withStore(PROJECT.dbPath, (store) => {
@@ -1244,6 +1262,7 @@ function note(args: string[]): void {
   const tags = takeFlag(args, "--tags");
   const kind = takeFlag(args, "--kind");
   const scope = takeFlag(args, "--scope");
+  const fixes = takeFlag(args, "--fixes");
   const title = args.join(" ").trim();
 
   const check = checkNote({
@@ -1278,6 +1297,20 @@ function note(args: string[]): void {
       // legitimate, it just never fires the pre-edit pointer that makes the
       // diary worth writing to.
       console.log(dim("  no --scope, so this will not surface when someone edits a related file"));
+    }
+    if (fixes !== "") {
+      const target = Number(fixes);
+      const bug = Number.isFinite(target) ? store.diary.get(target) : null;
+      // REPORTED, not silent. A `--fixes` that quietly does nothing leaves the
+      // author believing a bug is closed while `bugs` still lists it.
+      if (!bug) console.error(`${red("✗")} --fixes: no entry #${fixes}`);
+      else if (bug.kind !== "error") {
+        console.error(`${red("✗")} --fixes: #${target} is a ${bug.kind}, and only an error can be fixed`);
+      } else if (!store.diary.fix(target, id, now)) {
+        console.error(`${red("✗")} --fixes: #${target} is already fixed`);
+      } else {
+        console.log(`${green("✓")} fixed ${dim(`#${target} ${bug.title}`)}`);
+      }
     }
   });
 }
@@ -1806,6 +1839,12 @@ switch (cmd) {
   case "asks":
     asks();
     break;
+  case "bugs": {
+    const args = [...rest];
+    const scope = takeFlag(args, "--scope");
+    bugs(scope, Number(takeFlag(args, "--limit")) || 20);
+    break;
+  }
   case "link": {
     const args = [...rest];
     const match = takeFlag(args, "--item");

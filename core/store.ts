@@ -496,6 +496,11 @@ function openDb(dbPath: string): Database {
   // Empty for the ordinary item that is not working from a plan, which is most
   // of them -- a required link would be a field agents fill in with noise.
   addColumnIfMissing(db, "work", "plan_doc", "TEXT NOT NULL DEFAULT ''");
+  // Which entry records the fix. Only meaningful on kind='error' -- a finding
+  // is a fact and has no open state, so giving one a "fixed" marker invites an
+  // agent to close a piece of knowledge.
+  addColumnIfMissing(db, "diary", "fixed_by", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(db, "diary", "fixed_ms", "INTEGER NOT NULL DEFAULT 0");
   // AFTER the column exists, never inside `createWorkTables`. `CREATE TABLE IF
   // NOT EXISTS` leaves an existing table alone, so on a live db the table is
   // untouched and a `plan_doc` index declared beside it runs against a column

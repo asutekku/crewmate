@@ -97,6 +97,15 @@ export interface DiaryEntry {
   readonly deprecatedWhy: string;
   /** The entry that replaced this one, or 0. */
   readonly supersededBy: number;
+  /**
+   * The entry recording the fix, or 0 while unfixed.
+   *
+   * Only meaningful on `kind: "error"`. A finding has no open state — it is a
+   * fact, not a task — so `fix` refuses anything else.
+   */
+  readonly fixedBy: number;
+  /** When it was fixed; 0 while open. */
+  readonly fixedMs: number;
 }
 
 export function createDiaryTables(db: Database): void {
@@ -121,7 +130,18 @@ export function createDiaryTables(db: Database): void {
       scope        TEXT NOT NULL DEFAULT '',
       deprecated_ms INTEGER NOT NULL DEFAULT 0,
       deprecated_why TEXT NOT NULL DEFAULT '',
-      superseded_by INTEGER NOT NULL DEFAULT 0
+      superseded_by INTEGER NOT NULL DEFAULT 0,
+      -- WHAT SEPARATES A BUG LIST FROM A LOG: state. A finding is true forever,
+      -- a bug is open until something fixes it. Only kind='error' carries this
+      -- -- a finding has no open state, and offering one invites an agent to
+      -- "close" a piece of knowledge.
+      --
+      -- Deliberately NOT auto-closed from a commit: a quiet commit prints
+      -- nothing, so a sha-triggered close would work sometimes and silently
+      -- miss the rest, and a bug list that closes bugs at random is worse than
+      -- one that closes none.
+      fixed_by     INTEGER NOT NULL DEFAULT 0,
+      fixed_ms     INTEGER NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS diary_topic ON diary (topic, id);
     -- What pre-edit hits on every Edit/Write. Scope first because that is the
@@ -302,7 +322,7 @@ const AUTHOR = `COALESCE(NULLIF((SELECT s.alias FROM sessions s
 
 const COLUMNS = `diary.id, diary.ts_ms, diary.session_id, diary.title, diary.body,
      diary.topic, diary.tags, diary.kind, diary.scope, diary.deprecated_ms,
-     diary.deprecated_why, diary.superseded_by, ${AUTHOR}`;
+     diary.deprecated_why, diary.superseded_by, diary.fixed_by, diary.fixed_ms, ${AUTHOR}`;
 
 function toEntry(r: Record<string, string | number>): DiaryEntry {
   return {
@@ -319,6 +339,8 @@ function toEntry(r: Record<string, string | number>): DiaryEntry {
     deprecatedMs: Number(r["deprecated_ms"]),
     deprecatedWhy: String(r["deprecated_why"]),
     supersededBy: Number(r["superseded_by"]),
+    fixedBy: Number(r["fixed_by"] ?? 0),
+    fixedMs: Number(r["fixed_ms"] ?? 0),
   };
 }
 
@@ -559,6 +581,50 @@ export class DiaryStore {
    * thing an entry can say. The reason here is not a guess: the replacement IS
    * the explanation, and naming it beats leaving the field blank.
    */
+  /**
+   * Marks an error fixed, pointing at the entry that records the fix.
+   *
+   * ONLY AN ERROR CAN BE FIXED. A finding is a fact — "an UPDATE on an
+   * external-content FTS5 table does nothing to the index" stays true after
+   * someone works around it — so a `fixed` marker on one would mean "we have
+   * stopped believing this", which is what `deprecate` is for. Refusing here is
+   * what keeps `bugs` a list of things to do rather than a list of things known.
+   *
+   * The error is NOT deprecated by being fixed. It remains true as history: the
+   * bug was real, and the next reader hitting the same symptom wants to find it
+   * and follow the link to the fix.
+   */
+  fix(id: number, byId: number, nowMs: number): boolean {
+    if (id === byId) return false;
+    const entry = this.get(id);
+    if (entry === null || entry.kind !== "error" || entry.fixedMs > 0) return false;
+    if (byId !== 0 && this.get(byId) === null) return false;
+    const r = this.db
+      .query(`UPDATE diary SET fixed_by = ?, fixed_ms = ? WHERE id = ?`)
+      .run(byId, nowMs, id);
+    return r.changes > 0;
+  }
+
+  /**
+   * Errors nobody has fixed, newest first. Scope-filtered like everything else.
+   *
+   * Deprecated entries are excluded: an error that stopped being true is not an
+   * open bug, it is a mistake in the record.
+   */
+  openBugs(scope = "", limit = 20): DiaryEntry[] {
+    const args: Array<string | number> = [];
+    let clause = `WHERE diary.kind = 'error' AND diary.fixed_ms = 0 AND diary.deprecated_ms = 0`;
+    if (scope !== "") {
+      const candidates = [...scopeCandidates(scope), scope];
+      clause += ` AND diary.scope IN (${candidates.map(() => "?").join(",")})`;
+      args.push(...candidates);
+    }
+    const rows = this.db
+      .query(`SELECT ${COLUMNS} FROM diary ${clause} ORDER BY diary.id DESC LIMIT ?`)
+      .all(...args, limit) as Array<Record<string, string | number>>;
+    return rows.map(toEntry);
+  }
+
   supersede(id: number, byId: number, nowMs: number): boolean {
     if (id === byId) return false;
     const replacement = this.get(byId);
