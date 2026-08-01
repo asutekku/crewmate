@@ -58,7 +58,9 @@ because a glob that resolves to nothing makes the check pass **vacuously**.
 
 ---
 
-## P1 — questions  **[ ]**
+## P1 — questions  **[x]**
+
+*Shipped in the questions commit. Verified on the live roster.*
 
 `msg` is fire-and-forget. When an agent needs to know whether a peer has
 finished with a file, the only move is `msg` and hope; a reply arrives as an
@@ -91,14 +93,16 @@ unanswerable. That path needs a test that runs the expiry, not just stores it.
 may never reply. Questions surface at `UserPromptSubmit` like every other piece
 of peer news.
 
-- [ ] `questions` table + `ask`/`answer`/`asks`
-- [ ] delivery of open questions at prompt-submit, above the unread early-return
-- [ ] expiry against a dead target, with the asker told
-- [ ] test that an expired question is reported, not silently dropped
+- [x] `questions` table + `ask`/`answer`/`asks`
+- [x] delivery of open questions at prompt-submit, above the unread early-return
+- [x] expiry against a dead target, with the asker told
+- [x] test that an expired question is reported, not silently dropped
 
 ---
 
-## P2 — bug state and `--fixes`  **[ ]**
+## P2 — bug state and `--fixes`  **[x]**
+
+*Shipped as `e9497c2`. Verified by closing all four real open bugs.*
 
 The diary is already a bug list: `kind: error` plus `--scope` is a bug report.
 What it lacks is the one field that separates a bug list from a log — **state**.
@@ -124,14 +128,20 @@ list, and this repo has direct evidence of that failure mode. If open state
 exists, something must periodically raise open bugs in scope — the stale-item
 nudge is the working precedent.
 
-- [ ] `state` column, defaulting to `open` only for `kind='error'`
-- [ ] `--fixes <id>` on `note`; `bugs` listing
-- [ ] open bugs in scope surface at edit time alongside findings
-- [ ] test: a `finding` cannot be given a state
+- [x] `state` column, defaulting to `open` only for `kind='error'`
+- [x] `--fixes <id>` on `note`; `bugs` listing
+- [x] open bugs in scope surface at edit time alongside findings
+- [x] test: a `finding` cannot be given a state
 
 ---
 
-## P3 — a work item knows which plan it is executing  **[ ]**
+## P3 — a work item knows which plan it is executing  **[~]**
+
+*The link and `plans` shipped as `4eb260b`. Three items below are NOT built:
+backfill, the git fallback, and the `pre-edit` suggestion — so `plans` today
+shows only what agents have linked by hand, which as of writing is one plan out
+of 82. The adoption risk named at the bottom of this section is therefore live,
+not hypothetical.*
 
 **The user's complaint is the spec:** *"we have shitton of plan files, but I
 have no idea which ones we have acted on, which ones are completed."*
@@ -207,12 +217,12 @@ their author. Two mitigations, both using machinery that already exists:
 `pre-edit` can suggest linking when a plan doc is edited, and the stale nudge
 can ask "is this executing a plan?" once per item.
 
-- [ ] `plan_doc` on `work`; `--plan-doc` on `doing`, and a `link` verb for items already open
-- [ ] `cli.ts plans` — derived, storing nothing
+- [x] `plan_doc` on `work`; `--plan-doc` on `doing`, and a `link` verb for items already open
+- [x] `cli.ts plans` — derived, storing nothing
 - [ ] backfill by filename match; ambiguous stays unlinked
 - [ ] git fallback for unlinked plans
 - [ ] `pre-edit` suggests linking when a plan doc is edited
-- [ ] test: a plan with a linked item and a `landed` sha reports shipped; an unlinked one reports unknown, never abandoned
+- [x] test: a plan with a linked item and a `landed` sha reports shipped; an unlinked one reports unknown, never abandoned
 
 ---
 

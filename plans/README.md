@@ -17,7 +17,7 @@ the least trustworthy file in the repo.**
 |---|---|---|
 | [DIARY_PLAN.md](DIARY_PLAN.md) | shared findings, topics, tags, scopes, FTS | shipped |
 | [WORK_RECORDS_PLAN.md](WORK_RECORDS_PLAN.md) | the work board: items, steps, landed commits, breaks/needs | shipped |
-| [COORDINATION_PLAN.md](COORDINATION_PLAN.md) | generated `--help`, questions, bug state + `--fixes` | P0–P2 pending |
+| [COORDINATION_PLAN.md](COORDINATION_PLAN.md) | generated `--help`, questions, bug state, plan links | P0–P2 shipped, P3 partial |
 | [LINEAGE_PLAN.md](LINEAGE_PLAN.md) | memory that outlives a uuid, disciple naming, handoff | P0–P4 pending |
 | [AFFINITY_PLAN.md](AFFINITY_PLAN.md) | which agents work well together | **deferred — measured, no data** |
 
