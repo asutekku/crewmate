@@ -26,6 +26,7 @@ import { Database } from "bun:sqlite";
 import { ensureBaseDir } from "./repo.ts";
 import { createWorkTables, WorkStore } from "./work.ts";
 import { createDiaryTables, DiaryStore } from "./diary.ts";
+import { createQuestionTables, QuestionStore } from "./questions.ts";
 import { fullName, GIVEN_NAMES, pickName } from "./names.ts";
 import { loadConfig } from "./config.ts";
 
@@ -474,6 +475,7 @@ function openDb(dbPath: string): Database {
   `);
   createWorkTables(db);
   createDiaryTables(db);
+  createQuestionTables(db);
   // `CREATE TABLE IF NOT EXISTS` leaves an EXISTING table alone, so a column
   // added later never reaches a db that is already live — and this db is live
   // state that several running sessions are writing to, not a save file that
@@ -580,6 +582,11 @@ export class Store {
    */
   get diary(): DiaryStore {
     return new DiaryStore(this.db);
+  }
+
+  /** Questions between agents, sharing this connection. */
+  get questions(): QuestionStore {
+    return new QuestionStore(this.db);
   }
 
   /** Sessions seen recently enough to be plausibly alive, oldest first. */

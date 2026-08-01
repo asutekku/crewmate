@@ -45,6 +45,43 @@ const STALE_SHOWN = 3;
  * (The column and setter for this shipped months ago with NO CALLER — the
  * nudge was scaffolded and never wired, which is why the board dangled.)
  */
+/**
+ * Questions owed by this session, and answers owed to it.
+ *
+ * BOTH DIRECTIONS IN ONE PLACE, because they are the two halves of the same
+ * fact. An agent that asked something needs the reply the moment it lands, and
+ * an agent that was asked needs to be told at all — `msg` reaches it eventually
+ * but carries no obligation, which is exactly the gap questions exist to close.
+ *
+ * Resolved answers are DRAINED, so each is shown once. Repeating one every turn
+ * is how a line that mattered becomes a line that gets skipped.
+ */
+function questionLines(
+  store: Parameters<Parameters<typeof withStore>[1]>[0],
+  sessionId: string,
+  nowMs: number,
+): string[] {
+  const lines: string[] = [];
+
+  const resolved = store.questions.drainResolved(sessionId, nowMs);
+  for (const q of resolved) {
+    if (q.answeredMs > 0) lines.push(`${q.targetName} answered: "${q.text}" — ${q.answer}`);
+    // An expiry is reported rather than dropped: "nobody will answer this" is
+    // the actionable half, and silence would leave the asker waiting forever.
+    else lines.push(`No answer coming from ${q.targetName} — "${q.text}" (they went away).`);
+  }
+
+  const owed = store.questions.openFor(sessionId);
+  if (owed.length > 0) {
+    lines.push(`${owed.length} question(s) waiting on you:`);
+    for (const q of owed) {
+      lines.push(`  #${q.id} from ${q.askerName}: ${q.text}`);
+    }
+    lines.push(`  Answer with \`cli.ts answer <id> "<text>"\`, or say why not.`);
+  }
+  return lines;
+}
+
 function staleWorkLines(
   store: Parameters<Parameters<typeof withStore>[1]>[0],
   sessionId: string,
@@ -158,12 +195,16 @@ async function main(): Promise<void> {
     // whether a peer happened to message you — gating it on peer traffic would
     // make the nudge arrive on a schedule set by other agents' chatter.
     const stale = staleWorkLines(store, sessionId, now);
+    // Questions ride the same reasoning: one aimed at you is owed an answer
+    // whether or not anyone else has messaged. Expiry runs first so a question
+    // whose asker has since died is never presented as still worth answering.
+    store.questions.expireStale(now, loadConfig().staleMs);
+    const questionText = questionLines(store, sessionId, now);
 
     const unread = store.drainUnread(sessionId);
     if (unread.length === 0) {
-      return stale.length > 0
-        ? { text: stale.join("\n"), count: 0, stale: stale.length }
-        : null;
+      const quiet = [...stale, ...questionText];
+      return quiet.length > 0 ? { text: quiet.join("\n"), count: 0, stale: stale.length } : null;
     }
 
     // A message is only actionable next to the roster it refers to, so the two
@@ -180,6 +221,7 @@ async function main(): Promise<void> {
     }
     lines.push("", TRUST_NOTE);
     if (stale.length > 0) lines.push("", ...stale);
+    if (questionText.length > 0) lines.push("", ...questionText);
     return { text: lines.join("\n"), count: unread.length, stale: stale.length };
   });
 

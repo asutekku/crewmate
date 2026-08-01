@@ -519,6 +519,9 @@ were invisible.
 | `say <text>` | tell every agent something |
 | `msg <name> "<text>" [--from <name>]` | tell one agent something |
 | `where` | this session's repo, worktree and branch |
+| `ask <name> "<question>"` | ask a peer something and record that a reply is owed |
+| `answer <id> "<answer>"` | answer a question asked of you |
+| `asks` | questions waiting on you, and what you are waiting for |
 | `files <agent> [--hours 24]` | every file an agent has touched, and why |
 | `blame <path>` | who has been in this file, newest first |
 | `quit <name>` | drop a dead session off the roster |
@@ -545,10 +548,10 @@ were invisible.
 
 | Command | Does |
 |---|---|
-| `note "<title>" --topic <t> [--scope <dir>]  |  note <id>` | file a finding for whoever comes next, or read one |
+| `note "<title>" --topic <t> [--scope <dir>]  \|  note <id>` | file a finding for whoever comes next, or read one |
 | `recall <words> [--scope <dir>] [--limit n]` | search findings |
 | `topics` | every topic, with how much is under it |
-| `topic <name> [--limit n]  |  merge <from> <into>` | read one topic, or fold two together |
+| `topic <name> [--limit n]  \|  merge <from> <into>` | read one topic, or fold two together |
 | `tags` | every tag in use |
 | `note-deprecate <id> "<why it stopped being true>"` | mark a finding no longer true, keeping the history |
 | `note-supersede <old-id> <new-id>` | point an old finding at the one that replaced it |
@@ -615,6 +618,7 @@ replaces `bin/` wholesale so a module that moves cannot leave a stale twin.
 | `work.ts`             | The work board's tables, agent key, and the event fold. Its own lifetime rule.      |
 | `board.ts`            | Rendering the board — takes a paint callback, so it is testable without a terminal. |
 | `diary.ts`            | Findings that outlive a session: topics, tags, scopes, FTS5 search.                 |
+| `questions.ts`        | Questions between agents — state, delivery, and expiry against a dead target.       |
 | `personal.ts`         | Per-agent memories, in one db outside any project. `forget` deletes.                |
 | `verbs.ts`            | Every CLI verb in one table; `usage()` and per-verb argument errors render from it. |
 | `names.ts`            | The given-name pool, and the two casers (prose role vs typeable name).              |

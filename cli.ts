@@ -78,6 +78,7 @@ import {
   progress,
 } from "./core/work.ts";
 import { validateAlias, validateRole } from "./core/topic.ts";
+import { loadConfig } from "./core/config.ts";
 import { minionName } from "./core/names.ts";
 import { usage, usageFor } from "./core/verbs.ts";
 import { checkNote, nearTopic, parseTags } from "./core/diary.ts";
@@ -782,6 +783,83 @@ function doing(subject: string, plan: string, planDoc = ""): void {
     }
     if (linkPath !== "") console.log(dim(`    executing ${linkPath}`));
     console.log(dim(`  Peers see it with \`cli.ts board\`. Close it with \`cli.ts done\`.`));
+  });
+}
+
+/** Asks a peer something, and records that an answer is owed. */
+function ask(target: string, text: string): void {
+  withStore(PROJECT.dbPath, (store) => {
+    const now = Date.now();
+    const me = callerIdentity(store);
+    if (!me) return notAnAgent("`ask`");
+    const to = store.findByName(target, now);
+    if (!to) {
+      console.error(`no agent matching "${target}".`);
+      for (const s of store.liveSessions(now)) console.error(dim(`  ${displayName(s)}`));
+      process.exitCode = 1;
+      return;
+    }
+    if (to.sessionId === ENV_SESSION) {
+      // Cheap to allow and confusing to read: an agent answering itself puts a
+      // question on its own board that only it can clear.
+      console.error("that is you — ask a peer.");
+      process.exitCode = 1;
+      return;
+    }
+    const id = store.questions.ask(ENV_SESSION, me.agentName, to.sessionId, displayName(to), text, now);
+    console.log(`${cyan("?")} asked ${bold(displayName(to))} ${dim(`— question #${id}`)}`);
+    console.log(dim("  They see it at their next turn. Nothing waits for a reply."));
+  });
+}
+
+/** Answers a question aimed at this session. */
+function answerQuestion(idRaw: string, text: string): void {
+  withStore(PROJECT.dbPath, (store) => {
+    const id = Number(idRaw);
+    if (!Number.isFinite(id) || id <= 0) {
+      console.error(usageFor("answer"));
+      process.exitCode = 1;
+      return;
+    }
+    const q = store.questions.get(id);
+    if (!q) {
+      console.error(`no question #${id}`);
+      process.exitCode = 1;
+      return;
+    }
+    if (q.targetSession !== ENV_SESSION) {
+      console.error(`question #${id} was asked of ${q.targetName || "someone else"}.`);
+      process.exitCode = 1;
+      return;
+    }
+    if (!store.questions.answer(id, text, Date.now())) {
+      console.error(`question #${id} is already answered.`);
+      process.exitCode = 1;
+      return;
+    }
+    console.log(`${green("✓")} answered ${bold(q.askerName || "the asker")}`);
+  });
+}
+
+/** Open questions on this session, and what it is still waiting to hear back on. */
+function asks(): void {
+  withStore(PROJECT.dbPath, (store) => {
+    const now = Date.now();
+    store.questions.expireStale(now, loadConfig().staleMs);
+    const mine = store.questions.openFor(ENV_SESSION);
+    const waiting = store.questions.pendingFrom(ENV_SESSION);
+    if (mine.length === 0 && waiting.length === 0) {
+      console.log(dim("No open questions."));
+      return;
+    }
+    for (const q of mine) {
+      console.log(`${cyan("?")} ${bold(`#${q.id}`)} from ${q.askerName} ${dim(briefAgo(q.askedMs, now))}`);
+      for (const line of wrap(q.text, Math.max(40, terminalWidth() - 6))) console.log(`    ${line}`);
+      console.log(dim(`    cli.ts answer ${q.id} "<your answer>"`));
+    }
+    for (const q of waiting) {
+      console.log(dim(`… #${q.id} to ${q.targetName}: ${q.text}`));
+    }
   });
 }
 
@@ -1705,6 +1783,29 @@ switch (cmd) {
     board(args.join(" ").trim(), { history, all, raw });
     break;
   }
+  case "ask": {
+    const [target, ...words] = rest;
+    const text = words.join(" ").trim();
+    if (!target || !text) {
+      console.error(usageFor("ask"));
+      process.exit(1);
+    }
+    ask(target, text);
+    break;
+  }
+  case "answer": {
+    const [id, ...words] = rest;
+    const text = words.join(" ").trim();
+    if (!id || !text) {
+      console.error(usageFor("answer"));
+      process.exit(1);
+    }
+    answerQuestion(id, text);
+    break;
+  }
+  case "asks":
+    asks();
+    break;
   case "link": {
     const args = [...rest];
     const match = takeFlag(args, "--item");
