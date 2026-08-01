@@ -21,7 +21,7 @@ bun .claude/hooks/presence/install.ts --force   # re-register hooks
 bun .claude/hooks/presence/install.ts --remove  # uninstall
 ```
 
-Copies the scripts to `~/.claude/agent-presence/bin/` and registers 13 hooks in
+Copies the scripts to `~/.claude/agent-presence/bin/` and registers 15 hooks in
 `~/.claude/settings.json` (backing it up first, and merging rather than
 replacing — your other settings are untouched). **Restart your sessions**
 afterwards; hooks are read at session start.
@@ -102,19 +102,19 @@ the real session name, the fallback handle, or a unique prefix.
 
 ### When a message actually lands
 
-| Recipient is | Arrives |
-|---|---|
+| Recipient is          | Arrives                                              |
+| --------------------- | ---------------------------------------------------- |
 | mid-turn, using tools | **between tool batches** (`PostToolBatch`) — seconds |
-| ending a turn | at `Stop`, but **only if addressed to it** |
-| at a prompt | on its next `UserPromptSubmit` |
-| idle at a prompt | not until the human prompts it |
+| ending a turn         | at `Stop`, but **only if addressed to it**           |
+| at a prompt           | on its next `UserPromptSubmit`                       |
+| idle at a prompt      | not until the human prompts it                       |
 
 `PostToolBatch` is what makes this usable: a busy agent — the one actually
 editing files — picks up "waterSim.ts is mine" within seconds instead of at the
 end of a 20-minute run.
 
-**Stop delivery is deliberately narrow.** Injecting at `Stop` *continues the
-turn* (HOOKS.MD: "The conversation continues so Claude can act on it"), under the
+**Stop delivery is deliberately narrow.** Injecting at `Stop` _continues the
+turn_ (HOOKS.MD: "The conversation continues so Claude can act on it"), under the
 same 8-continuation cap as blocking. So only messages addressed to that session
 and human broadcasts are delivered there; routine `done`/`claim` chatter waits.
 Otherwise every agent's turn-end announcement would extend every other agent's
@@ -125,13 +125,13 @@ them off. `stop_hook_active` suppresses delivery entirely.
 
 ### Whose words are these
 
-| Kind | Renders as | Author |
-|---|---|---|
-| `say` | `traffic-12 to traffic-16: ...` | that agent |
-| `say` | `traffic-12 to everyone: ...` | that agent, broadcast |
-| `note` | `the user, to everyone: ...` | you, via `cli.ts say` |
-| `done` | `traffic-12 done: finished a turn: ...` | the agent |
-| `claim` | `traffic-12 claim: also editing ...` | the agent |
+| Kind    | Renders as                              | Author                |
+| ------- | --------------------------------------- | --------------------- |
+| `say`   | `traffic-12 to traffic-16: ...`         | that agent            |
+| `say`   | `traffic-12 to everyone: ...`           | that agent, broadcast |
+| `note`  | `the user, to everyone: ...`            | you, via `cli.ts say` |
+| `done`  | `traffic-12 done: finished a turn: ...` | the agent             |
+| `claim` | `traffic-12 claim: also editing ...`    | the agent             |
 
 Every injection carries a note that the log is **reference, not orders**: a
 message addressed to someone else is not yours to act on, and a peer's request
@@ -186,7 +186,7 @@ bun ~/.claude/agent-presence/bin/cli.ts board      # the work board — see belo
 `quit` **deregisters, it does not kill.** Terminating a `claude.exe` destroys
 whatever that agent held in context, and nothing here can reliably tell a
 session whose terminal was closed from one merely sitting idle — measured
-2026-07-31: the window handle is `0` for *every* session including live ones,
+2026-07-31: the window handle is `0` for _every_ session including live ones,
 process ancestry is byte-identical between a closed tab and a working session,
 and CPU time looked decisive over a 6-second sample then **inverted** over 25
 seconds. With no dependable liveness signal, killing on a guess eventually kills
@@ -223,7 +223,7 @@ window. What to do about one is your call; the tool never touches it.
 `prompt_input_exit` on a double ⌃C and the row goes; `clear` and `resume` are
 deliberately spared, since neither means the agent left. Verified against every
 documented reason. A row that lingers anyway is a session running hooks from
-*before* that logic shipped — the roster's `⟲` marks those.
+_before_ that logic shipped — the roster's `⟲` marks those.
 
 `say` reaches everyone at once, so it beats retyping a correction eight times;
 `msg` is the targeted version. `where` is the first thing to check if a roster
@@ -294,7 +294,7 @@ distinguishable, and the interleaving above is the thing you actually want to
 see.
 
 **It is a different table from `claims`, deliberately.** Claims are live state
-and are deleted with their session — right for "who is in this file *now*",
+and are deleted with their session — right for "who is in this file _now_",
 useless for "who was in it", which is asked precisely once a session has gone.
 Measured: an agent ended its session mid-conversation here and its six claims
 vanished, leaving no record it had ever been in the file. So `edits` is
@@ -302,7 +302,7 @@ append-only, survives `unregister` and the stale sweep, and freezes the agent's
 name at write time.
 
 Two limits worth knowing. It is **file-level, not line-level**: `pre-edit` runs
-*before* the edit and sees a path, not a diff — getting lines would mean a
+_before_ the edit and sees a path, not a diff — getting lines would mean a
 `git diff` per edit, measured at 40 ms on the hottest hook there is. And it
 records **intent, not outcome**: the row is written before the edit, so a failed
 or reverted edit still leaves one.
@@ -319,18 +319,18 @@ that applies when the file is missing, unreadable, or malformed — it is read o
 hook paths, so a typo must degrade rather than take a session's edit with it,
 and defaults apply **per field** so one bad line cannot revert the rest.
 
-| Key | Default | What it bounds |
-|---|---|---|
-| `staleMs` | 90 min | a session with no heartbeat is treated as gone |
-| `claimTtlMs` | 2 h | how long a claim means "I am working on this" |
-| `claimReannounceMs` | 30 min | how long an overlap announcement stays "already said" |
-| `nameReuseMs` | 60 h | how long a given name is held after last use |
-| `workKeepMs` | 7 days | how long a **closed** work record is kept |
-| `editKeepMs` | 30 days | how long edit history is kept |
+| Key                 | Default | What it bounds                                        |
+| ------------------- | ------- | ----------------------------------------------------- |
+| `staleMs`           | 90 min  | a session with no heartbeat is treated as gone        |
+| `claimTtlMs`        | 2 h     | how long a claim means "I am working on this"         |
+| `claimReannounceMs` | 30 min  | how long an overlap announcement stays "already said" |
+| `nameReuseMs`       | 60 h    | how long a given name is held after last use          |
+| `workKeepMs`        | 7 days  | how long a **closed** work record is kept             |
+| `editKeepMs`        | 30 days | how long edit history is kept                         |
 
 `editKeepMs` is the longest because it is the only one answering a question about
 the past. There is no "off": an append-only table on a repo with 36 worktrees is
-how this gets slow, and the honest knob is *how long*, not *whether*.
+how this gets slow, and the honest knob is _how long_, not _whether_.
 
 ## The work board
 
@@ -394,7 +394,7 @@ substring picks another (`cli.ts done sliver`).
 
 `--plan` can be omitted. An item with no steps is a legitimate end state, not a
 half-filled form — the agent judges whether the work has phases worth tracking,
-and quick checks do not need one. Whether a checklist *exists* then becomes a
+and quick checks do not need one. Whether a checklist _exists_ then becomes a
 real signal: it is what will gate the planned idle check, so an agent doing a
 five-minute fix can never be nagged about a plan it never wrote.
 
@@ -427,7 +427,7 @@ later ("who moved the baselines?").
 
 Work is keyed on the **session id**, and that is not the tautology it looks like.
 `CLAUDE_CODE_SESSION_ID` is **not a per-process label** — it is the
-*conversation* uuid: the transcript's own filename, and the id
+_conversation_ uuid: the transcript's own filename, and the id
 `claude --resume <uuid>` takes.
 
 Measured 2026-07-31 on this tool's own conversation. The terminal was restarted
@@ -435,7 +435,7 @@ mid-session; Claude Code's display name moved `traffic-a0` → `traffic-7c`, and
 the session id stayed `c5ce05bc-…` throughout. **The roster row was never
 replaced, only relabelled.**
 
-An earlier version keyed on the conversation *title*, on the assumption that a
+An earlier version keyed on the conversation _title_, on the assumption that a
 restart issued a fresh session id. It does not, and the title was strictly worse
 on two counts: it is model-written and gets **rewritten as a conversation
 develops**, so renaming one silently orphaned every record filed under the old
@@ -452,7 +452,7 @@ drawn from a pool of 280 and held for 60 hours after it was last seen. That is
 what peers type (`msg luna`), and it is stated to the agent at session start,
 because a name nobody is told is just a database column.
 
-Beside it sits a **role**: what the agent is *for*.
+Beside it sits a **role**: what the agent is _for_.
 
 ```
 Luna — Tooling Master       Vega — Keeper of Wet Things       Rowan — Terrain Whisperer
@@ -464,8 +464,8 @@ cli.ts call-me  tooling            # a different name, if the assigned one won't
 cli.ts call-you "…" --agent luna   # the operator setting either, for any agent
 ```
 
-**Two fields, because they want opposite things.** A name is *typed*: short,
-unique, no spaces to quote. A role is *read*: evocative, several words, free to
+**Two fields, because they want opposite things.** A name is _typed_: short,
+unique, no spaces to quote. A role is _read_: evocative, several words, free to
 change. Collapsing them forces `msg "Luna — Tooling Master"`, which is miserable to
 type and breaks the quoting rules names are validated against.
 
@@ -474,7 +474,7 @@ becoming `Luna — Tooling Intern` reads as a demotion rather than as a stranger
 appearing on the roster. Roles need not be unique: two agents can share a job
 title the way two people can, and only the name has to identify.
 
-**Why the given name outranks Claude Code's `traffic-XX`.** That label *moves* —
+**Why the given name outranks Claude Code's `traffic-XX`.** That label _moves_ —
 this tool's own conversation was relabelled `traffic-a0` → `traffic-7c` →
 `traffic-56` in one afternoon, which made every frozen log line and every peer
 reference a moving target. A given name is assigned once. `traffic-XX` is still
@@ -487,7 +487,7 @@ warnings, and the sender frozen into every message. The three-word form is
 **It survives a restart.** The name is remembered against the conversation uuid,
 both when it is chosen and again when `SessionEnd` fires, so it comes back
 whether the terminal was closed politely or killed. A name that only survived a
-*clean* exit would be the wrong way round.
+_clean_ exit would be the wrong way round.
 
 Three rules, each protecting something specific:
 
@@ -502,6 +502,71 @@ Three rules, each protecting something specific:
   roster row. Whitespace is collapsed rather than refused, so a name pasted with
   a trailing newline is cleaned instead of rejected.
 
+## Commands
+
+`cli.ts help` prints this list. It is generated from the verb table in
+`core/verbs.ts`, and `test/verbs.test.ts` fails if a verb is dispatched without
+appearing there — the usage string had drifted to 13 of 33 verbs before that
+test existed, which for a tool agents discover at runtime means the other 20
+were invisible.
+
+### Who is here
+
+| Command | Does |
+|---|---|
+| `who [--raw]` | the roster: who is live, on what, where |
+| `log [n] [--raw]` | recent messages from every agent |
+| `say <text>` | tell every agent something |
+| `msg <name> "<text>" [--from <name>]` | tell one agent something |
+| `where` | this session's repo, worktree and branch |
+| `files <agent> [--hours 24]` | every file an agent has touched, and why |
+| `blame <path>` | who has been in this file, newest first |
+| `quit <name>` | drop a dead session off the roster |
+| `clear` | wipe the roster and message log |
+| `help` | this list |
+
+### What you are doing
+
+| Command | Does |
+|---|---|
+| `doing "<subject>" [--plan "a; b; c"]` | open a work item; --plan is optional |
+| `did <n> ["<what changed>"] [--item <match>]` | tick a step off, with what actually changed |
+| `step <n> "<status>" [--item <match>]` | note progress on a step without closing it |
+| `add "<step>" [--item <match>]` | a phase the plan missed |
+| `done [<subject match>] [--abandoned]` | close ONE item; --abandoned is the honest exit |
+| `board [<agent>] [--history] [--all]` | what everyone is doing |
+| `mine` | my open items |
+| `breaks "<what>" [--item <match>]` | record a breaking change; tells agents in the same files |
+| `needs "<what>" [--item <match>]` | record what you are blocked on, and tell them |
+
+### Findings that outlive the session
+
+| Command | Does |
+|---|---|
+| `note "<title>" --topic <t> [--scope <dir>]  |  note <id>` | file a finding for whoever comes next, or read one |
+| `recall <words> [--scope <dir>] [--limit n]` | search findings |
+| `topics` | every topic, with how much is under it |
+| `topic <name> [--limit n]  |  merge <from> <into>` | read one topic, or fold two together |
+| `tags` | every tag in use |
+| `note-deprecate <id> "<why it stopped being true>"` | mark a finding no longer true, keeping the history |
+| `note-supersede <old-id> <new-id>` | point an old finding at the one that replaced it |
+| `diary check` | findings that look stale, thin or duplicated |
+
+### What you remember about the user
+
+| Command | Does |
+|---|---|
+| `remember "<title>" [--body "<detail>"] [--tags a,b] [--global]` | keep something about the user across sessions |
+| `about-me [--all]` | what you have kept |
+| `forget <id>` | drop a memory outright -- a wrong one must not outlive you |
+
+### Names and roles
+
+| Command | Does |
+|---|---|
+| `call-me <name> [--agent <who>]` | take a different name; peers type it at msg |
+| `call-you "<role>" [--agent <who>]` | say what you ARE: Keeper of Wet Things |
+
 ## Files
 
 Three folders by role: `hooks/` is the event surface, `core/` is everything they
@@ -514,51 +579,59 @@ replaces `bin/` wholesale so a module that moves cannot leave a stale twin.
 
 ### `hooks/` — one file per event, each fails open
 
-| File | Event |
-|---|---|
-| `session-start.ts` | **SessionStart** — register; inject the roster. |
-| `prompt-submit.ts` | **UserPromptSubmit** — heartbeat; deliver unread; record the stated task. |
-| `pre-edit.ts` | **PreToolUse** — claim the path; warn on peer overlap. |
-| `tool-batch.ts` | **PostToolBatch** — mid-turn delivery. |
-| `turn-end.ts` | **Stop** — publish the turn's files; deliver directed mail. |
-| `turn-failed.ts` | **StopFailure** — a dead turn stops reading as "still working". |
-| `notify.ts` | **Notification** — records "waiting for permission". |
-| `subagent-start.ts` | **SubagentStart** — tells a subagent what peers hold. |
-| `compacted.ts` | **PostCompact** — refreshes intent from the compaction summary. |
-| `cwd-changed.ts` | **CwdChanged** — keeps worktree/branch true after a `cd`. |
-| `task-changed.ts` | **TaskCreated/Completed** — mirrors per-session tasks to a shared board. |
-| `session-end.ts` | **SessionEnd** — deregister on clean exit. |
+| File                | Event                                                                     |
+| ------------------- | ------------------------------------------------------------------------- |
+| `session-start.ts`  | **SessionStart** — register; inject the roster.                           |
+| `prompt-submit.ts`  | **UserPromptSubmit** — heartbeat; deliver unread; record the stated task. |
+| `pre-edit.ts`       | **PreToolUse** — claim the path; warn on peer overlap.                    |
+| `tool-batch.ts`     | **PostToolBatch** — mid-turn delivery.                                    |
+| `turn-end.ts`       | **Stop** — publish the turn's files; deliver directed mail.               |
+| `turn-failed.ts`    | **StopFailure** — a dead turn stops reading as "still working".           |
+| `notify.ts`         | **Notification** — records "waiting for permission".                      |
+| `subagent-start.ts` | **SubagentStart** — tells a subagent what peers hold.                     |
+| `subagent-stop.ts`  | **SubagentStop** — closes the minion out, so the count is live.          |
+| `commit-landed.ts`  | **PostToolUse(Bash)** — reads git's own output; records the sha.         |
+| `compacted.ts`      | **PostCompact** — refreshes intent from the compaction summary.           |
+| `cwd-changed.ts`    | **CwdChanged** — keeps worktree/branch true after a `cd`.                 |
+| `task-changed.ts`   | **TaskCreated/Completed** — mirrors per-session tasks to a shared board.  |
+| `session-end.ts`    | **SessionEnd** — deregister on clean exit.                                |
 
 ### `core/` — shared by every hook and the CLI
 
-| File | Role |
-|---|---|
-| `store.ts` | SQLite schema + all state access. The only file that knows SQL. |
-| `repo.ts` | Project identity, worktree, db path (cached — a `git rev-parse` costs 31 ms). |
-| `shared.ts` | Payload reading, report formatting, `emit`. |
-| `topic.ts` | Lossy, credential-rejecting text → one-line roster label. |
-| `colour.ts` | ANSI for the CLI only. Never reaches an agent's context. |
-| `agents.ts` | Reads `claude agents --json` for real names + idle/busy. |
-| `transcript.ts` | Bounded tail read of a session's own JSONL — conversation title, recent prose. |
-| `summary.ts` | Prompts Haiku for a "what is it doing now" line; spawns, never waits. |
-| `summarize-worker.ts` | The detached process that call runs in, so no hook ever blocks on it. |
-| `layout.ts` | Roster layout arithmetic — widths, file summarising, background processes. |
-| `work.ts` | The work board's tables, agent key, and the event fold. Its own lifetime rule. |
-| `board.ts` | Rendering the board — takes a paint callback, so it is testable without a terminal. |
+| File                  | Role                                                                                |
+| --------------------- | ----------------------------------------------------------------------------------- |
+| `store.ts`            | SQLite schema + all state access. The only file that knows SQL.                     |
+| `repo.ts`             | Project identity, worktree, db path (cached — a `git rev-parse` costs 31 ms).       |
+| `shared.ts`           | Payload reading, report formatting, `emit`.                                         |
+| `topic.ts`            | Lossy, credential-rejecting text → one-line roster label.                           |
+| `colour.ts`           | ANSI for the CLI only. Never reaches an agent's context.                            |
+| `agents.ts`           | Reads `claude agents --json` for real names + idle/busy.                            |
+| `transcript.ts`       | Bounded tail read of a session's own JSONL — conversation title, recent prose.      |
+| `summary.ts`          | Prompts Haiku for a "what is it doing now" line; spawns, never waits.               |
+| `summarize-worker.ts` | The detached process that call runs in, so no hook ever blocks on it.               |
+| `layout.ts`           | Roster layout arithmetic — widths, file summarising, background processes.          |
+| `work.ts`             | The work board's tables, agent key, and the event fold. Its own lifetime rule.      |
+| `board.ts`            | Rendering the board — takes a paint callback, so it is testable without a terminal. |
+| `diary.ts`            | Findings that outlive a session: topics, tags, scopes, FTS5 search.                 |
+| `personal.ts`         | Per-agent memories, in one db outside any project. `forget` deletes.                |
+| `verbs.ts`            | Every CLI verb in one table; `usage()` and per-verb argument errors render from it. |
+| `names.ts`            | The given-name pool, and the two casers (prose role vs typeable name).              |
+| `dirty.ts`            | Uncommitted files, for the roster's "what is in flight" line.                       |
+| `config.ts`           | Tunables — staleness windows, how much of the board to show.                        |
 
 ### Top level
 
-| File | Role |
-|---|---|
-| `cli.ts` | Human inspection + broadcast + the work board. |
-| `install.ts` | Copy to `~/.claude/agent-presence/bin/`, register hooks. |
-| `test/store.test.ts` | Delivery + identity, against a real throwaway db. |
-| `test/topic.test.ts` | What may become a roster label, and what may not. |
-| `test/roster.test.ts` | Roster layout, asserted with colour codes stripped. |
-| `test/layout.test.ts` | Width arithmetic and path classification. |
-| `test/transcript.test.ts` | Tail reads of real transcript shapes. |
-| `test/work.test.ts` | The timeline property, and several items open at once. |
-| `test/board.test.ts` | Board rendering — widths measured on UNPAINTED text. |
+| File                      | Role                                                     |
+| ------------------------- | -------------------------------------------------------- |
+| `cli.ts`                  | Human inspection + broadcast + the work board.           |
+| `install.ts`              | Copy to `~/.claude/agent-presence/bin/`, register hooks. |
+| `test/store.test.ts`      | Delivery + identity, against a real throwaway db.        |
+| `test/topic.test.ts`      | What may become a roster label, and what may not.        |
+| `test/roster.test.ts`     | Roster layout, asserted with colour codes stripped.      |
+| `test/layout.test.ts`     | Width arithmetic and path classification.                |
+| `test/transcript.test.ts` | Tail reads of real transcript shapes.                    |
+| `test/work.test.ts`       | The timeline property, and several items open at once.   |
+| `test/board.test.ts`      | Board rendering — widths measured on UNPAINTED text.     |
 
 ## Tests
 
@@ -575,7 +648,7 @@ exiting 0 having done nothing. The scoped config caught a real error the first
 time it ran.
 
 **`PRESENCE_TEST_DB` redirects every hook to a throwaway db, and anything that
-runs a hook must set it.** Testing a hook means *running* it, and running it
+runs a hook must set it.** Testing a hook means _running_ it, and running it
 writes to whatever db it resolves — so a test payload lands in the live roster
 as a real session with real claims and real log lines. That happened on
 2026-07-31: probe sessions left 26 junk messages and a false contested-file
@@ -612,7 +685,7 @@ nothing is blocked, but the failure is findable. Two consequences worth knowing:
   fails. Run the deployed script against a real payload and read stderr.
 
 Only the twelve hook entry points report. `agents.ts`, `store.ts` and
-`install.ts` catch *expected* failures on constantly-running paths (a missing
+`install.ts` catch _expected_ failures on constantly-running paths (a missing
 settings file, a locked db) where reporting would be noise, not signal.
 
 ## Design notes
@@ -671,13 +744,13 @@ session in a loop nobody asked for.
 
 Hooks are synchronous — every one blocks its agent. Measured 2026-07-31:
 
-| Path | Cost | Frequency |
-|---|---|---|
-| bare Bun startup | **52 ms** | the floor for every hook |
-| `PostToolBatch`, nothing to deliver | **76 ms** | after each tool batch |
-| `SessionStart` (samples `claude agents --json`) | ~1 s | once per session |
-| reading the transcript title | **0.4 ms** | per prompt |
-| everything else | ~72 ms | rare (per turn, per `cd`, per failure) |
+| Path                                            | Cost       | Frequency                              |
+| ----------------------------------------------- | ---------- | -------------------------------------- |
+| bare Bun startup                                | **52 ms**  | the floor for every hook               |
+| `PostToolBatch`, nothing to deliver             | **76 ms**  | after each tool batch                  |
+| `SessionStart` (samples `claude agents --json`) | ~1 s       | once per session                       |
+| reading the transcript title                    | **0.4 ms** | per prompt                             |
+| everything else                                 | ~72 ms     | rare (per turn, per `cd`, per failure) |
 
 `PostToolBatch` is the only one on a hot path: ~0.3 s per turn over 5 batches,
 ~2.2 s over 30. Acceptable beside this repo's 7 s-per-edit typecheck hook, but
@@ -695,7 +768,7 @@ measured across 25 real transcripts, the largest 25 MB.
 **The summariser's own `claude -p` is a real session**, so it fires SessionStart
 and UserPromptSubmit like any other and registered itself as a peer — five
 refreshes put five agents on the roster whose stated task was the summariser's
-prompt, *"You label background jobs."* They held handles and could have raised
+prompt, _"You label background jobs."_ They held handles and could have raised
 overlap warnings against genuine work. Every hook now exits silently when
 `PRESENCE_INTERNAL=1`, checked in `readPayload` so the guard sits at one seam
 rather than in twelve entry points.
@@ -716,7 +789,7 @@ the title half is free and independent.
 ## Known limits
 
 - **Nothing wakes an idle session.** A session sitting at a prompt runs no hooks.
-  `PostToolBatch` closes the gap for a *busy* agent — the one actually editing —
+  `PostToolBatch` closes the gap for a _busy_ agent — the one actually editing —
   but an idle peer reads its mail whenever you next prompt it.
 - **Claims are per-path, not per-region.** Two agents in different functions of
   one large file still read as an overlap.
@@ -727,12 +800,12 @@ the title half is free and independent.
   the FIRST such prompt, so the column described what a session was asked once
   rather than what it is doing. Across four live sessions that rule produced one
   agent frozen on its opening question while working on something else, one
-  frozen on an *answer it had given*, and two blank — nothing current. A stale
+  frozen on an _answer it had given_, and two blank — nothing current. A stale
   label is worse than a moving one, because a peer reads the roster to decide
   whether to interrupt.
 
   Prompts that are pure filler — "Lovely, start working on it." — set nothing,
-  because a *resumed* session's opening prompt is usually an acknowledgement of
+  because a _resumed_ session's opening prompt is usually an acknowledgement of
   a conversation the roster never saw. With three live sessions on 2026-07-31 all
   three stated tasks were exactly that shape, so the roster's headline column
   described nothing.
@@ -742,8 +815,9 @@ the title half is free and independent.
   a session's "stated task". A session with no stated task shows **nothing** in
   that column — the `editing` line beneath already names its files, and a summary
   there would be a strict subset of the detail directly below it.
+
 - **A session's worktree is corrected from the cwd of each edit**, not trusted
-  from session start. `SessionStart`'s cwd is where the session was *launched*
+  from session start. `SessionStart`'s cwd is where the session was _launched_
   and `CwdChanged` only fires on an actual `cd`, so an agent working in a
   worktree it did not cd into was recorded in the main tree indefinitely.
   Observed 2026-07-31: a session editing files that exist **only** in
@@ -767,8 +841,17 @@ the title half is free and independent.
 
 ## Planned
 
-- **[WORK_RECORDS_PLAN.md](WORK_RECORDS_PLAN.md)** — a shared board of what each
-  agent is doing, planning and breaking, as an append-only timeline. Nothing
-  implemented. Motivated by measurement: agents already write status reports, as
-  broadcasts with a median length of 681 characters, 15 of the last 40 over
-  1000 — while the `tasks` board built for exactly this has 0 rows.
+Plans live in **[plans/](plans/)** — see [plans/README.md](plans/README.md) for
+the index and the reading order.
+
+| Plan | Covers | Status |
+|---|---|---|
+| [DIARY_PLAN.md](plans/DIARY_PLAN.md) | shared findings, topics, tags, scopes, FTS | shipped |
+| [WORK_RECORDS_PLAN.md](plans/WORK_RECORDS_PLAN.md) | the work board, landed commits, breaks/needs | shipped |
+| [COORDINATION_PLAN.md](plans/COORDINATION_PLAN.md) | generated `--help`, questions, bug state + `--fixes` | P0 done, P1–P2 pending |
+| [LINEAGE_PLAN.md](plans/LINEAGE_PLAN.md) | memory that outlives a uuid, disciple naming, handoff | pending |
+| [AFFINITY_PLAN.md](plans/AFFINITY_PLAN.md) | which agents work well together | deferred — measured, no data |
+
+A plan's checkboxes are re-measured **against the code**, never against what the
+plan last said about itself. `WORK_RECORDS_PLAN.md` once carried four
+`[x] IMPLEMENTED` markers for phases nobody had written.

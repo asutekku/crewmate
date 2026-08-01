@@ -72,6 +72,7 @@ import {
 import { agentKey, BOARD_OPEN_SHOWN, foldEvents, parsePlan, progress } from "./core/work.ts";
 import { validateAlias, validateRole } from "./core/topic.ts";
 import { minionName } from "./core/names.ts";
+import { usage, usageFor } from "./core/verbs.ts";
 import { checkNote, nearTopic, parseTags } from "./core/diary.ts";
 import { checkMemory, withPersonal } from "./core/personal.ts";
 import type { DiaryEntry, DiaryKind } from "./core/diary.ts";
@@ -1314,7 +1315,7 @@ function flagWork(kind: "breaks" | "needs", text: string, match: string): void {
 function deprecateNote(idRaw: string, why: string): void {
   const id = Number(idRaw);
   if (!Number.isFinite(id) || id <= 0 || why.trim() === "") {
-    console.error('usage: cli.ts note-deprecate <id> "<why it stopped being true>"');
+    console.error(usageFor("note-deprecate"));
     console.error(dim("  The reason is required — it is usually worth more than the claim was."));
     process.exitCode = 1;
     return;
@@ -1352,7 +1353,7 @@ function supersedeNote(idRaw: string, byRaw: string): void {
   const id = Number(idRaw);
   const by = Number(byRaw);
   if (!Number.isFinite(id) || !Number.isFinite(by) || id <= 0 || by <= 0) {
-    console.error("usage: cli.ts note-supersede <old-id> <new-id>");
+    console.error(usageFor("note-supersede"));
     process.exitCode = 1;
     return;
   }
@@ -1509,7 +1510,7 @@ function aboutMe(args: string[]): void {
 function forget(idRaw: string): void {
   const id = Number(idRaw);
   if (!Number.isFinite(id) || id <= 0) {
-    console.error("usage: cli.ts forget <id>");
+    console.error(usageFor("forget"));
     process.exitCode = 1;
     return;
   }
@@ -1538,7 +1539,7 @@ switch (cmd) {
   case "say": {
     const text = rest.join(" ").trim();
     if (!text) {
-      console.error("usage: cli.ts say <text>");
+      console.error(usageFor("say"));
       process.exit(1);
     }
     say(text);
@@ -1556,7 +1557,7 @@ switch (cmd) {
     const target = args.shift();
     const text = args.join(" ").trim();
     if (!target || !text) {
-      console.error('usage: cli.ts msg <name> "<text>" [--from <name>]');
+      console.error(usageFor("msg"));
       process.exit(1);
     }
     msg(target, text, from);
@@ -1565,7 +1566,7 @@ switch (cmd) {
   case "quit": {
     const target = rest[0];
     if (!target) {
-      console.error("usage: cli.ts quit <name>");
+      console.error(usageFor("quit"));
       process.exit(1);
     }
     quit(target);
@@ -1583,7 +1584,7 @@ switch (cmd) {
     }
     const subject = args.join(" ").trim();
     if (!subject) {
-      console.error('usage: cli.ts doing "<subject>" [--plan "step a; step b; step c"]');
+      console.error(usageFor("doing"));
       process.exit(1);
     }
     doing(subject, plan);
@@ -1594,7 +1595,7 @@ switch (cmd) {
     const n = Number(args.shift());
     const match = takeFlag(args, "--item");
     if (!Number.isInteger(n) || n < 1) {
-      console.error('usage: cli.ts did <n> ["<what changed>"] [--item <subject match>]');
+      console.error(usageFor("did"));
       process.exit(1);
     }
     did(n, args.join(" ").trim(), match);
@@ -1606,7 +1607,7 @@ switch (cmd) {
     const match = takeFlag(args, "--item");
     const status = args.join(" ").trim();
     if (!Number.isInteger(n) || n < 1 || !status) {
-      console.error('usage: cli.ts step <n> "<status>" [--item <subject match>]');
+      console.error(usageFor("step"));
       process.exit(1);
     }
     step(n, status, match);
@@ -1617,7 +1618,7 @@ switch (cmd) {
     const match = takeFlag(args, "--item");
     const text = args.join(" ").trim();
     if (!text) {
-      console.error('usage: cli.ts add "<step>" [--item <subject match>]');
+      console.error(usageFor("add"));
       process.exit(1);
     }
     addStep(text, match);
@@ -1651,7 +1652,7 @@ switch (cmd) {
     const target = takeFlag(args, "--agent");
     const name = args.join(" ").trim();
     if (!name) {
-      console.error("usage: cli.ts call-me <name> [--agent <who>]");
+      console.error(usageFor("call-me"));
       process.exit(1);
     }
     callMe(name, target);
@@ -1662,7 +1663,7 @@ switch (cmd) {
     const hours = Number(takeFlag(args, "--hours")) || 24;
     const target = args.join(" ").trim();
     if (!target) {
-      console.error("usage: cli.ts files <agent> [--hours 24]");
+      console.error(usageFor("files"));
       process.exit(1);
     }
     filesOf(target, hours);
@@ -1671,7 +1672,7 @@ switch (cmd) {
   case "blame": {
     const path = rest.join(" ").trim();
     if (!path) {
-      console.error("usage: cli.ts blame <path>");
+      console.error(usageFor("blame"));
       process.exit(1);
     }
     blame(path);
@@ -1760,7 +1761,7 @@ switch (cmd) {
     const sub = rest[0] ?? "";
     if (sub === "check") diaryCheck();
     else {
-      console.error("usage: cli.ts diary check");
+      console.error(usageFor("diary"));
       process.exit(1);
     }
     break;
@@ -1780,7 +1781,7 @@ switch (cmd) {
     const target = takeFlag(args, "--agent");
     const role = args.join(" ").trim();
     if (!role) {
-      console.error('usage: cli.ts call-you "<role>" [--agent <who>]');
+      console.error(usageFor("call-you"));
       process.exit(1);
     }
     callYou(role, target);
@@ -1792,15 +1793,14 @@ switch (cmd) {
   case "where":
     where();
     break;
+  case "help":
+  case "--help":
+  case "-h":
+    console.log(usage(terminalWidth()));
+    break;
   default:
-    console.error(
-      `unknown command: ${cmd}\n` +
-        "usage: who | log [n] | msg <name> \"<text>\" [--from <name>] | say <text> | " +
-        "quit <name> | clear | where\n" +
-        '       doing "<subject>" [--plan "a; b; c"] | did <n> ["<what changed>"] | ' +
-        'step <n> "<status>" | add "<step>"\n' +
-        "       done [<subject match>] [--abandoned] | board [<agent>] [--history] [--all] | mine",
-    );
+    console.error(`unknown command: ${cmd}\n`);
+    console.error(usage(terminalWidth()));
     process.exit(1);
 }
 
