@@ -92,7 +92,10 @@ export const VERBS: readonly Verb[] = [
   // A spec wide enough to name every flag is one that wraps on an 80-column
   // terminal, and a wrapped spec is harder to read than a short one plus a
   // pointer to the full form.
-  { verb: "note", args: '"<title>" --topic <t> [--scope <dir>] [--fixes <id>]  |  note <id>', blurb: "file a finding for whoever comes next, or read one", group: "diary" },
+  // `--kind` earns its place in the spec despite the width: it is what makes a
+  // note a BUG rather than a fact, and a flag missing from `help` is a feature
+  // agents never reach. `--tags` and `--body` stay on the verb's own usage line.
+  { verb: "note", args: '"<title>" --topic <t> [--scope <dir>] [--kind error] [--fixes <id>]', blurb: "file a finding, or a bug; `note <id>` reads one", group: "diary" },
   { verb: "recall", args: "<words> [--scope <dir>] [--limit n]", blurb: "search findings", group: "diary" },
   { verb: "bugs", args: "[--scope <dir>] [--limit n]", blurb: "errors nobody has fixed yet", group: "diary" },
   { verb: "topics", args: "", blurb: "every topic, with how much is under it", group: "diary" },

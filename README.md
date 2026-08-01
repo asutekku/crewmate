@@ -548,7 +548,7 @@ were invisible.
 
 | Command | Does |
 |---|---|
-| `note "<title>" --topic <t> [--scope <dir>] [--fixes <id>]  \|  note <id>` | file a finding for whoever comes next, or read one |
+| `note "<title>" --topic <t> [--scope <dir>] [--kind error] [--fixes <id>]` | file a finding, or a bug; `note <id>` reads one |
 | `recall <words> [--scope <dir>] [--limit n]` | search findings |
 | `bugs [--scope <dir>] [--limit n]` | errors nobody has fixed yet |
 | `topics` | every topic, with how much is under it |
