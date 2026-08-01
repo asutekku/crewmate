@@ -522,16 +522,28 @@ export class DiaryStore {
     return r.changes > 0;
   }
 
-  /** Points a stale entry at the one that replaced it, and deprecates it. */
+  /**
+   * Points a stale entry at the one that replaced it, and deprecates it.
+   *
+   * SUPERSEDING IS ITSELF THE REASON, so it fills one in. `diary check` flags a
+   * deprecation with no reason, and it flagged both entries this had retired —
+   * correctly, since "no longer true" with nothing after it is the least useful
+   * thing an entry can say. The reason here is not a guess: the replacement IS
+   * the explanation, and naming it beats leaving the field blank.
+   */
   supersede(id: number, byId: number, nowMs: number): boolean {
     if (id === byId) return false;
-    if (this.get(byId) === null) return false;
+    const replacement = this.get(byId);
+    if (replacement === null) return false;
     const r = this.db
       .query(
-        `UPDATE diary SET superseded_by = ?, deprecated_ms = CASE WHEN deprecated_ms = 0 THEN ? ELSE deprecated_ms END
+        `UPDATE diary
+            SET superseded_by = ?,
+                deprecated_ms = CASE WHEN deprecated_ms = 0 THEN ? ELSE deprecated_ms END,
+                deprecated_why = CASE WHEN deprecated_why = '' THEN ? ELSE deprecated_why END
           WHERE id = ?`,
       )
-      .run(byId, nowMs, id);
+      .run(byId, nowMs, `superseded by #${byId}: ${replacement.title}`, id);
     return r.changes > 0;
   }
 

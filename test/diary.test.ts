@@ -373,6 +373,38 @@ describe("freshness", () => {
     });
   });
 
+  test("superseding writes its own reason, so `diary check` stays quiet", () => {
+    // `diary check` flags a deprecation with no reason and flagged both entries
+    // superseding had retired — correctly, since "no longer true" and nothing
+    // else is the least useful thing an entry can say. The replacement IS the
+    // explanation, so it is recorded rather than left blank.
+    fresh((store) => {
+      const now = Date.now();
+      const d = store.diary;
+      const old = d.write("s1", "a", ok({ title: "old claim", topic: "x", scope: "src" }), now);
+      const fresher = d.write("s1", "a", ok({ title: "the newer claim", topic: "x", scope: "src" }), now);
+      d.supersede(old, fresher, now);
+
+      expect(d.get(old)?.deprecatedWhy).toContain(`#${fresher}`);
+      expect(d.get(old)?.deprecatedWhy).toContain("the newer claim");
+      expect(d.check(now).filter((p) => p.kind === "deprecated-without-reason")).toEqual([]);
+    });
+  });
+
+  test("an explicit reason is not overwritten by a later supersede", () => {
+    fresh((store) => {
+      const now = Date.now();
+      const d = store.diary;
+      const old = d.write("s1", "a", ok({ title: "old", topic: "x", scope: "src" }), now);
+      const fresher = d.write("s1", "a", ok({ title: "new", topic: "x", scope: "src" }), now);
+      d.deprecate(old, "measured wrong on seed 42", now);
+      d.supersede(old, fresher, now);
+      // The human reason is the better one; superseding only fills a GAP.
+      expect(d.get(old)?.deprecatedWhy).toBe("measured wrong on seed 42");
+      expect(d.get(old)?.supersededBy).toBe(fresher);
+    });
+  });
+
   test("an entry cannot supersede itself or a missing entry", () => {
     fresh((store) => {
       const now = Date.now();
