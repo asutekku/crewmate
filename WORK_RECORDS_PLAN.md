@@ -2,10 +2,50 @@
 
 *Created: 2026-07-31*
 
-**P0 shipped 2026-07-31. P1–P5 are still plan.** What P0 covers is marked in the
-phase table at the bottom; everything else here describes work not yet built.
+**Status, re-measured 2026-08-01 against the code** (the line that stood here
+said "P1–P5 are still plan", which had been false for days — most of P5 and half
+of P4 shipped without anyone updating this file):
+
+| Phase | State |
+|---|---|
+| P0 | **shipped** 2026-07-31 |
+| P1 — hook auto-fill | **not built.** No hook opens a work item; every row is agent-authored |
+| P2 — the idle check | **shipped 2026-08-01, `074bb51`, but NOT where this plan put it** — see below |
+| P3 — commit detection | **not built.** The `landed` event kind exists with no writer |
+| P4 — `breaks`/`needs`, `board --history` | **half.** `--history` shipped; `breaks`/`needs` are event kinds with no writer |
+| P5 — prune, SessionStart, `who` status | **shipped**, all three |
+
 The shipped behaviour is documented in `README.md` under *The work board* — this
 file stays as the reasoning behind it, not as its documentation.
+
+### P2 landed differently than planned, and the difference matters
+
+The plan put the idle check in `turn-end.ts` (`Stop`) with a
+`remind`/`insist`/`require` strictness constant. It shipped in
+`prompt-submit.ts` (`UserPromptSubmit`) with no strictness dial, for two reasons
+found while building it:
+
+- **`Stop` continues the turn.** Its `additionalContext` re-enters the loop under
+  an 8-continuation cap — the plan's own idle-check section documents this and
+  still chose `Stop`. A bookkeeping question there extends a turn the user
+  believes has ended. At a prompt the agent is about to work anyway, so the
+  question is nearly free and arrives when the answer is cheapest.
+- **The trigger is TIME, not unticked steps.** The plan fired on "unticked steps
+  + edits since last update", which nags an agent that is mid-work on a long
+  item. What actually goes wrong is an item nobody has touched for an hour —
+  measured live: one sat 13 h at 1/3 while its agent shipped four unrelated
+  commits. So the condition is `updated_ms` age, and an item with no checklist is
+  raised too, which the plan's version would have stayed silent about.
+
+The strictness constant was dropped: asked-once (`asked_turn_ms`) turned out to
+be the whole design. `insist`/`require` would re-ask, and a reminder that repeats
+is one that gets skipped — after which the reminder that mattered is skipped too.
+
+`asked_turn_ms` and `markAsked` had shipped in P0 with **no caller outside a
+test**, under a describe block named *"the idle-check guard (stored in P0, read
+in P2)"*. That block was an accurate confession: the read half did not exist, so
+every item dangled forever. Worth remembering as a shape — a test asserting a
+setter works is not evidence a feature works.
 
 ## The problem, measured
 
@@ -414,24 +454,30 @@ without understanding, or being ignored as noise.
 
 ## Phases
 
-| Phase | Contents | Gate |
+Re-measured against the code 2026-08-01. A phase is SHIPPED only where something
+reads what it writes — `landed`, `breaks` and `needs` are event kinds in the
+schema with no writer, and they do not count.
+
+| Phase | Contents | State |
 |---|---|---|
-| **P0 — SHIPPED** | `work` + `work_steps` + `work_events`; agent key from title with session fallback; `doing --plan`/`did`/`step`/`add`/`done`/`board`/`mine` | ✅ Two items open at once for one agent, both listed with their checklists; closing one leaves the other |
-| **P1** | Hook auto-fill: subject from title, files from claims, lifecycle from existing hooks | An agent that never calls the CLI still has a usable row |
-| **P2** | **The idle check** in `turn-end.ts` — unticked steps + edits since last update, via `additionalContext`, behind a `remind`/`insist`/`require` level constant | It fires when a step is outstanding, stays SILENT for an item with no checklist, never fires twice for one item in one turn, and flipping the constant to `require` needs no other edit |
-| **P3** | `PostToolUse` commit detection → `landed` events | Real shas appear with no agent action |
-| **P4** | `breaks`/`needs`; `board --history`; `breaks` delivered to intersecting peers as non-interrupting context | A `breaks` reaches exactly the overlapping agents and ends nobody's turn |
-| **P5** | 7-day prune for closed records; SessionStart shows open items; `who` gains a one-line `▸ status` | Roster stays inside 80 columns; a closed record survives a restart and expires on time |
+| **P0** | `work` + `work_steps` + `work_events`; agent key from title with session fallback; `doing --plan`/`did`/`step`/`add`/`done`/`board`/`mine` | **shipped** 2026-07-31 |
+| **P1** | Hook auto-fill: subject from title, files from claims, lifecycle from existing hooks | **not built.** No hook opens an item; every row is agent-authored |
+| **P2** | The idle check — planned for `turn-end.ts` on unticked steps, behind a `remind`/`insist`/`require` constant | **shipped 2026-08-01 (`074bb51`) in `prompt-submit.ts`, triggered by AGE, no strictness dial.** See the note at the top of this file for why all three changed |
+| **P3** | `PostToolUse` commit detection → `landed` events | **not built.** `landed` exists as an event kind with nothing writing one |
+| **P4** | `breaks`/`needs`; `board --history`; `breaks` delivered to intersecting peers | **half.** `board --history` shipped; `breaks`/`needs` are event kinds with no CLI verb |
+| **P5** | 7-day prune for closed records; SessionStart shows open items; `who` gains a one-line `▸ status` | **shipped**, with one narrowing: SessionStart carries a task COUNT per peer (`[3/5 tasks]`), not the items. The items are a `cli.ts board` away, and per-peer checklists would have made the roster unreadable at eight agents |
 
-**P2 moved up**, ahead of commit detection. The idle check is what makes the
-checklist self-maintaining, and it is also the riskiest thing here — it is the
-only part that can interrupt an agent's turn. Better to learn early whether it
-reads as helpful or as nagging, on a small feature, than to build three more
-phases on top of a loop that turns out to be annoying.
+**What P2 actually taught, now that it exists.** The plan called it "the riskiest
+thing here — the only part that can interrupt an agent's turn", and that framing
+is what led it to `Stop`. The risk turned out to be real but located elsewhere:
+interrupting a turn was avoidable entirely by asking at the next prompt, and the
+thing that would have made it nag was RE-asking, which asked-once removes. The
+strictness dial was a fix for a problem the design did not need to have.
 
-P0–P2 are the bet: a checklist agents write and a hook that keeps it honest. If
-agents ignore `doing` but the auto-filled rows still tell *you* what is
-happening, that is already a win and P4 is optional.
+P1 and P3 remain the open bet: whether a row nobody typed is worth having. P1 is
+the more valuable of the two — an agent that never runs `doing` is invisible on
+the board today, which is the original problem this plan opened with. P3 is
+cheap once P1 exists and near-useless before it.
 
 **P0 must prove the timeline property**, not just that a row can be written —
 the append-only event table is the whole design, and a P0 that stores current
@@ -464,10 +510,19 @@ Three things the plan did not anticipate:
   painting; `test/board.test.ts` asserts the painted and plain lines are identical
   once escapes are stripped, and that no line exceeds the terminal at 40/60/80.
 
-One thing deliberately built early: `work.asked_turn_ms` and `markAsked` are in
-the schema and tested, though nothing reads them until P2. They are the "once per
-item per turn" guard, and the plan's claim that flipping to `require` is a
-one-constant change is only true if that guard exists from the start.
+One thing deliberately built early: `work.asked_turn_ms` and `markAsked` went
+into P0's schema, tested, with nothing reading them.
+
+**That was a mistake, and it is worth keeping the record of it.** The read half
+did not arrive for a day, so every work item on the board dangled forever — the
+operator found one of mine sitting 13 h at 1/3 while I had shipped four
+unrelated commits. A test asserting the setter works is not evidence the feature
+works, and the describe block naming a future phase (*"stored in P0, read in
+P2"*) was an accurate confession nobody read as one. Building the storage early
+did not make P2 cheaper; it made the gap invisible.
+
+The guard itself was the right idea — asked-once turned out to be the whole
+design, and the strictness dial it was built to enable was dropped.
 
 ## Risks
 
@@ -537,8 +592,8 @@ honest, and makes a forgotten item look like what it is.
    asks them to reconcile against it — "that's how agents like to work". This is
    why `work_steps` is a table rather than a display string: the idle check has
    to name which phase is outstanding, and `2/3` has to be derived.
-5. **`board` gains a one-line `▸ status` in `who`.** Confirmed; scheduled for P5
-   so the field is known to be populated before it takes roster space.
+5. **`board` gains a one-line `▸ status` in `who`.** Confirmed; shipped with the
+   rest of P5.
 6. **The agent decides whether it needs a checklist**, told plainly that quick
    checks do not need one. `--plan` is optional and an item with no steps is a
    legitimate end state.
