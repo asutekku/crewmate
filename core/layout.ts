@@ -34,6 +34,36 @@ export function terminalWidth(): number {
 }
 
 /**
+ * Breaks text onto lines of at most `max` cells, at word boundaries.
+ *
+ * For text where the END CARRIES MEANING and truncating loses the point — a
+ * diary title is the whole claim, and a result ending in "…" makes the reader
+ * open the entry to find out whether it was relevant. Use `fit` where the text
+ * is a label and the start identifies it (a name, a path, a topic).
+ *
+ * A word longer than `max` is placed on its own line rather than broken: it is
+ * usually an identifier, and `resolveBuildingVisu` / `alBounds` across two lines
+ * is not searchable by eye.
+ */
+export function wrap(text: string, max: number): string[] {
+  if (max <= 0) return [text];
+  const lines: string[] = [];
+  let line = "";
+  for (const word of text.split(/\s+/).filter((w) => w !== "")) {
+    if (line === "") {
+      line = word;
+    } else if ([...line].length + 1 + [...word].length <= max) {
+      line += ` ${word}`;
+    } else {
+      lines.push(line);
+      line = word;
+    }
+  }
+  if (line !== "") lines.push(line);
+  return lines.length > 0 ? lines : [""];
+}
+
+/**
  * Truncates to `max` display cells, with an ellipsis when it had to cut.
  *
  * Counts CODE POINTS, not UTF-16 units, so an emoji or CJK character in a

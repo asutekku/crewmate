@@ -48,7 +48,10 @@ describe("source hygiene", () => {
     // template literal, so a backtick in a `-- comment` terminates the string
     // and the file stops parsing — with an error pointing at the comment rather
     // than at the cause. Markdown habits make it an easy thing to type.
-    for (const file of ["../core/store.ts", "../core/work.ts"]) {
+    // EVERY file that holds SQL, not a list of the ones remembered at the
+    // time: `diary.ts` hit this same trap on its first typecheck because it
+    // was not on this list.
+    for (const file of ["../core/store.ts", "../core/work.ts", "../core/diary.ts"]) {
       const text = await Bun.file(new URL(file, import.meta.url)).text();
       const offenders = text
         .split("\n")

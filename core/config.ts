@@ -49,6 +49,23 @@ export interface PresenceConfig {
    * the operator acts on what `who` says is happening NOW.
    */
   readonly minionStaleMs: number;
+  /**
+   * How long a diary entry is kept.
+   *
+   * LONG, like edit history and for the same reason: it is a record of what was
+   * learned, and the question it answers ("has anyone hit this before?") is
+   * asked about the past. An entry that expires while the code it describes is
+   * still there has failed at its only job.
+   */
+  readonly diaryKeepMs: number;
+  /**
+   * How long a DEPRECATED entry is kept after being marked.
+   *
+   * Shorter than the above but not zero: "this was believed and here is why it
+   * stopped being true" is usually worth more than the original claim, so it
+   * outlives the claim rather than dying with it.
+   */
+  readonly diaryDeprecatedKeepMs: number;
 }
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -61,6 +78,8 @@ export const DEFAULTS: PresenceConfig = {
   workKeepMs: 7 * DAY,
   editKeepMs: 30 * DAY,
   minionStaleMs: 60 * 60 * 1000, // 1 h
+  diaryKeepMs: 365 * DAY,
+  diaryDeprecatedKeepMs: 90 * DAY,
 };
 
 export function configPath(): string {
@@ -122,5 +141,7 @@ function readConfig(): PresenceConfig {
     workKeepMs: pick("workKeepMs"),
     editKeepMs: pick("editKeepMs"),
     minionStaleMs: pick("minionStaleMs"),
+    diaryKeepMs: pick("diaryKeepMs"),
+    diaryDeprecatedKeepMs: pick("diaryDeprecatedKeepMs"),
   };
 }

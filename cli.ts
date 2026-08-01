@@ -12,6 +12,19 @@
  *   bun cli.ts files <agent>     # every file they have touched  [--hours 24]
  *   bun cli.ts blame <path>      # who has been in this file, newest first
  *
+ * And the diary — findings agents leave for each other, which OUTLIVE the
+ * board and are shared by every worktree of this repo:
+ *
+ *   bun cli.ts note "<title>" --topic <t> [--body "…"] [--tags a,b]
+ *                             [--kind finding|warning|error|optimization]
+ *                             [--scope src/sim/water]
+ *   bun cli.ts note <id>         # one entry in full, body included
+ *   bun cli.ts recall <query>    # search  [--topic] [--tag] [--kind]
+ *                                #         [--scope] [--mine] [--all]
+ *   bun cli.ts topics [--stale]  # what exists, counts, last write
+ *   bun cli.ts topic <name>      # everything under one topic
+ *   bun cli.ts tags              # tag cloud
+ *
  * And the work board — what each agent is doing, as a timeline:
  *
  *   bun cli.ts doing "<subject>" [--plan "a; b; c"]   # open an item
@@ -49,10 +62,13 @@ import {
   shortAge,
   summarizeFiles,
   terminalWidth,
+  wrap,
 } from "./core/layout.ts";
 import { agentKey, BOARD_OPEN_SHOWN, foldEvents, parsePlan, progress } from "./core/work.ts";
 import { validateAlias, validateRole } from "./core/topic.ts";
 import { minionName } from "./core/names.ts";
+import { checkNote, nearTopic, parseTags } from "./core/diary.ts";
+import type { DiaryEntry, DiaryKind } from "./core/diary.ts";
 import { dirtyFiles } from "./core/dirty.ts";
 import { agentTally, briefAge, briefAgo, itemLines } from "./core/board.ts";
 import type { BoardPaint } from "./core/board.ts";
@@ -701,9 +717,12 @@ function callerIdentity(store: StoreHandle): { agentId: string; agentName: strin
   // session that opened it, and `e2e-sess` on a board read next week names
   // nobody. `displayName` prefers Claude Code's own `traffic-a0` and falls back
   // to the handle, both of which a reader recognises.
-  const name = self
-    ? displayName(self)
-    : (store.handleFor(ENV_SESSION) ?? ENV_SESSION.slice(0, 8));
+  // "" rather than a slice of the session id when nothing names this session.
+  // A frozen `c5ce05bc` names nobody and never will; an empty string lets the
+  // READ side resolve it — from the roster if that agent comes back, and to
+  // "someone" if it does not. That matters most for the diary, whose entries
+  // outlive their author by a year where a board item expires in a week.
+  const name = self ? displayName(self) : (store.handleFor(ENV_SESSION) ?? "");
   return { agentId: agentKey(title, ENV_SESSION), agentName: name };
 }
 
@@ -1028,6 +1047,187 @@ function quit(target: string): void {
   });
 }
 
+/** One entry as a search result: the title line, and what qualifies it. */
+function entryLine(e: DiaryEntry, nowMs: number, width: number): string[] {
+  const age = shortAge(e.tsMs, nowMs);
+  const kindPaint =
+    e.kind === "error" ? red : e.kind === "warning" ? yellow : e.kind === "optimization" ? green : dim;
+  const head = `${dim(`#${e.id}`)} ${kindPaint(e.kind.padEnd(12))} ${dim(pad(age, 4))}  `;
+  const headLen = [...`#${e.id} ${e.kind.padEnd(12)} ${pad(age, 4)}  `].length;
+  // WRAPPED, not truncated. The title is the whole claim and a search result
+  // that ends in "…" makes the reader open the entry to find out whether it was
+  // relevant — which is the cost the title/body split exists to avoid.
+  const lines = wrap(e.title, Math.max(20, width - headLen)).map((l, i) =>
+    i === 0 ? head + bold(l) : " ".repeat(headLen) + bold(l),
+  );
+
+  const bits = [cyan(e.topic)];
+  for (const t of e.tags) bits.push(dim(`#${t}`));
+  if (e.scope !== "") bits.push(dim(e.scope));
+  bits.push(dim(`— ${e.agent}`));
+  if (e.body !== "") bits.push(dim(`(body: cli.ts note ${e.id})`));
+  lines.push(" ".repeat(headLen) + bits.join(" "));
+
+  // A deprecated entry is shown with the reason it stopped being true, because
+  // that is usually worth more than the claim was.
+  if (e.deprecatedMs !== 0) {
+    const why = e.deprecatedWhy !== "" ? `: ${e.deprecatedWhy}` : "";
+    const sup = e.supersededBy !== 0 ? ` → see #${e.supersededBy}` : "";
+    lines.push(" ".repeat(headLen) + red(fit(`✗ no longer true${why}${sup}`, width - headLen)));
+  }
+  return lines;
+}
+
+/** Writes one finding. */
+function note(args: string[]): void {
+  const topic = takeFlag(args, "--topic");
+  const body = takeFlag(args, "--body");
+  const tags = takeFlag(args, "--tags");
+  const kind = takeFlag(args, "--kind");
+  const scope = takeFlag(args, "--scope");
+  const title = args.join(" ").trim();
+
+  const check = checkNote({
+    title,
+    body,
+    topic,
+    tags: parseTags(tags),
+    ...(kind !== "" ? { kind: kind as DiaryKind } : {}),
+    scope,
+  });
+  if (!check.ok) {
+    console.error(`${red("✗")} ${check.why}`);
+    process.exitCode = 1;
+    return;
+  }
+
+  withStore(PROJECT.dbPath, (store) => {
+    const who = callerIdentity(store);
+    if (!who) {
+      notAnAgent("`note`");
+      return;
+    }
+    const now = Date.now();
+    const id = store.diary.write(ENV_SESSION, who.agentName, check.note, now);
+    console.log(`${green("✓")} ${bold(`#${id}`)} ${check.note.title}`);
+    const where = check.note.scope !== "" ? ` in ${check.note.scope}` : "";
+    console.log(
+      dim(`  ${check.note.kind} · ${check.note.topic}${where} — peers find it with \`cli.ts recall\``),
+    );
+    if (check.note.scope === "") {
+      // Said once at write time rather than as a refusal: a repo-wide entry is
+      // legitimate, it just never fires the pre-edit pointer that makes the
+      // diary worth writing to.
+      console.log(dim("  no --scope, so this will not surface when someone edits a related file"));
+    }
+  });
+}
+
+/** Search. Prints TITLES; a body is opened by id. */
+function recall(args: string[]): void {
+  const topic = takeFlag(args, "--topic");
+  const tag = takeFlag(args, "--tag");
+  const kind = takeFlag(args, "--kind");
+  const scope = takeFlag(args, "--scope");
+  const limit = Number(takeFlag(args, "--limit")) || 20;
+  const all = args.includes("--all");
+  if (all) args.splice(args.indexOf("--all"), 1);
+  const mine = args.includes("--mine");
+  if (mine) args.splice(args.indexOf("--mine"), 1);
+  const query = args.join(" ").trim();
+
+  withStore(PROJECT.dbPath, (store) => {
+    const now = Date.now();
+    const hits = store.diary.recall({
+      query,
+      topic,
+      tag,
+      ...(kind !== "" ? { kind: kind as DiaryKind } : {}),
+      scope,
+      ...(mine ? { sessionId: ENV_SESSION } : {}),
+      all,
+      limit,
+    });
+    if (hits.length === 0) {
+      console.log(dim(`nothing in the diary matches${query !== "" ? ` "${query}"` : ""}.`));
+      const topics = store.diary.topics();
+      if (topics.length > 0) {
+        console.log(dim(`  topics: ${topics.slice(0, 8).map((t) => t.topic).join(", ")}`));
+      }
+      return;
+    }
+    const width = terminalWidth();
+    for (const e of hits) for (const l of entryLine(e, now, width)) console.log(l);
+  });
+}
+
+/** One entry in full — the only place a body is printed. */
+function showNote(idRaw: string): void {
+  const id = Number(idRaw);
+  if (!Number.isFinite(id) || id <= 0) {
+    console.error("usage: cli.ts note <id>");
+    process.exitCode = 1;
+    return;
+  }
+  withStore(PROJECT.dbPath, (store) => {
+    const e = store.diary.get(id);
+    if (!e) {
+      console.error(`no diary entry #${id} in ${PROJECT.name}`);
+      process.exitCode = 1;
+      return;
+    }
+    const now = Date.now();
+    const width = terminalWidth();
+    for (const l of entryLine(e, now, width)) console.log(l);
+    if (e.body !== "") {
+      console.log("");
+      for (const line of e.body.split("\n")) console.log(`  ${line}`);
+    }
+  });
+}
+
+/** What topics exist, and how alive each is. */
+function topics(args: string[]): void {
+  const stale = args.includes("--stale");
+  withStore(PROJECT.dbPath, (store) => {
+    const now = Date.now();
+    const all = store.diary.topics();
+    if (all.length === 0) {
+      console.log(dim(`the ${PROJECT.name} diary is empty — write one with \`cli.ts note\`.`));
+      return;
+    }
+    const shown = stale ? all.filter((t) => now - t.lastMs > 30 * 24 * 60 * 60 * 1000) : all;
+    const w = Math.max(...shown.map((t) => t.topic.length), 5);
+    console.log(bold(`${all.length} topics in ${PROJECT.name}`));
+    for (const t of shown) {
+      // Flagged only when a SIMILAR topic exists — a one-entry topic in a young
+      // diary is just a new topic, and saying "typo?" about every row in a
+      // four-entry diary trains the reader to ignore the hint entirely.
+      const near = all.find((o) => o.topic !== t.topic && nearTopic(o.topic, t.topic));
+      const lonely = near ? dim(`  (near \`${near.topic}\` — merge?)`) : "";
+      console.log(
+        `  ${cyan(pad(t.topic, w))} ${dim(String(t.count).padStart(3))}  ${dim(shortAge(t.lastMs, now))}${lonely}`,
+      );
+    }
+  });
+}
+
+/** Every tag with a count. */
+function tags(): void {
+  withStore(PROJECT.dbPath, (store) => {
+    const cloud = store.diary.tagCloud();
+    if (cloud.length === 0) {
+      console.log(dim("no tags yet — `cli.ts note \"…\" --topic x --tags perf,flaky`"));
+      return;
+    }
+    console.log(bold(`${cloud.length} tags in ${PROJECT.name}`));
+    const w = Math.max(...cloud.map((c) => c.tag.length), 5);
+    for (const c of cloud) {
+      console.log(`  ${dim("#")}${cyan(pad(c.tag, w))} ${dim(String(c.count).padStart(3))}`);
+    }
+  });
+}
+
 const [cmd, ...rest] = Bun.argv.slice(2);
 switch (cmd) {
   case "who":
@@ -1181,6 +1381,44 @@ switch (cmd) {
     blame(path);
     break;
   }
+  case "note": {
+    // `note <id>` reads, `note "<title>" --topic x` writes. Split on whether
+    // the whole argument is a bare number, so neither needs a subcommand.
+    const args = [...rest];
+    if (args.length === 1 && /^\d+$/.test(args[0] ?? "")) {
+      showNote(args[0] ?? "");
+      break;
+    }
+    if (args.length === 0) {
+      console.error('usage: cli.ts note "<title>" --topic <t> [--body "<detail>"]');
+      console.error(dim("             [--tags a,b] [--kind finding|warning|error|optimization]"));
+      console.error(dim("             [--scope src/sim/water]"));
+      console.error(dim("       cli.ts note <id>     # read one, body included"));
+      process.exit(1);
+    }
+    note(args);
+    break;
+  }
+  case "recall":
+    recall([...rest]);
+    break;
+  case "topics":
+    topics([...rest]);
+    break;
+  case "topic": {
+    const args = [...rest];
+    const limit = Number(takeFlag(args, "--limit")) || 20;
+    const name = args.join(" ").trim();
+    if (!name) {
+      console.error("usage: cli.ts topic <name> [--limit n]");
+      process.exit(1);
+    }
+    recall(["--topic", name, "--limit", String(limit)]);
+    break;
+  }
+  case "tags":
+    tags();
+    break;
   case "call-you":
   case "role": {
     const args = [...rest];

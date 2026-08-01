@@ -25,6 +25,7 @@ import { Database } from "bun:sqlite";
 
 import { ensureBaseDir } from "./repo.ts";
 import { createWorkTables, WorkStore } from "./work.ts";
+import { createDiaryTables, DiaryStore } from "./diary.ts";
 import { fullName, GIVEN_NAMES, pickName } from "./names.ts";
 import { loadConfig } from "./config.ts";
 
@@ -467,6 +468,7 @@ function openDb(dbPath: string): Database {
     CREATE INDEX IF NOT EXISTS minions_parent ON minions (session_id, ended_ms);
   `);
   createWorkTables(db);
+  createDiaryTables(db);
   // `CREATE TABLE IF NOT EXISTS` leaves an EXISTING table alone, so a column
   // added later never reaches a db that is already live — and this db is live
   // state that several running sessions are writing to, not a save file that
@@ -547,6 +549,18 @@ export class Store {
    */
   get work(): WorkStore {
     return new WorkStore(this.db);
+  }
+
+  /**
+   * The diary tables, sharing this connection.
+   *
+   * Separate for the same reason `work` is, and more so: the diary keeps
+   * entries for a YEAR where the roster forgets a session in 90 minutes, and
+   * one file holding both notions of "expired" is how a sweep eats the thing it
+   * was not meant to touch.
+   */
+  get diary(): DiaryStore {
+    return new DiaryStore(this.db);
   }
 
   /** Sessions seen recently enough to be plausibly alive, oldest first. */
