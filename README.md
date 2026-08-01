@@ -529,12 +529,14 @@ were invisible.
 
 | Command | Does |
 |---|---|
-| `doing "<subject>" [--plan "a; b; c"]` | open a work item; --plan is optional |
+| `doing "<subject>" [--plan "a; b; c"] [--plan-doc <path>]` | open a work item; --plan is optional |
 | `did <n> ["<what changed>"] [--item <match>]` | tick a step off, with what actually changed |
 | `step <n> "<status>" [--item <match>]` | note progress on a step without closing it |
 | `add "<step>" [--item <match>]` | a phase the plan missed |
 | `done [<subject match>] [--abandoned]` | close ONE item; --abandoned is the honest exit |
 | `board [<agent>] [--history] [--all]` | what everyone is doing |
+| `link <plan path> [--item <match>]` | say which plan document this item executes |
+| `plans` | every plan with work against it, and what shipped |
 | `mine` | my open items |
 | `breaks "<what>" [--item <match>]` | record a breaking change; tells agents in the same files |
 | `needs "<what>" [--item <match>]` | record what you are blocked on, and tell them |

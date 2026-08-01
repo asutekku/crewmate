@@ -71,12 +71,14 @@ export const VERBS: readonly Verb[] = [
   { verb: "help", args: "", blurb: "this list", group: "presence", aliases: ["--help", "-h"] },
 
   // ---- work
-  { verb: "doing", args: '"<subject>" [--plan "a; b; c"]', blurb: "open a work item; --plan is optional", group: "work" },
+  { verb: "doing", args: '"<subject>" [--plan "a; b; c"] [--plan-doc <path>]', blurb: "open a work item; --plan is optional", group: "work" },
   { verb: "did", args: '<n> ["<what changed>"] [--item <match>]', blurb: "tick a step off, with what actually changed", group: "work" },
   { verb: "step", args: '<n> "<status>" [--item <match>]', blurb: "note progress on a step without closing it", group: "work" },
   { verb: "add", args: '"<step>" [--item <match>]', blurb: "a phase the plan missed", group: "work" },
   { verb: "done", args: "[<subject match>] [--abandoned]", blurb: "close ONE item; --abandoned is the honest exit", group: "work" },
   { verb: "board", args: "[<agent>] [--history] [--all]", blurb: "what everyone is doing", group: "work" },
+  { verb: "link", args: "<plan path> [--item <match>]", blurb: "say which plan document this item executes", group: "work" },
+  { verb: "plans", args: "", blurb: "every plan with work against it, and what shipped", group: "work" },
   { verb: "mine", args: "", blurb: "my open items", group: "work" },
   { verb: "breaks", args: '"<what>" [--item <match>]', blurb: "record a breaking change; tells agents in the same files", group: "work" },
   { verb: "needs", args: '"<what>" [--item <match>]', blurb: "record what you are blocked on, and tell them", group: "work" },

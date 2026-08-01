@@ -1,8 +1,8 @@
-# Coordination gaps: discoverability, questions, bug state
+# Coordination gaps: discoverability, questions, bug state, plan links
 
 *Created: 2026-08-01*
 
-Three gaps found by measuring the tool against itself rather than by
+Four gaps found by measuring the tool against itself rather than by
 brainstorming features. Each is small, independent, and answers a question an
 agent currently cannot ask.
 
@@ -11,7 +11,10 @@ verified against the code, not against this document.
 
 ---
 
-## P0 — the usage string is 13 of 33 verbs  **[ ]**
+## P0 — the usage string is 13 of 33 verbs  **[x]**
+
+*Shipped `01c5935`. Verified against `core/verbs.ts` and `test/verbs.test.ts`,
+not against this document.*
 
 `cli.ts --help` lists `who / log / msg / say / quit / clear / where / doing /
 did / step / add / done / board / mine`. The dispatcher has 33 `case` labels.
@@ -36,9 +39,22 @@ Group the output — 33 flat verbs is its own kind of unfindable:
 
 Filed as diary note #18.
 
-- [ ] `VERBS` table; `usage()` generated from it, grouped
-- [ ] test: every `case` label appears in `VERBS` (fails when they drift)
-- [ ] README section per group, matching the same table
+- [x] `VERBS` table; `usage()` generated from it, grouped
+- [x] test: every `case` label appears in `VERBS` (fails when they drift)
+- [x] README section per group, matching the same table
+
+**What it cost, and what that taught.** Two layout bugs, both found by looking
+at output rather than by a test. A fixed 46-char column read fine at 100 columns
+and collapsed at 80; the fix then had its own bug, where `note`'s 62-char spec
+padded all 33 verbs to 62 and pushed the worst pair to 126 columns, so the table
+never fired even at 120. The column is now a fixed point over the rows that
+share it. Both are pinned by tests that were verified to FAIL on the broken form
+first.
+
+The README had drifted identically, in the file that explains why drift is bad:
+12 of 18 `core/` modules and 12 of 14 hooks listed, and "13 hooks" against 15
+registered. Its three new tests assert a minimum file count before checking,
+because a glob that resolves to nothing makes the check pass **vacuously**.
 
 ---
 
@@ -115,6 +131,91 @@ nudge is the working precedent.
 
 ---
 
+## P3 — a work item knows which plan it is executing  **[ ]**
+
+**The user's complaint is the spec:** *"we have shitton of plan files, but I
+have no idea which ones we have acted on, which ones are completed."*
+
+Measured 2026-08-01 — **82 plan documents** under `audit_reports/`,
+`docs/plans/` and `plans/`. (A naive `find` says 1306: 25 stale worktrees each
+carry a full copy, so any sweep of this repo MUST exclude `.claude/worktrees`
+or the number is 16× wrong.) Of the 82, **26 declare a status line and 56
+declare nothing**.
+
+### Why the doc cannot answer this, and neither can git
+
+The 26 self-reported statuses are the **weaker** signal. `WORK_RECORDS_PLAN.md`
+carried four `[x] IMPLEMENTED` markers for phases nobody had written — which is
+why this file's own legend says checkboxes are re-measured against the code.
+
+The obvious fix is to derive state from git: commit count and last-touched date
+are free, already true, and no optimistic author can edit them. **That was
+tried and it is wrong**, for a reason found in live data rather than reasoned
+about:
+
+> An agent writes a plan, then implements it. It never touches the plan file
+> again.
+
+At the time of writing, `ambrose` (the water agent) had **4 of 6 steps done and
+`16a92ee` shipped**, while the plan file it was executing had **zero git
+commits**. A git-derived inventory would have reported that plan as untouched.
+The signal is in the wrong place: the *work* moved, the *document* did not.
+
+### What the board already knows
+
+`work_events` currently holds `did` ×86, `started` ×25, `closed` ×22 and
+**`landed` ×9 with real shas** — `16a92ee | feat(water): the ground holds water`.
+Every ingredient exists. The only missing thing is the join between an item and
+the plan it executes.
+
+```sh
+cli.ts doing "<subject>" --plan-doc audit_reports/terrain-water/WATER_PLAN.md
+cli.ts plans                      # every plan, with who executed it and what shipped
+```
+
+`cli.ts plans` derives per plan, storing nothing that can rot:
+
+| Column | Source | Trust |
+|---|---|---|
+| who executed it | linked work item's agent | fact |
+| how far | the item's step ratio | fact |
+| what shipped | `landed` shas on that item | **proof** |
+| when it stalled | `updated_ms` | fact |
+| declared status | parsed from the doc | **a claim, labelled as one** |
+| commit history | git, for unlinked plans | fallback |
+
+For ambrose's plan that reads *"4/6, ambrose, 16a92ee, blocked on step 6"* —
+none of which is in the file, all of which is already in the db.
+
+### The parts that need care
+
+**Backfill, or it launches empty.** 82 plans exist and none carry a link. A
+one-time match of item subjects against plan filenames gets most; anything
+ambiguous stays **unlinked rather than guessed**, because a wrong link is worse
+than none — it asserts work happened that did not.
+
+**Git stays as the fallback, not the primary.** For plans nobody links,
+commit-count-and-last-touched still beats the 56 that declare nothing.
+
+**Shipped vs abandoned is genuinely hard** and should not be faked. Both look
+like a doc that stopped moving. A linked item with `landed` shas answers it; an
+unlinked plan does not, and `plans` should say "unknown" rather than infer.
+
+**The adoption risk is real and named.** This only works if agents pass the
+flag — the same weakness that left `breaks` and `needs` used by nobody but
+their author. Two mitigations, both using machinery that already exists:
+`pre-edit` can suggest linking when a plan doc is edited, and the stale nudge
+can ask "is this executing a plan?" once per item.
+
+- [ ] `plan_doc` on `work`; `--plan-doc` on `doing`, and a `link` verb for items already open
+- [ ] `cli.ts plans` — derived, storing nothing
+- [ ] backfill by filename match; ambiguous stays unlinked
+- [ ] git fallback for unlinked plans
+- [ ] `pre-edit` suggests linking when a plan doc is edited
+- [ ] test: a plan with a linked item and a `landed` sha reports shipped; an unlinked one reports unknown, never abandoned
+
+---
+
 ## Deliberately rejected
 
 **Locks / claims.** The tool is advisory by design and that is why agents
@@ -131,7 +232,9 @@ would be a table nobody writes to.
 
 ## Order
 
-P0 is an hour and unblocks nothing — do it first anyway, because every other
-feature here is only useful if it can be found. P1 and P2 are independent.
+P0 shipped first because every other feature here is only useful if it can be
+found. P1, P2 and P3 are independent of each other; P2 and P3 share the same
+shape (link a record to the thing it resolves) and are cheaper together than
+apart.
 
 Lineage and handoff live in [LINEAGE_PLAN.md](LINEAGE_PLAN.md).

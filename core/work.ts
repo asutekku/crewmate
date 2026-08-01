@@ -49,6 +49,8 @@ export type WorkEventKind =
   | "breaks"
   | "needs"
   | "note"
+  /** Pointed at the plan document it executes; `ref` carries the path. */
+  | "linked"
   | "closed";
 
 export type WorkOutcome = "" | "done" | "abandoned";
@@ -76,6 +78,14 @@ export interface WorkItem {
   readonly askedTurnMs: number;
   /** True when a hook opened this as a placeholder rather than the agent. */
   readonly auto: boolean;
+  /**
+   * The plan document this item executes, repo-relative; "" when none.
+   *
+   * A plan's own file history cannot answer "did this get built" — an agent
+   * writes the plan, implements it, and never touches the file again. This link
+   * is what lets `landed` shas on an item stand as proof about the plan.
+   */
+  readonly planDoc: string;
 }
 
 export interface WorkStep {
@@ -147,7 +157,17 @@ export function createWorkTables(db: Database): void {
       -- which is worth more than the blank the board showed before. The moment
       -- the agent opens a real item the placeholder is closed, because two rows
       -- for one piece of work is worse than none.
-      auto       INTEGER NOT NULL DEFAULT 0
+      auto       INTEGER NOT NULL DEFAULT 0,
+      -- The plan document this item executes, repo-relative and forward-slashed.
+      -- THE JOIN THAT MAKES A PLAN'S STATE KNOWABLE. An agent writes a plan and
+      -- then implements it, never touching the file again -- so a plan's own git
+      -- history says nothing about whether its work happened. Measured: one
+      -- agent had 4 of 6 steps done and a sha landed while its plan file had
+      -- zero commits. The work moved; the document did not.
+      --
+      -- Empty for the ordinary item, which is most of them. A required link
+      -- would be a field agents fill with noise.
+      plan_doc   TEXT NOT NULL DEFAULT ''
     );
     CREATE INDEX IF NOT EXISTS work_agent ON work (agent_id, closed_ms);
     CREATE TABLE IF NOT EXISTS work_steps (
@@ -192,6 +212,7 @@ export function createWorkTables(db: Database): void {
  */
 const WORK_COLUMNS = `work.work_id, work.agent_id, work.subject, work.started_ms,
      work.closed_ms, work.outcome, work.updated_ms, work.asked_turn_ms, work.auto,
+     work.plan_doc,
      COALESCE(NULLIF((SELECT COALESCE(NULLIF(s.alias, ''), NULLIF(s.handle, ''), s.name)
                         FROM sessions s
                        WHERE 'session:' || s.session_id = work.agent_id), ''),
@@ -209,6 +230,7 @@ function rowToItem(r: Record<string, string | number>): WorkItem {
     updatedMs: Number(r["updated_ms"]),
     askedTurnMs: Number(r["asked_turn_ms"] ?? 0),
     auto: Number(r["auto"] ?? 0) === 1,
+    planDoc: String(r["plan_doc"] ?? ""),
   };
 }
 
@@ -249,6 +271,48 @@ export function parsePlan(plan: string): string[] {
 }
 
 /**
+ * A plan document path, as it is stored and compared.
+ *
+ * NOT `normaliseScope`, which strips a filename to reach its folder — that is
+ * right for a diary scope and exactly wrong here, where the FILE is the thing
+ * being named. Two items linking one plan must produce byte-identical strings
+ * or the join silently splits into two plans, so the shape is pinned: forward
+ * slashes, no `./`, no leading or trailing slash, no repo prefix.
+ *
+ * An absolute path is reduced to its repo-relative tail when it contains a
+ * recognisable anchor, because agents paste what the IDE gives them
+ * (`i:\Projects\Traffic\audit_reports\...`) and a stored absolute path would
+ * never match the same plan opened from a worktree.
+ */
+export function normalisePlanPath(raw: string): string {
+  let s = raw.trim().replace(/\\/g, "/").replace(/^\.\//, "");
+  if (s === "" || s === ".") return "";
+  // Reduce an absolute path to the first anchor folder we recognise. Anything
+  // unrecognised is left alone rather than guessed at -- a wrong reduction
+  // silently splits one plan in two, which is worse than a long path.
+  const anchor = /(?:^|\/)((?:audit_reports|docs|plans|\.claude)\/.+)$/i.exec(s);
+  if (anchor?.[1] !== undefined) s = anchor[1];
+  return s.replace(/^\/+/, "").replace(/\/+$/, "");
+}
+
+/** One plan, as derived from the work items that reference it. */
+export interface PlanRollup {
+  readonly planDoc: string;
+  /** Every item linked to it, newest first. */
+  readonly items: readonly WorkItem[];
+  /** Distinct agent names that worked it, in first-seen order. */
+  readonly agents: readonly string[];
+  readonly stepsDone: number;
+  readonly stepsTotal: number;
+  /** Shas from `landed` events on the linked items — proof, not claim. */
+  readonly shas: readonly string[];
+  /** Newest `updated_ms` across the linked items. */
+  readonly updatedMs: number;
+  readonly openItems: number;
+  readonly closedItems: number;
+}
+
+/**
  * The work-record half of the store. Held by `Store` rather than opened
  * separately, so a hook pays for one connection and one transaction boundary.
  */
@@ -262,14 +326,15 @@ export class WorkStore {
     subject: string,
     steps: readonly string[],
     nowMs: number,
+    planDoc = "",
   ): number {
     const run = this.db.transaction((): number => {
       this.db
         .query(
-          `INSERT INTO work (agent_id, agent_name, subject, started_ms, updated_ms)
-           VALUES (?, ?, ?, ?, ?)`,
+          `INSERT INTO work (agent_id, agent_name, subject, started_ms, updated_ms, plan_doc)
+           VALUES (?, ?, ?, ?, ?, ?)`,
         )
-        .run(agentId, agentName, subject, nowMs, nowMs);
+        .run(agentId, agentName, subject, nowMs, nowMs, normalisePlanPath(planDoc));
       const row = this.db.query(`SELECT last_insert_rowid() AS id`).get() as { id: number };
       const workId = Number(row.id);
       const ins = this.db.prepare(`INSERT INTO work_steps (work_id, idx, text) VALUES (?, ?, ?)`);
@@ -450,6 +515,86 @@ export class WorkStore {
       .query(`SELECT * FROM work_steps WHERE work_id = ? ORDER BY idx ASC`)
       .all(workId) as Array<Record<string, string | number>>;
     return rows.map(rowToStep);
+  }
+
+  /**
+   * Points an item at the plan it is executing. Returns false for an unknown id.
+   *
+   * Separate from `open` because the link is usually realised LATE — an agent
+   * opens an item, works for an hour, and only then notices there was a plan
+   * for this all along. Requiring it up front would mean most items never carry
+   * one.
+   */
+  link(workId: number, planDoc: string, nowMs: number): boolean {
+    const path = normalisePlanPath(planDoc);
+    const run = this.db.transaction((): boolean => {
+      const res = this.db
+        .query(`UPDATE work SET plan_doc = ?, updated_ms = ? WHERE work_id = ?`)
+        .run(path, nowMs, workId);
+      if (res.changes === 0) return false;
+      this.db
+        .query(`INSERT INTO work_events (work_id, ts_ms, kind, body, ref) VALUES (?, ?, 'linked', ?, ?)`)
+        .run(workId, nowMs, path === "" ? "unlinked" : `executing ${path}`, path);
+      return true;
+    });
+    return run();
+  }
+
+  /**
+   * Every plan any item references, rolled up. Newest activity first.
+   *
+   * DERIVED ON READ, storing nothing. A plan's state is a fact about its work
+   * items, and a cached copy is one more thing to fall out of date -- which is
+   * the failure this whole feature exists to fix, so reproducing it here would
+   * be perverse.
+   *
+   * Shas come from `landed` events, which the commit hook writes from git's own
+   * output. That makes them the only column here that is PROOF rather than a
+   * claim: an agent can tick a step it did not do, but it cannot invent a sha
+   * git printed.
+   */
+  planRollups(): PlanRollup[] {
+    const rows = this.db
+      .query(`SELECT ${WORK_COLUMNS} FROM work WHERE plan_doc != '' ORDER BY updated_ms DESC`)
+      .all() as Array<Record<string, string | number>>;
+
+    const byPlan = new Map<string, WorkItem[]>();
+    for (const item of rows.map(rowToItem)) {
+      const list = byPlan.get(item.planDoc);
+      if (list) list.push(item);
+      else byPlan.set(item.planDoc, [item]);
+    }
+
+    const out: PlanRollup[] = [];
+    for (const [planDoc, items] of byPlan) {
+      let stepsDone = 0;
+      let stepsTotal = 0;
+      const shas: string[] = [];
+      const agents: string[] = [];
+      for (const item of items) {
+        for (const s of this.steps(item.workId)) {
+          stepsTotal++;
+          if (s.doneMs > 0) stepsDone++;
+        }
+        for (const e of this.events(item.workId)) {
+          if (e.kind === "landed" && e.ref !== "" && !shas.includes(e.ref)) shas.push(e.ref);
+        }
+        if (item.agentName !== "" && !agents.includes(item.agentName)) agents.push(item.agentName);
+      }
+      out.push({
+        planDoc,
+        items,
+        agents,
+        stepsDone,
+        stepsTotal,
+        shas,
+        updatedMs: items.reduce((m, i) => Math.max(m, i.updatedMs), 0),
+        openItems: items.filter((i) => i.closedMs === 0).length,
+        closedItems: items.filter((i) => i.closedMs > 0).length,
+      });
+    }
+    out.sort((a, b) => b.updatedMs - a.updatedMs);
+    return out;
   }
 
   events(workId: number): WorkEvent[] {

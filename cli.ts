@@ -69,7 +69,14 @@ import {
   terminalWidth,
   wrap,
 } from "./core/layout.ts";
-import { agentKey, BOARD_OPEN_SHOWN, foldEvents, parsePlan, progress } from "./core/work.ts";
+import {
+  agentKey,
+  BOARD_OPEN_SHOWN,
+  foldEvents,
+  normalisePlanPath,
+  parsePlan,
+  progress,
+} from "./core/work.ts";
 import { validateAlias, validateRole } from "./core/topic.ts";
 import { minionName } from "./core/names.ts";
 import { usage, usageFor } from "./core/verbs.ts";
@@ -756,7 +763,7 @@ function notAnAgent(verb: string): void {
  * worth tracking, and an item with no steps is a legitimate end state rather
  * than a half-filled form.
  */
-function doing(subject: string, plan: string): void {
+function doing(subject: string, plan: string, planDoc = ""): void {
   withStore(PROJECT.dbPath, (store) => {
     const me = callerIdentity(store);
     if (!me) return notAnAgent("`doing`");
@@ -766,13 +773,67 @@ function doing(subject: string, plan: string): void {
     // its place — two rows for one piece of work is worse than none, and this
     // subject is always better than a conversation title.
     store.work.closeAuto(me.agentId, now);
-    const workId = store.work.open(me.agentId, me.agentName, subject, steps, now);
+    const linkPath = normalisePlanPath(planDoc);
+    const workId = store.work.open(me.agentId, me.agentName, subject, steps, now, linkPath);
     console.log(`${cyan("▸")} ${bold(subject)} ${dim(`— work #${workId}`)}`);
     for (const [i, s] of steps.entries()) console.log(`    ${dim(String(i + 1))}  ${s}`);
     if (steps.length === 0) {
       console.log(dim("    no checklist — `cli.ts add \"<step>\"` if phases appear"));
     }
+    if (linkPath !== "") console.log(dim(`    executing ${linkPath}`));
     console.log(dim(`  Peers see it with \`cli.ts board\`. Close it with \`cli.ts done\`.`));
+  });
+}
+
+/** Points an open item at the plan document it is executing. */
+function link(planDoc: string, match: string): void {
+  withStore(PROJECT.dbPath, (store) => {
+    const me = callerIdentity(store);
+    if (!me) return notAnAgent("`link`");
+    const item = store.work.target(me.agentId, match);
+    if (!item) return noOpenItem(match);
+    const path = normalisePlanPath(planDoc);
+    if (!store.work.link(item.workId, path, Date.now())) {
+      console.error(`no work item #${item.workId}`);
+      process.exitCode = 1;
+      return;
+    }
+    console.log(`${green("✓")} ${bold(item.subject)} ${dim("→")} ${path}`);
+    console.log(dim("  `cli.ts plans` shows what each plan's work has actually shipped."));
+  });
+}
+
+/**
+ * Every plan any work item references, with what shipped against it.
+ *
+ * WHY THIS EXISTS: 82 plan documents in this repo, 56 declaring no status at
+ * all, and the 26 that do declare one are the WEAKER signal — a plan carried
+ * four "[x] IMPLEMENTED" markers for phases nobody had written. Deriving state
+ * from the plan file's git history fails for the opposite reason: an agent
+ * writes a plan, implements it, and never touches the file again.
+ *
+ * So the state is read off the WORK, and the shas are the part that cannot be
+ * wished true.
+ */
+function plans(): void {
+  withStore(PROJECT.dbPath, (store) => {
+    const rollups = store.work.planRollups();
+    if (rollups.length === 0) {
+      console.log(dim("No work item names a plan document yet."));
+      console.log(dim('  `cli.ts doing "<subject>" --plan-doc <path>` opens one against a plan,'));
+      console.log(dim("  `cli.ts link <path>` points an item that is already open at one."));
+      return;
+    }
+    const now = Date.now();
+    for (const p of rollups) {
+      const progressText = p.stepsTotal > 0 ? `${p.stepsDone}/${p.stepsTotal}` : "no steps";
+      const state = p.openItems > 0 ? cyan("open") : p.shas.length > 0 ? green("shipped") : dim("closed");
+      console.log(`${bold(p.planDoc)}  ${state} ${dim(`· ${progressText} · ${briefAgo(p.updatedMs, now)}`)}`);
+      console.log(dim(`    ${p.agents.join(", ")} — ${p.items.length} item(s)`));
+      // Shas are the only line here that is evidence rather than assertion, so
+      // they are printed in full rather than counted.
+      if (p.shas.length > 0) console.log(`    ${green("landed")} ${p.shas.join(" ")}`);
+    }
   });
 }
 
@@ -1582,12 +1643,13 @@ switch (cmd) {
       plan = args[pi + 1] ?? "";
       args.splice(pi, 2);
     }
+    const planDoc = takeFlag(args, "--plan-doc");
     const subject = args.join(" ").trim();
     if (!subject) {
       console.error(usageFor("doing"));
       process.exit(1);
     }
-    doing(subject, plan);
+    doing(subject, plan, planDoc);
     break;
   }
   case "did": {
@@ -1643,6 +1705,20 @@ switch (cmd) {
     board(args.join(" ").trim(), { history, all, raw });
     break;
   }
+  case "link": {
+    const args = [...rest];
+    const match = takeFlag(args, "--item");
+    const path = args.join(" ").trim();
+    if (!path) {
+      console.error(usageFor("link"));
+      process.exit(1);
+    }
+    link(path, match);
+    break;
+  }
+  case "plans":
+    plans();
+    break;
   case "mine":
     mine();
     break;

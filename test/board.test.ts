@@ -20,6 +20,7 @@ function item(over: Partial<WorkItem> = {}): WorkItem {
     workId: 1,
     agentId: "title:x",
     agentName: "old-core-80",
+    planDoc: "",
     subject: "retiring the old net core",
     startedMs: NOW - 2 * 60 * 60 * 1000,
     closedMs: 0,

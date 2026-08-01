@@ -490,6 +490,17 @@ function openDb(dbPath: string): Database {
   // Live dbs predate this; without it every existing board read fails on a
   // column the queries now select.
   addColumnIfMissing(db, "work", "auto", "INTEGER NOT NULL DEFAULT 0");
+  // The plan document this item is executing, repo-relative and forward-slashed.
+  // Empty for the ordinary item that is not working from a plan, which is most
+  // of them -- a required link would be a field agents fill in with noise.
+  addColumnIfMissing(db, "work", "plan_doc", "TEXT NOT NULL DEFAULT ''");
+  // AFTER the column exists, never inside `createWorkTables`. `CREATE TABLE IF
+  // NOT EXISTS` leaves an existing table alone, so on a live db the table is
+  // untouched and a `plan_doc` index declared beside it runs against a column
+  // that is not there yet -- "no such column: plan_doc", on every hook and
+  // every CLI call. Fresh-db tests cannot see this: they build the table WITH
+  // the column, so the index resolves and the migration is a no-op.
+  db.exec(`CREATE INDEX IF NOT EXISTS work_plan ON work (plan_doc) WHERE plan_doc != ''`);
   return db;
 }
 
