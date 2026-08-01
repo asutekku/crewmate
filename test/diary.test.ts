@@ -110,6 +110,29 @@ describe("scope", () => {
     expect(normaliseScope("")).toBe("");
   });
 
+  test("a TOP-LEVEL DOTFOLDER is a folder, not a file", () => {
+    // Caught 2026-08-01 by trying to scope a finding to `.claude` and watching
+    // it come back unscoped: the "looks like a file" test matched the leading
+    // dot, so every top-level dotfolder was stripped to "" and silently became
+    // repo-wide. This repo keeps its agent tooling in one, so the feature could
+    // not describe the folder it lives in.
+    expect(normaliseScope(".claude")).toBe(".claude");
+    expect(normaliseScope(".github")).toBe(".github");
+    expect(normaliseScope(".claude/hooks")).toBe(".claude/hooks");
+    // A real dotfile still reduces to its folder — an extension needs something
+    // in front of the dot, which is what tells the two apart.
+    expect(normaliseScope(".claude/settings.json")).toBe(".claude");
+  });
+
+  test("an unscopeable scope is never SILENTLY dropped to repo-wide", () => {
+    // The property behind the bug above. Passing a scope and getting "" back
+    // means the entry never surfaces at edit time, which is the one thing that
+    // makes the diary worth writing to — so it must not happen by accident.
+    for (const given of [".claude", ".github", "src", "test", "src/sim/water"]) {
+      expect(normaliseScope(given)).not.toBe("");
+    }
+  });
+
   test("candidates are the path's own prefixes, so the lookup stays indexed", () => {
     expect(scopeCandidates("src/sim/water/flow.ts")).toEqual(["", "src", "src/sim", "src/sim/water"]);
   });

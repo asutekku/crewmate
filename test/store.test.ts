@@ -43,38 +43,74 @@ afterEach(() => {
 });
 
 describe("source hygiene", () => {
+  /**
+   * Every source file, DISCOVERED rather than listed.
+   *
+   * Both guards below started as hand-maintained lists and both were defeated
+   * the same way — by a file written after the list was: `diary.ts` hit the
+   * backtick trap on its first typecheck while absent from one list, and took a
+   * NUL byte from a bad `sed` while absent from the other. A list of files to
+   * check is a list somebody has to remember to update, which is precisely what
+   * a guard exists to stop relying on.
+   */
+  async function sourceFiles(): Promise<Array<{ path: string; text: string }>> {
+    const root = new URL("../", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+    const glob = new Bun.Glob("{core,hooks,test}/*.ts");
+    const out: Array<{ path: string; text: string }> = [];
+    for await (const rel of glob.scan(root)) {
+      out.push({ path: rel, text: await Bun.file(`${root}/${rel}`).text() });
+    }
+    out.push({ path: "cli.ts", text: await Bun.file(`${root}/cli.ts`).text() });
+    return out;
+  }
+
+  test("the sweep actually finds the source files", async () => {
+    // A discovery bug would make both guards below pass vacuously, which is
+    // worse than the lists they replaced.
+    const files = await sourceFiles();
+    expect(files.length).toBeGreaterThan(15);
+    expect(files.map((f) => f.path)).toContain("cli.ts");
+    expect(files.some((f) => f.path.endsWith("diary.ts"))).toBe(true);
+  });
+
   test("no SQL comment contains a backtick", async () => {
     // COST FOUR ROUND TRIPS BEFORE THIS EXISTED. The schema lives in a JS
     // template literal, so a backtick in a `-- comment` terminates the string
     // and the file stops parsing — with an error pointing at the comment rather
     // than at the cause. Markdown habits make it an easy thing to type.
-    // EVERY file that holds SQL, not a list of the ones remembered at the
-    // time: `diary.ts` hit this same trap on its first typecheck because it
-    // was not on this list.
-    for (const file of ["../core/store.ts", "../core/work.ts", "../core/diary.ts"]) {
-      const text = await Bun.file(new URL(file, import.meta.url)).text();
-      const offenders = text
-        .split("\n")
-        .map((line, i) => ({ line, n: i + 1 }))
-        .filter(({ line }) => /^\s*--/.test(line) && line.includes("`"));
-      expect(offenders.map((o) => `${file}:${o.n}`)).toEqual([]);
+    const offenders: string[] = [];
+    for (const { path, text } of await sourceFiles()) {
+      text.split("\n").forEach((line, i) => {
+        if (/^\s*--/.test(line) && line.includes("`")) offenders.push(`${path}:${i + 1}`);
+      });
     }
+    expect(offenders).toEqual([]);
   });
 
   test("no source file contains a raw control character", async () => {
-    // Same class: a literal ESC or BEL in the source is invisible in a diff,
-    // makes grep report the file as binary, and cannot be matched by an edit
-    // whose pattern is typed as an escape. Both traps cost real time today.
-    for (const file of ["../core/topic.ts", "../core/names.ts", "../core/store.ts"]) {
-      const text = await Bun.file(new URL(file, import.meta.url)).text();
-      const bad: number[] = [];
+    // Same class: a literal ESC, BEL or NUL is invisible in a diff, makes grep
+    // report the file as binary, and cannot be matched by an edit whose pattern
+    // is typed as an escape. A NUL reached `diary.ts` from a `sed` that
+    // corrupted a line it was not even targeting — and every test still passed,
+    // because a NUL works fine as a string separator.
+    //
+    // ONE EXEMPTION, and it is a file rather than a rule: `board.test.ts`
+    // embeds real ANSI escapes on purpose, to prove painted text measures the
+    // same width as plain. Testing colour without a real ESC is testing
+    // something else. Everything but that file must be clean.
+    const ANSI_BY_DESIGN = "board.test.ts";
+    const offenders: string[] = [];
+    for (const { path, text } of await sourceFiles()) {
+      const escOk = path.endsWith(ANSI_BY_DESIGN);
       for (let i = 0; i < text.length; i++) {
         const c = text.charCodeAt(i);
         // Tab, LF and CR are the only control characters source may contain.
-        if (c < 0x20 && c !== 9 && c !== 10 && c !== 13) bad.push(i);
+        if (c >= 0x20 || c === 9 || c === 10 || c === 13) continue;
+        if (escOk && c === 0x1b) continue;
+        offenders.push(`${path}:${i} (0x${c.toString(16)})`);
       }
-      expect({ file, bad }).toEqual({ file, bad: [] });
     }
+    expect(offenders).toEqual([]);
   });
 });
 

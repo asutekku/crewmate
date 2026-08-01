@@ -174,7 +174,7 @@ export function unpackTags(packed: string): string[] {
  * because an agent that just edited `src/sim/water/flow.ts` will naturally pass
  * that, and refusing it teaches nothing.
  */
-export function normaliseScope(raw: string, looksLikeFile = /\.[a-z0-9]+$/i): string {
+export function normaliseScope(raw: string, looksLikeFile = /[^/.]\.[a-z0-9]+$/i): string {
   const s = raw.trim().replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+$/, "");
   if (s === "" || s === ".") return "";
   return looksLikeFile.test(s) ? s.split("/").slice(0, -1).join("/") : s;
@@ -575,7 +575,7 @@ export class DiaryStore {
     for (const a of all) {
       for (const b of all) {
         if (a.topic === b.topic) continue;
-        const key = [a.topic, b.topic].sort().join(" ");
+        const key = [a.topic, b.topic].sort().join(" ");
         if (seen.has(key) || !nearTopic(a.topic, b.topic)) continue;
         seen.add(key);
         problems.push({
