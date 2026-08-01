@@ -15,6 +15,7 @@ import { agoText, claimName, withStore } from "../core/store.ts";
 import { emit, readPayload } from "../core/shared.ts";
 import { currentBranch, relPath, resolveProject, worktreeRoot } from "../core/repo.ts";
 import { dirtyFiles } from "../core/dirty.ts";
+import { LOUD_KINDS } from "../core/diary.ts";
 
 /**
  * How recent a claim must be to count as "they are mid-edit, leave it alone".
@@ -32,6 +33,56 @@ function dedupeBySession(claims: readonly Claim[]): Claim[] {
   const seen = new Map<string, Claim>();
   for (const c of claims) if (!seen.has(c.sessionId)) seen.set(c.sessionId, c);
   return [...seen.values()];
+}
+
+/** At most this many loud entries are quoted in full before the pointer wins. */
+const LOUD_SHOWN = 2;
+
+/** `withStore`'s callback argument, so a helper can take one. */
+type StoreHandle = Parameters<Parameters<typeof withStore>[1]>[0];
+
+/**
+ * What the diary knows about the folder this edit lands in.
+ *
+ * THE POINT OF THE WHOLE FEATURE. A diary nobody reads is a diary nobody
+ * writes, and this is the only moment where a past finding is worth more than
+ * it costs: the agent is about to touch the code the finding is about.
+ *
+ * A POINTER, NOT A DUMP, with one exception. Entry bodies cost hundreds of
+ * tokens and are paid by every agent on every edit; a count and a command cost
+ * one line. The exception is `warning` and `error`, whose titles are quoted —
+ * those are the ones somebody wrote down specifically so the next person would
+ * not repeat them, and a pointer they have to follow is a pointer they will not.
+ */
+function diaryLines(store: StoreHandle, path: string): string[] {
+  const total = store.diary.countForPath(path);
+  if (total === 0) return [];
+
+  const loud = store.diary.forPath(path, { limit: LOUD_SHOWN, kinds: LOUD_KINDS });
+  const lines: string[] = [];
+  for (const e of loud) {
+    const where = e.scope !== "" ? ` [${e.scope}]` : "";
+    // TITLES only — the body is what `cli.ts note <id>` is for. A title states
+    // the claim, which is enough to decide whether the body is worth opening.
+    lines.push(`- ${e.kind}${where}: ${e.title} (${e.agent}, \`cli.ts note ${e.id}\`)`);
+  }
+  const rest = total - loud.length;
+  if (rest > 0) {
+    // THE PATH, not its directory. Caught live 2026-08-01 by this hook firing
+    // on its own file: entries scoped to `.claude/hooks/presence` were reported
+    // while the pointer read `--scope .claude/hooks/presence/hooks`, which
+    // matched nothing. `--scope` covers a path the way this lookup does — every
+    // enclosing folder — so handing it the file is what makes the advice true.
+    lines.push(
+      `- ${rest} more diary ${rest === 1 ? "entry covers" : "entries cover"} this folder — ` +
+        `\`cli.ts recall --scope ${path}\``,
+    );
+  }
+  if (lines.length === 0) return [];
+  return [
+    `The diary has ${total} ${total === 1 ? "entry" : "entries"} about this folder:`,
+    ...lines,
+  ];
 }
 
 async function main(): Promise<void> {
@@ -56,7 +107,7 @@ async function main(): Promise<void> {
   const outsideTree = /^(?:[A-Za-z]:\/|\/)/.test(path.replace(/\\/g, "/"));
   if (outsideTree) return;
 
-  const warning = withStore(project.dbPath, (store) => {
+  const notice = withStore(project.dbPath, (store) => {
     const now = Date.now();
     store.touch(sessionId, now);
     // The tree is re-read from the cwd of the EDIT, which is the most current
@@ -79,6 +130,15 @@ async function main(): Promise<void> {
     const handle = store.handleForOrRegister(sessionId, tree, currentBranch(cwd), now);
     if (!handle) return null;
 
+    // Read on EVERY edit, not only when a peer collides: the two are unrelated
+    // questions ("is someone else in this file" vs "what do we already know
+    // about this code"), and gating the diary on an overlap would surface it
+    // almost never. Bounded by path depth against an index — see `scopeCandidates`.
+    const diary = diaryLines(store, path);
+
+    /** The diary alone, when there is no overlap to report alongside it. */
+    const diaryOnly = (): string | null => (diary.length > 0 ? diary.join("\n") : null);
+
     // Read peers' claims BEFORE recording our own, so this session's claim
     // cannot appear in its own conflict list.
     const claimed = store.conflictingClaims(sessionId, path, now);
@@ -86,7 +146,7 @@ async function main(): Promise<void> {
     // Edit is a hunk — reading "Write" against a file two agents share is worth
     // more alarm than reading "Edit".
     store.claim(sessionId, path, now, { tool: payload.tool_name ?? "", worktree: tree });
-    if (claimed.length === 0) return null;
+    if (claimed.length === 0) return diaryOnly();
 
     // Same tree means their edits are literally in these files right now; a
     // separate worktree is an independent checkout, so the risk is a merge later
@@ -134,7 +194,7 @@ async function main(): Promise<void> {
       for (const o of sameTree) {
         if (now - o.tsMs > MID_EDIT_GRACE_MS) store.releaseClaim(o.sessionId, o.path);
       }
-      return null;
+      return diaryOnly();
     }
 
     // Announce the overlap to the log too, so the other agent learns about it on
@@ -221,11 +281,22 @@ async function main(): Promise<void> {
           `other cannot derive from the file.`,
       );
     }
-    return lines.join("\n");
+    // The overlap first: it is about THIS edit colliding right now, where the
+    // diary is background about the folder. A reader skimming gets the urgent
+    // half without having to pass the reference half.
+    return [...lines, ...(diary.length > 0 ? ["", ...diary] : [])].join("\n");
   });
 
-  if (!warning) return;
-  emit("PreToolUse", warning, "presence: file also claimed by another agent");
+  if (!notice) return;
+  // The status line names the OVERLAP only when there is one — a diary pointer
+  // is not a warning, and labelling it as one is how a genuine collision stops
+  // being read as urgent.
+  const overlap = notice.startsWith("Another session is editing");
+  emit(
+    "PreToolUse",
+    notice,
+    overlap ? "presence: file also claimed by another agent" : "presence: diary notes on this folder",
+  );
 }
 
 try {

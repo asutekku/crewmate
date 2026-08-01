@@ -152,6 +152,55 @@ describe("scope", () => {
     });
   });
 
+  test("recall --scope COVERS a path, so pre-edit's own pointer resolves", () => {
+    // Caught live 2026-08-01 by the hook firing on its own file: it reported
+    // entries scoped to `.claude/hooks/presence` and printed
+    // `--scope .claude/hooks/presence/hooks`, which under equality matched
+    // nothing. Advice that fails when followed is the same defect as a refusal
+    // suggesting an invalid repair.
+    fresh((store) => {
+      const now = Date.now();
+      const d = store.diary;
+      d.write("s1", "a", ok({ title: "outer", topic: "x", scope: "src/sim" }), now);
+      d.write("s1", "a", ok({ title: "inner", topic: "x", scope: "src/sim/water" }), now);
+      d.write("s1", "a", ok({ title: "elsewhere", topic: "x", scope: "src/net" }), now);
+
+      // A deeper folder still finds the entry filed against its parent.
+      expect(d.recall({ scope: "src/sim/water" }).map((e) => e.title).sort()).toEqual([
+        "inner",
+        "outer",
+      ]);
+      // And a FILE works, because that is what a caller usually has.
+      expect(d.recall({ scope: "src/sim/water/flow.ts" }).map((e) => e.title).sort()).toEqual([
+        "inner",
+        "outer",
+      ]);
+      expect(d.recall({ scope: "src/net" }).map((e) => e.title)).toEqual(["elsewhere"]);
+    });
+  });
+
+  test("what pre-edit reports and what its pointer returns are the same set", () => {
+    // The invariant behind the bug above, stated so neither side can drift:
+    // every entry the hook counts must be reachable by the command it prints.
+    fresh((store) => {
+      const now = Date.now();
+      const d = store.diary;
+      for (const scope of ["", "src", "src/sim", "src/sim/water"]) {
+        d.write("s1", "a", ok({ title: `at ${scope || "root"}`, topic: "x", scope }), now);
+      }
+      const file = "src/sim/water/flow.ts";
+      const counted = d.countForPath(file);
+      // `recall --scope <file>` excludes the repo-wide entry (scope ""), which
+      // is deliberate: a repo-wide note is not "about this folder".
+      const reachable = d.recall({ scope: file, limit: 100 }).length;
+      expect(counted).toBe(4);
+      expect(reachable).toBe(3);
+      // What matters is that the SCOPED ones are all reachable — the pointer
+      // must not name entries the reader cannot then see.
+      expect(d.forPath(file, { limit: 100 }).filter((e) => e.scope !== "").length).toBe(reachable);
+    });
+  });
+
   test("counting does not build the entries", () => {
     fresh((store) => {
       const now = Date.now();

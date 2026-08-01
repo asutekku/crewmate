@@ -378,8 +378,21 @@ export class DiaryStore {
       args.push(f.kind);
     }
     if (f.scope !== undefined && f.scope !== "") {
-      where.push("diary.scope = ?");
-      args.push(normaliseScope(f.scope));
+      // COVERS, not equals — the same relation `forPath` uses, so a scope that
+      // pre-edit reported can be typed straight back into `recall`. Equality
+      // made the hook's own pointer return nothing (caught live 2026-08-01):
+      // entries at `.claude/hooks/presence` did not match a query for
+      // `.claude/hooks/presence/hooks`, which is the folder being edited.
+      //
+      // A FILE is accepted too, for the same reason `normaliseScope` accepts
+      // one: the caller usually has a path, not a folder.
+      const cands = scopeCandidates(f.scope).filter((c) => c !== "");
+      const self = normaliseScope(f.scope);
+      if (self !== "" && !cands.includes(self)) cands.push(self);
+      if (cands.length > 0) {
+        where.push(`diary.scope IN (${cands.map(() => "?").join(",")})`);
+        args.push(...cands);
+      }
     }
     if (f.sessionId !== undefined && f.sessionId !== "") {
       where.push("diary.session_id = ?");

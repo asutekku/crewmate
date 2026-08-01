@@ -128,6 +128,28 @@ async function main(): Promise<void> {
       // The trust note only earns its space once there is peer text to mistrust.
       lines.push("", TRUST_NOTE);
     }
+    // COUNTS AND TOPICS, never entries. Session-start context is paid by every
+    // agent on every session, and an agent arriving has no file in hand yet —
+    // so what it needs is to know the diary EXISTS and roughly what is in it.
+    // The entries themselves arrive at `pre-edit`, when a folder is actually
+    // being touched and a specific finding is worth its tokens.
+    const topics = store.diary.topics();
+    if (topics.length > 0) {
+      const total = topics.reduce((n, t) => n + t.count, 0);
+      const named = topics
+        .slice(0, 6)
+        .map((t) => `${t.topic} (${t.count})`)
+        .join(", ");
+      const more = topics.length > 6 ? `, +${topics.length - 6} more` : "";
+      lines.push(
+        "",
+        `The diary holds ${total} finding(s) other agents left about this repo, by topic: ${named}${more}.`,
+        "`cli.ts recall <words>` searches them; `cli.ts topic <name>` reads one topic. Findings" +
+          " about a folder you edit surface on their own. Add one with" +
+          ' `cli.ts note "<what you found>" --topic <t> --scope <folder>` — it outlives this' +
+          " session and is readable from every worktree.",
+      );
+    }
     return { text: lines.join("\n"), name: me, peerCount: peers.length };
   });
 
