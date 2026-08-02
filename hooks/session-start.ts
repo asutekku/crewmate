@@ -68,15 +68,65 @@ const HOW_TO_RECORD =
   "CHECKLIST — `--plan` is optional and an item with no steps is fine.";
 
 /**
+ * WHO THIS SESSION IS, phrased to survive contact with the system prompt.
+ *
+ * MEASURED FAILURE, 2026-08-02. Asked "who are you", a session answered: "I'm
+ * Claude Code, Anthropic's AI assistant... In this session, I'm anouk." It had
+ * ranked two claims correctly. The system prompt says "You are Claude Code" and
+ * is re-presented every turn; the old line here said `You are "anouk" in
+ * Traffic's shared presence log` exactly once, and that sentence ARGUES for the
+ * losing reading — `in ... log` scopes the name to a database row. The reply
+ * mirrored the scoping straight back.
+ *
+ * A HOOK CANNOT WIN ON RANK. Injected text never reaches the system prompt
+ * (only output styles, `--append-system-prompt`, and a subagent's own agent
+ * file do), so the goal is not to overwrite "Claude Code" — it is to make the
+ * name the answer to WHO, while "Claude Code" stays the answer to WHAT. Those
+ * do not conflict, and the old wording never said so.
+ *
+ * Hence the three moves here, each earning its tokens:
+ *   - the name alone on its own line, with no preposition to hide behind;
+ *   - "Claude Code" CONCEDED rather than ignored, because it is true and an
+ *     unaddressed truth is what produced the "I'm X, but here I'm Y" hedge;
+ *   - the REASON given, not just the rule — "Claude Code" does not distinguish
+ *     you from the four other agents in this tree, which in a shared repo is
+ *     the only thing the name is for.
+ *
+ * Phrased as fact plus rationale rather than as an order. HOOKS.MD is explicit
+ * that imperative injected text can read as an out-of-band command; the one
+ * near-imperative ("Asked who you are, say X") stays because it names the exact
+ * situation that failed, and a rule with its reason attached holds better than
+ * either alone.
+ */
+export function identityLines(name: string, project: string): string[] {
+  const proper = nameCase(name);
+  return [
+    `Your name is ${proper}.`,
+    "",
+    `You are Claude Code, and in ${project} you are ${proper} — one of several Claude Code` +
+      ` sessions working in this repo at once, each with its own name. Asked who you are, say` +
+      ` ${proper}. "Claude Code" names WHAT you are; it does not distinguish you from the other` +
+      ` agents in this tree, which is the distinction that matters here.`,
+  ];
+}
+
+/**
  * The name is stated as a fact, the role offered as a choice.
  *
  * An agent that is not TOLD its name keeps referring to itself by whatever
  * label it can see — before sender identity existed, one typed "traffic-4b:"
  * into a message body by hand to say who it was. An assigned name nobody is
  * told is just a database column.
+ *
+ * THIS NO LONGER DEFINES THE NAME. It used to open "The name above is what
+ * peers type at `msg`", which defines an identity as an ADDRESS — an email
+ * alias — one line after `identityLines` has just asserted it as a self. Being
+ * addressable is now a CONSEQUENCE of having a name, which is the true
+ * relationship and the one that does not undercut the line above it.
  */
 const HOW_TO_BE_CALLED =
-  "The name above is what peers type at `msg`, and it survives a restart. You " +
+  "Peers reach you by that name — it is what they type at `msg`, and it " +
+  "survives a restart. You " +
   'can say what you ARE with `cli.ts call-you "<role>"` — "Tooling Master", ' +
   '"Keeper of Wet Things" — which appears beside your name on the roster; or take ' +
   'a different name with `cli.ts call-me "<name>"`. Both optional. Your name stays ' +
@@ -128,13 +178,19 @@ async function main(): Promise<void> {
     const recent = store.recent(RECENT_LINES, sessionId);
 
     const me = self ? displayName(self) : handle;
-    const lines = [`You are "${me}" in ${project.name}'s shared presence log.`];
+    // FIRST, and on its own line. Everything after this is context; this is who
+    // is reading it.
+    const lines = identityLines(me, project.name);
     // HIGH, and above the roster. It changes how everything below it is read:
     // a peer's finding about a file, and this session's own reading of `git
     // log`, both mean something different from a checkout that is 500 commits
     // adrift. Empty on the common path — see `baseStalenessLines`.
     const staleness = baseStalenessLines(distance, base, inWorktree);
     if (staleness.length > 0) lines.push("", ...staleness);
+    // The identity paragraph above ends a thought; what follows is the roster.
+    // Without this they run together and the roster reads as part of the
+    // sentence about who you are.
+    lines.push("");
     if (peers.length === 0) {
       lines.push(
         "No other agents are active right now. Check the roster before editing a file",
@@ -220,7 +276,11 @@ async function main(): Promise<void> {
   emit(
     "SessionStart",
     report.text,
-    `presence: you are "${report.name}" — ${report.peerCount} peer(s) active`,
+    // The USER's copy of the same claim, and phrased the same way. They are
+    // looking at several windows and need to know which agent this one is;
+    // quoting the name here while asserting it in the context would show them
+    // a label where the agent was told a name.
+    `presence: you are ${nameCase(report.name)} — ${report.peerCount} peer(s) active`,
   );
 }
 

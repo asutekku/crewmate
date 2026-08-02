@@ -19,8 +19,9 @@
  * changes no attribution.
  */
 
-import { claimName, withStore } from "../core/store.ts";
+import { claimName, displayName, withStore } from "../core/store.ts";
 import { emit, readPayload } from "../core/shared.ts";
+import { minionName, nameCase } from "../core/names.ts";
 import { resolveProject } from "../core/repo.ts";
 
 /** Enough to spot a collision; a full list would crowd a fresh context. */
@@ -39,17 +40,37 @@ async function main(): Promise<void> {
     // Recorded FIRST and unconditionally: the roster line is owed to the
     // operator whether or not this subagent gets a warning to read. Returning
     // early on "no claims to report" below would have skipped it.
+    let seq = 0;
     if (payload.agent_id) {
-      store.startMinion(payload.agent_id, sessionId, now, {
+      seq = store.startMinion(payload.agent_id, sessionId, now, {
         ...(payload.agent_type !== undefined ? { agentType: payload.agent_type } : {}),
       });
     }
     const claims = store.allClaims(now);
     const sessions = store.liveSessions(now);
     const self = sessions.find((s) => s.sessionId === sessionId);
+    // WHO THIS SUBAGENT IS, before anything it might collide with. A minion
+    // arrives with an empty context and its own system prompt saying "Claude
+    // Code", so it has even less to go on than a parent session does — and the
+    // parent's name is the one thing that makes its edits attributable in `who`.
+    // Stated even when there is nothing else to say, which is why the
+    // no-claims early return below now comes after it.
+    const parent = self ? displayName(self) : "";
+    const identity =
+      seq > 0 && parent !== ""
+        ? [
+            `You are ${minionName(parent, seq)}.`,
+            "",
+            `You are Claude Code, spawned by ${nameCase(parent)} — one of several Claude Code` +
+              ` sessions working in this repo at once. Your edits are recorded under` +
+              ` ${nameCase(parent)}'s name, because that is the tree they land in. Asked who` +
+              ` you are, say so: peers cannot reach you directly, only ${nameCase(parent)}.`,
+          ]
+        : [];
+
     // Only OTHER sessions' claims: the parent's own are this subagent's to edit.
     const others = claims.filter((c) => c.handle !== self?.handle);
-    if (others.length === 0) return null;
+    if (others.length === 0) return identity.length > 0 ? identity.join("\n") : null;
 
     const byHandle = new Map<string, string[]>();
     for (const c of others.slice(0, MAX_PATHS)) {
@@ -59,7 +80,9 @@ async function main(): Promise<void> {
       // session's tree.
       byHandle.set(claimName(c), [...(byHandle.get(claimName(c)) ?? []), c.path]);
     }
-    const lines = ["Other Claude Code sessions in this project are editing these files:"];
+    const lines = [...identity];
+    if (lines.length > 0) lines.push("");
+    lines.push("Other Claude Code sessions in this project are editing these files:");
     for (const [who, paths] of byHandle) lines.push(`  ${who}: ${paths.join(", ")}`);
     lines.push(
       "Edits to them may collide with work already in progress elsewhere in this tree.",
