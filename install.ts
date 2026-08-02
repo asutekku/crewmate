@@ -104,6 +104,10 @@ const REGISTRATIONS: ReadonlyArray<readonly [string, unknown]> = [
   ["SessionStart", entry("session-start.ts", { statusMessage: "Checking for other agents…" })],
   ["UserPromptSubmit", entry("prompt-submit.ts")],
   ["PreToolUse", { matcher: "Edit|Write|MultiEdit", ...(entry("pre-edit.ts") as object) }],
+  // A SECOND PreToolUse, under a different matcher. Separate from `pre-edit`
+  // because it answers a different question and must not pay that hook's db
+  // read: this one only inspects the command string.
+  ["PreToolUse", { matcher: "Bash", ...(entry("pre-bash.ts") as object) }],
   // Mid-turn delivery. Fires after every batch of tool calls, so the script's
   // own fast path (see tool-batch.ts) is what keeps it affordable.
   ["PostToolBatch", entry("tool-batch.ts")],
@@ -199,9 +203,26 @@ async function install(force: boolean): Promise<void> {
   // event copied the new script and never registered it — while `VERSION`
   // advanced, so the roster reported this machine as current. The documented
   // update command was the broken path.
-  const missing = REGISTRATIONS.filter(
-    ([event]) => !(Array.isArray(hooks[event]) ? hooks[event] : []).some((e) => isOurs(e)),
-  ).map(([event]) => event);
+  // Compared per SCRIPT, not per event. An event can hold several of our
+  // registrations, so "does PreToolUse have one of ours" answers yes while a
+  // newly added PreToolUse(Bash) guard is still absent -- the same class of
+  // false-positive as the event-set bug above, one level down.
+  // The SCRIPT PATH, which lives in `args` -- `command` is the interpreter and
+  // is `"bun"` for every one of ours, so comparing on it makes all fifteen
+  // registrations look identical and any newly added hook look installed.
+  // (Written that way first; it silently registered nothing.)
+  const script = (reg: unknown): string => {
+    const h = (reg as { hooks?: Array<{ command?: string; args?: string[] }> }).hooks?.[0];
+    return (h?.args?.[0] ?? h?.command ?? "").trim();
+  };
+  const installed = new Set(
+    Object.values(hooks).flatMap((arr) =>
+      (Array.isArray(arr) ? arr : []).filter((e) => isOurs(e)).map(script),
+    ),
+  );
+  const missing = REGISTRATIONS.filter(([, reg]) => !installed.has(script(reg))).map(
+    ([event]) => event,
+  );
   if (raw.includes("agent-presence/bin") && !force && missing.length === 0) {
     console.log("Hooks already registered — scripts updated. Use --force to re-register.");
     return;
@@ -209,9 +230,19 @@ async function install(force: boolean): Promise<void> {
   if (missing.length > 0 && !force) {
     console.log(`Registering ${missing.length} new event(s): ${missing.join(", ")}`);
   }
+  // ACCUMULATE PER EVENT, never assign. One event can carry SEVERAL of our
+  // registrations under different matchers -- `PreToolUse` has both the
+  // Edit|Write guard and the Bash one -- and assigning inside the loop made the
+  // last entry for an event silently discard every earlier one. Clearing our
+  // own entries once, before the loop, keeps the reinstall idempotent without
+  // dropping siblings.
+  const cleared = new Set<string>();
   for (const [event, reg] of REGISTRATIONS) {
-    const existing = (Array.isArray(hooks[event]) ? hooks[event] : []).filter((e) => !isOurs(e));
-    hooks[event] = [...existing, reg];
+    if (!cleared.has(event)) {
+      hooks[event] = (Array.isArray(hooks[event]) ? hooks[event] : []).filter((e) => !isOurs(e));
+      cleared.add(event);
+    }
+    hooks[event] = [...(hooks[event] as unknown[]), reg];
   }
   settings["hooks"] = hooks;
   await writeSettings(settings, raw === "{}" ? null : await Bun.file(SETTINGS).text());

@@ -21,7 +21,7 @@ bun .claude/hooks/presence/install.ts --force   # re-register hooks
 bun .claude/hooks/presence/install.ts --remove  # uninstall
 ```
 
-Copies the scripts to `~/.claude/agent-presence/bin/` and registers 15 hooks in
+Copies the scripts to `~/.claude/agent-presence/bin/` and registers 16 hooks in
 `~/.claude/settings.json` (backing it up first, and merging rather than
 replacing — your other settings are untouched). **Restart your sessions**
 afterwards; hooks are read at session start.
@@ -590,7 +590,8 @@ replaces `bin/` wholesale so a module that moves cannot leave a stale twin.
 | ------------------- | ------------------------------------------------------------------------- |
 | `session-start.ts`  | **SessionStart** — register; inject the roster.                           |
 | `prompt-submit.ts`  | **UserPromptSubmit** — heartbeat; deliver unread; record the stated task. |
-| `pre-edit.ts`       | **PreToolUse** — claim the path; warn on peer overlap.                    |
+| `pre-edit.ts`       | **PreToolUse**(Edit) — claim the path; warn on peer overlap.             |
+| `pre-bash.ts`       | **PreToolUse**(Bash) — deny a loop polling a background task's output.   |
 | `tool-batch.ts`     | **PostToolBatch** — mid-turn delivery.                                    |
 | `turn-end.ts`       | **Stop** — publish the turn's files; deliver directed mail.               |
 | `turn-failed.ts`    | **StopFailure** — a dead turn stops reading as "still working".           |
