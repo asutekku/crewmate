@@ -27,6 +27,8 @@ import { ensureBaseDir } from "./repo.ts";
 import { createWorkTables, WorkStore } from "./work.ts";
 import { createDiaryTables, DiaryStore } from "./diary.ts";
 import { createQuestionTables, QuestionStore } from "./questions.ts";
+import { collectStats } from "./stats.ts";
+import type { Stats } from "./stats.ts";
 import { discipleName, fullName, GIVEN_NAMES, pickName } from "./names.ts";
 import { loadConfig } from "./config.ts";
 
@@ -642,6 +644,20 @@ export class Store {
   /** Questions between agents, sharing this connection. */
   get questions(): QuestionStore {
     return new QuestionStore(this.db);
+  }
+
+  /**
+   * Everything `cli.ts stats` reports, over this connection.
+   *
+   * A FUNCTION TAKING THE HANDLE, not more methods here, and not a class. The
+   * aggregates cut ACROSS every table this file owns — the row counts are
+   * discovered from `sqlite_master` rather than named, and the concurrency
+   * histogram is a query no other caller wants. Folding them in would put a
+   * dozen one-caller reporting queries beside the roster's own, and none of
+   * them can be tested without going through the whole Store.
+   */
+  stats(memories: number, topAgents?: number): Stats {
+    return collectStats(this.db, memories, topAgents);
   }
 
   /** Sessions seen recently enough to be plausibly alive, oldest first. */

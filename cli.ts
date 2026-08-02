@@ -93,6 +93,7 @@ import { checkNote, nearTopic, parseTags } from "./core/diary.ts";
 import { checkMemory, lineageKey, withPersonal } from "./core/personal.ts";
 import type { DiaryEntry, DiaryKind } from "./core/diary.ts";
 import { dirtyFiles } from "./core/dirty.ts";
+import { sizeText, spanText, usageFlag } from "./core/stats.ts";
 import { agentTally, briefAge, briefAgo, itemLines } from "./core/board.ts";
 import type { BoardPaint } from "./core/board.ts";
 import {
@@ -580,6 +581,154 @@ function where(): void {
   const drift =
     distance.behind === 0 ? `up to date with ${base}` : `${distance.behind} behind ${base}`;
   console.log(`${dim("base:   ")} ${drift}, ${own}`);
+}
+
+/**
+ * What this tool has actually accumulated, and which of its features are dead.
+ *
+ * A DIAGNOSTIC, NOT A DASHBOARD. It exists because answering "how much is in
+ * here?" previously meant hand-written SQL against a db filename you had to
+ * guess, and two of six such attempts failed — one on the path, one on a column
+ * that does not exist. Every number below was reachable before; none of it was
+ * reachable without guessing.
+ *
+ * The unused flags are the point. A feature with no rows has never been used by
+ * anybody, which is the only evidence that can retire it — and it is invisible
+ * from inside a session, where every feature looks equally available.
+ */
+function stats(): void {
+  // Counted separately because personal memories are the one store that is NOT
+  // per-project: `personal.db` sits beside every project db rather than inside
+  // one. A missing file reads as zero, never as a crash — an agent that has
+  // never run `remember` has no such db, and that is a valid answer.
+  let memories = 0;
+  try {
+    memories = withPersonal((personal) => personal.count());
+  } catch {
+    memories = 0;
+  }
+
+  withStore(PROJECT.dbPath, (store) => {
+    const now = Date.now();
+    const s = store.stats(memories);
+
+    console.log(bold("store"));
+    console.log(`  ${dim("project")}  ${PROJECT.name}`);
+    console.log(`  ${dim("db     ")}  ${PROJECT.dbPath}`);
+    console.log(`  ${dim("size   ")}  ${sizeText(dbBytes(PROJECT.dbPath))}`);
+
+    // ABOVE THE TABLES, NOT BELOW THEM. Everything that follows is one
+    // operator's sample, and a number read without its window becomes a
+    // property of the system — which is how "peak 5 agents in 14 hours" got
+    // quoted as a ceiling on what the tool should support. A footnote is read
+    // second and quoted never, so the window goes first.
+    console.log(bold("\nsample"));
+    if (s.sample.activeHours === 0) {
+      console.log(dim("  no activity recorded"));
+    } else {
+      console.log(
+        `  ${dim("window ")} ${s.sample.activeHours} active hours` +
+          ` over ${spanText(0, s.sample.spanMs)}`,
+      );
+      console.log(
+        dim("  a low count here measures this sample, not what the tool supports:"),
+      );
+      console.log(dim("  feature age and whether agents were told it exists are NOT recorded."));
+    }
+
+    console.log(bold("\nrows"));
+    const widest = s.tables.reduce((w, t) => Math.max(w, t.table.length), 0);
+    for (const t of s.tables) {
+      console.log(`  ${t.table.padEnd(widest)}  ${String(t.rows).padStart(6)}`);
+    }
+
+    // The four disagree, and the disagreement is what the section is for: every
+    // agent edits, a fraction ever message, fewer open work, fewer still write
+    // a finding. One number would have to pick a source and be wrong elsewhere.
+    console.log(bold("\nagents seen"));
+    console.log(`  ${dim("by edits   ")} ${s.agents.edits}`);
+    // Marked inline because the gap between this and `by edits` reads as name
+    // churn and is not: `handle` keeps every session that ever spoke, including
+    // those swept at 90 minutes, so it is cumulative where the others are live.
+    console.log(
+      `  ${dim("by messages")} ${s.agents.messages}` +
+        ` ${dim("(cumulative — keeps swept sessions; not comparable to edits)")}`,
+    );
+    console.log(`  ${dim("by work    ")} ${s.agents.work}`);
+    console.log(`  ${dim("by diary   ")} ${s.agents.diary}`);
+
+    if (s.activity.length > 0) {
+      console.log(bold("\nbusiest agents"));
+      const nameCol = s.activity.reduce((w, a) => Math.max(w, a.agent.length), 0);
+      for (const a of s.activity) {
+        const span = spanText(a.firstMs, a.lastMs);
+        console.log(
+          `  ${handleColour(a.agent)(a.agent.padEnd(nameCol))}` +
+            `  ${String(a.edits).padStart(5)} edits` +
+            `  ${dim(`lived ${span.padStart(6)}`)}` +
+            `  ${dim(`last ${briefAgo(a.lastMs, now)}`)}`,
+        );
+      }
+    }
+
+    // THE NUMBER THIS COMMAND IS MOST WORTH RUNNING FOR. Much of the tool is
+    // built for a crowd; whether the crowd ever existed is only answerable
+    // from history, and it decides whether the next crowd feature is worth it.
+    console.log(bold("\nconcurrency"));
+    if (s.concurrency.activeHours === 0) {
+      console.log(dim("  no edits recorded"));
+    } else {
+      for (const b of s.concurrency.buckets) {
+        const label = `${b.agents} agent${b.agents === 1 ? "" : "s"}`;
+        const hours = `${b.hours} hour${b.hours === 1 ? "" : "s"}`;
+        console.log(`  ${label.padEnd(9)} ${hours}`);
+      }
+      console.log(
+        dim(`  ${s.concurrency.activeHours} active hours, peak ${s.concurrency.peak} at once`),
+      );
+      // The one number most likely to be quoted out of its window, and the one
+      // that was: co-presence is bounded by how many sessions the operator ran,
+      // which is a budget, not a property of the design.
+      console.log(dim("  bounded by how many sessions were run, not by what the tool supports"));
+    }
+
+    console.log(bold("\nmessages"));
+    if (s.messages.byKind.length === 0) {
+      console.log(dim("  none"));
+    } else {
+      const kindCol = s.messages.byKind.reduce((w, k) => Math.max(w, k.kind.length), 0);
+      for (const k of s.messages.byKind) {
+        console.log(`  ${k.kind.padEnd(kindCol)}  ${String(k.count).padStart(5)}`);
+      }
+      console.log(
+        dim(`  say: ${s.messages.directedSays} directed, ${s.messages.broadcastSays} broadcast`),
+      );
+    }
+
+    console.log(bold("\nfeature usage"));
+    const featCol = s.features.reduce((w, f) => Math.max(w, f.feature.length), 0);
+    for (const f of s.features) {
+      const flag = usageFlag(f.rows);
+      // Dim, not red. Red reads as a fault, and a zero here is an OBSERVATION
+      // with an unknown cause — the feature may be new, or never surfaced to a
+      // single session. It is still the row a reader came for, so it carries
+      // the longest label in the table; it just does not carry an alarm.
+      const tail = flag !== "" ? ` ${dim(flag)}` : f.detail !== "" ? ` ${dim(f.detail)}` : "";
+      console.log(`  ${f.feature.padEnd(featCol)}  ${String(f.rows).padStart(6)}${tail}`);
+    }
+  });
+}
+
+/**
+ * The db plus its WAL sidecars — real bytes on disk, and the WAL can dwarf the
+ * db itself between checkpoints.
+ *
+ * `Bun.file().size` reads 0 for a file that is not there, so an absent sidecar
+ * needs no guard: WAL is checkpointed away on a clean close, and its absence is
+ * the normal case rather than an error.
+ */
+function dbBytes(path: string): number {
+  return ["", "-wal", "-shm"].reduce((total, suffix) => total + Bun.file(path + suffix).size, 0);
 }
 
 /**
@@ -2162,6 +2311,9 @@ switch (cmd) {
     break;
   case "where":
     where();
+    break;
+  case "stats":
+    stats();
     break;
   case "help":
   case "--help":

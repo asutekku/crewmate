@@ -261,6 +261,19 @@ export class PersonalStore {
   }
 
   /**
+   * How many memories exist at all, for `cli.ts stats`.
+   *
+   * Not derived by summing `lineages()`, which is the obvious shortcut and is
+   * wrong: that query filters `lineage != ''`, so every row written before the
+   * lineage column existed would be silently dropped from a total whose whole
+   * job is to say whether the feature has ever been used.
+   */
+  count(): number {
+    const r = this.db.query(`SELECT COUNT(*) AS n FROM memories`).get() as { n: number } | null;
+    return Number(r?.n ?? 0);
+  }
+
+  /**
    * DELETES, where the shared diary deprecates.
    *
    * The asymmetry is deliberate. A shared finding that stopped being true is

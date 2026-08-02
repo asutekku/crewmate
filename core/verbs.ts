@@ -61,6 +61,7 @@ export const VERBS: readonly Verb[] = [
   { verb: "say", args: "<text>", blurb: "tell every agent something", group: "presence" },
   { verb: "msg", args: '<name> "<text>" [--from <name>]', blurb: "tell one agent something", group: "presence" },
   { verb: "where", args: "", blurb: "this session's repo, worktree, branch and drift from base", group: "presence" },
+  { verb: "stats", args: "", blurb: "what the store holds, and which features nobody uses", group: "presence" },
   { verb: "ask", args: '<name> "<question>"', blurb: "ask a peer something and record that a reply is owed", group: "presence" },
   { verb: "answer", args: '<id> "<answer>"', blurb: "answer a question asked of you", group: "presence" },
   { verb: "asks", args: "", blurb: "questions waiting on you, and what you are waiting for", group: "presence" },

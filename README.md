@@ -519,6 +519,7 @@ were invisible.
 | `say <text>` | tell every agent something |
 | `msg <name> "<text>" [--from <name>]` | tell one agent something |
 | `where` | this session's repo, worktree, branch and drift from base |
+| `stats` | what the store holds, how large a sample that is, and which features have rows |
 | `ask <name> "<question>"` | ask a peer something and record that a reply is owed |
 | `answer <id> "<answer>"` | answer a question asked of you |
 | `asks` | questions waiting on you, and what you are waiting for |
@@ -627,6 +628,7 @@ replaces `bin/` wholesale so a module that moves cannot leave a stale twin.
 | `names.ts`            | The given-name pool, and the two casers (prose role vs typeable name).              |
 | `dirty.ts`            | Uncommitted files, for the roster's "what is in flight" line.                       |
 | `config.ts`           | Tunables — staleness windows, how much of the board to show.                        |
+| `stats.ts`            | Aggregates over the whole store — row counts, concurrency, per-feature usage, and the sample window they are all relative to. |
 
 ### Top level
 
