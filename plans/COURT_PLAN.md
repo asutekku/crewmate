@@ -255,7 +255,29 @@ interface InjectionCandidate {
   actionable: boolean;
   dedupeKey: string;
   stateVersion: string;   // content fingerprint, NOT a timestamp
+  origin: 'operator' | 'peer' | 'system';
+  requiresPeerFraming: boolean;   // the allocator cannot infer this from text
 }
+```
+
+**Peer framing creates a circularity, so the order is specified rather than
+discovered:** the budget depends on whether framing is needed, and that depends
+on which candidates are selected.
+
+1. reserve the mandatory base header
+2. sort and dedupe
+3. **the first peer-framed candidate selected consumes its own size *and* the
+   framing overhead, atomically** — both fit or neither is selected
+4. later peer candidates consume only their own size
+5. if that first candidate plus framing cannot fit, fall back to its compact
+   actionable form, or omit it
+
+**And one aggregate fallback outside the discretionary budget.** If the envelope
+leaves no room even for a pointer, actionable work would vanish silently — so a
+single bounded line always survives:
+
+```text
+3 actionable items pending — run `cli.ts inbox`.
 ```
 
 `stateVersion` over a timestamp because "don't show this again unless it
@@ -367,16 +389,22 @@ wait on any of them:
 5. conditions and constraints attached to acts, not messages — below
 6. obligation history as events, not a mutable state column — below
 7. **binding separated from activation** — below
-8. **the event union covers activation, release, withdrawal and violation** —
-   below
-9. **clearance is a real object**, not prose about a disposition with no type —
-   below
-10. **warning and priority restored as orthogonal data** — `hazard` on the act,
-    `priority` on delivery
-11. the v2 reviewer holdout passed (P1)
-12. `rubric-v2.md` written and frozen before that review runs (P1)
+8. **the event union covers activation, release, withdrawal and violation, and
+   every event lands in a declared state** — the transition table, below
+9. **clearance is a real object with its own event log**, not prose about a
+   disposition with no type — below
+10. **warning and priority as orthogonal data** — `HazardNotice` as its own
+    record, `priority` per recipient on delivery
+11. **acts are discriminated variants**, so a correction without a target or an
+    `inform` carrying a responsibility cannot be built — below
+12. **`ActorRef` everywhere a session string was**, and trustworthy attribution
+    for new writes: diary 40 and 41 closed
+13. **typed `TriggerSpec` for automatic conditions**, and `ObligationDependency`
+    for the linked cases the branching tests describe
+14. the v2 reviewer holdout passed (P1)
+15. `rubric-v2.md` written and frozen before that review runs (P1)
 
-Items 1–10 are settled in this document. **11 and 12 are the gate**, and they
+Items 1–13 are settled in this document. **14 and 15 are the gate**, and they
 are P1's output — which is why P1 sits between the allocator and this slice
 rather than after it.
 
@@ -391,49 +419,107 @@ it owes. `ask`, `request`, `promise`, `handoff` and `grant` each mint one act
 *and* emit readable prose.
 
 ```ts
-type SpeechAct =
-  | 'inform' | 'question' | 'request' | 'promise'
-  | 'proposal' | 'correction' | 'handoff' | 'clearance';
+/**
+ * Never a bare session string. A session id cannot say "the operator", cannot
+ * carry a system-generated act, and has nothing to become when the session that
+ * made a commitment ends and the obligation is inherited. `legacy_uncertain`
+ * exists because two rows in this very store have a wrong `from_name` (diary 40,
+ * 41) and force-correcting them would invent history.
+ */
+type ActorRef =
+  | { kind: 'agent'; agentId: string }
+  | { kind: 'operator' }
+  | { kind: 'system'; component: string }
+  | { kind: 'legacy_uncertain'; label: string };
+
+/** ONE owner. Any-of versus all-of semantics are undesigned and nothing in the
+ *  corpus needs them; widen this only when that design exists. */
+type Responsibility =
+  | { kind: 'assigned'; actor: ActorRef }
+  | { kind: 'unassigned' };
 
 /** Where an act came from. Only the first two may drive authoritative state. */
 type ActOrigin = 'explicit_command' | 'sender_declared' | 'inferred' | 'reported';
 
-interface MessageAct {
+interface ActBase {
   id: string;
   sourceMessageId: number;
-  type: SpeechAct;
   origin: ActOrigin;
-
   // ROUTING is not RESPONSIBILITY. "I will tell Rowan when P3 lands" reaches
   // Rowan, but the author is the one who owes the telling.
-  authorSessionId: string;          // immutable: who made this act
-  recipientSessionIds: string[];    // who the prose is addressed to
-  responsibility?: Responsibility;  // who owes the action, if anyone yet
-
+  author: ActorRef;         // immutable: who made this act
+  recipients: ActorRef[];   // who the prose is addressed to
   text: string;
-  condition?: ObligationCondition;   // per ACT, not per message
-  constraints?: string[];            // per ACT
-  hazard?: { summary: string; subjectRef?: ObjectRef };  // semantic, not delivery
 }
 
-/** Delivery weight. Orthogonal to `hazard` — an urgent question is not a warning,
- *  and a warning about something months away is not urgent. */
+// Variants, so the type system enforces what the prose asks for: a correction
+// without a target and a handoff without a subject are unrepresentable rather
+// than merely discouraged. A flat interface with every field optional permits
+// `{ type: 'inform', responsibility, condition, constraints }`, which means
+// nothing.
+type MessageAct =
+  | (ActBase & { type: 'inform' })
+  | (ActBase & { type: 'question';
+      responsibility: Extract<Responsibility, { kind: 'assigned' }>;
+      condition?: ObligationCondition })
+  | (ActBase & { type: 'request';
+      proposedResponsibility: Responsibility;
+      condition?: ObligationCondition; constraints?: string[] })
+  | (ActBase & { type: 'promise';
+      responsibility: Extract<Responsibility, { kind: 'assigned' }>;
+      mode: CommitmentMode;
+      condition?: ObligationCondition; releaseBoundary?: ObligationCondition })
+  | (ActBase & { type: 'correction';
+      correctionType: CorrectionType; contradictsRef?: ObjectRef })
+  | (ActBase & { type: 'handoff';
+      subjectRef: ObjectRef; proposedRecipient: ActorRef; constraints?: string[] })
+  | (ActBase & { type: 'grant'; clearanceId: string })
+  | (ActBase & { type: 'proposal'; subjectRef?: ObjectRef });
+
+/**
+ * A hazard is its OWN record, not a field on an act.
+ *
+ * Message 110 carries a request, a promise, and a wake-epsilon warning that
+ * belongs to neither — it is about the subsystem. As a field it would have to be
+ * duplicated across acts or arbitrarily assigned to one; as a record it is
+ * stored once, can span several acts, and a warning-only message needs no
+ * invented `inform` act to hold it.
+ */
+interface HazardNotice {
+  id: string;
+  sourceMessageId: number;
+  relatedActIds: string[];
+  summary: string;
+  subjectRef?: ObjectRef;
+}
+
+/** Delivery weight, per recipient. Orthogonal to a hazard — an urgent question
+ *  is not a warning, and a warning about something months away is not urgent. */
 interface MessageDelivery {
+  recipient: ActorRef;
   priority: 'normal' | 'important' | 'urgent';
 }
 
 /**
- * Clearance is NOT an obligation and does not fit the obligation lifecycle:
- * nobody owes anything, and it ends by revocation rather than fulfilment.
- * It gets its own object with its own `grant -> revoke` life.
+ * Clearance is NOT an obligation: nobody owes anything under it, and it ends by
+ * revocation rather than fulfilment. `grant` is the ACT; it creates this object;
+ * `revoke` is a later event against it. Without its own event log the
+ * `grant -> revoke` life is describable but not auditable.
  */
 interface Clearance {
+  id: string;
+  sourceActId: string;
   scope: ObjectRef[];              // files, paths, subsystems
-  grantedBy: string;
-  grantedTo: string;
+  grantedBy: ActorRef;
+  grantedTo: ActorRef;
   constraints: string[];           // "stay inside packBand/fillRow"
   releaseBoundary?: ObligationCondition;
 }
+
+type ClearanceEvent =
+  | { type: 'granted' }
+  | { type: 'revoked'; reason?: string }
+  | { type: 'expired'; triggerRef?: ObjectRef };
 ```
 
 **One act per message is the wrong unit** — an earlier draft of this file had a
@@ -452,9 +538,14 @@ The scope constraint governs the clearance; the landing condition governs the
 promise. A message-level list loses which belongs to which.
 
 - [ ] acts as their own records; a message may have none, one, or several
-- [ ] the **sender's declared act wins**. Parsing may surface *"this appears to
-      contain an expected action — record a request?"* and may never manufacture
-      one. "FYI, not a request" wins
+- [ ] the **sender's declared act wins — over the act it qualifies, and no
+      further.** "FYI, not a request" defeats automatic obligation creation for
+      that act; it does not suppress a separate promise in the same message. A
+      sender can truthfully mean *"none of this is a request, but I am promising
+      to ping you"*, and a message-wide override would silently eat the promise.
+      Act-level structure is what makes a declaration local. Parsing may surface
+      *"this appears to contain an expected action — record a request?"* and may
+      never manufacture one
 - [ ] **inferred signals are not acts and are not stored as acts.** A separate,
       weaker record keeps a guess from ever being mistaken for a commitment by a
       later query that forgets to filter on `origin`:
@@ -475,8 +566,10 @@ promise. A message-level list loses which belongs to which.
       promise *activate later*:
 
       ```ts
-      type AuthorityState  = 'proposed' | 'binding' | 'declined' | 'cancelled';
-      type ActivationState = 'waiting' | 'active' | 'released' | 'satisfied' | 'violated';
+      type AuthorityState =
+        'proposed' | 'binding' | 'declined' | 'countered' | 'withdrawn' | 'cancelled';
+      type ActivationState =
+        'waiting' | 'active' | 'fulfilled' | 'released' | 'violated' | 'expired';
       ```
 
       In test 36 the promise to move the file is **binding the moment it is
@@ -496,10 +589,11 @@ promise. A message-level list loses which belongs to which.
         | { type: 'accepted' }
         | { type: 'declined'; reason?: string }
         | { type: 'countered'; replacementId: string }
-        | { type: 'reassigned'; from: string; to: string }
-        | { type: 'returned'; to: string }
-        | { type: 'withdrawn'; by: string; reason?: string }
+        | { type: 'withdrawn'; by: ActorRef; reason?: string }
         | { type: 'cancelled'; reason: string }
+        // ownership -- moves the owner WITHOUT touching either state
+        | { type: 'reassigned'; from: ActorRef; to: ActorRef }
+        | { type: 'returned'; to: ActorRef }
         // activation
         | { type: 'activated'; triggerRef?: ObjectRef }
         | { type: 'released'; why: string }
@@ -509,13 +603,39 @@ promise. A message-level list loses which belongs to which.
         | { type: 'violated'; evidenceRef?: ObjectRef };
       ```
 
+- [ ] **the transition table, written before any of it is built.** An earlier
+      draft had `satisfied` in the state union and `fulfilled` in the events,
+      plus `expired`, `withdrawn` and `countered` as events with no state to land
+      in — a fold that cannot be written:
+
+      | event | required prior | result |
+      |---|---|---|
+      | `accepted` | proposed | binding |
+      | `declined` | proposed | declined |
+      | `countered` | proposed | countered |
+      | `withdrawn` | binding | withdrawn |
+      | `cancelled` | proposed \| binding | cancelled |
+      | `activated` | binding + waiting | active |
+      | `fulfilled` | binding + active | fulfilled |
+      | `released` | binding + waiting\|active | released |
+      | `violated` | binding + active | violated |
+      | `expired` | binding + waiting\|active | expired |
+      | `reassigned` | binding | *owner only* |
+      | `returned` | binding | *owner only* |
+
+      The last two are the distinction worth keeping explicit: **ownership moves
+      without authority or activation moving.** Handing an obligation on does not
+      make it less binding or more active.
+
       **`violated` is load-bearing once `refrain` exists.** A no-touch promise
-      whose breach cannot be recorded is a promise the system can express but
-      not enforce — and the breach is the entire reason such promises are worth
-      making in a shared tree. `withdrawn` is likewise distinct from `cancelled`
-      and `returned`: the holder stepping back ("I am stopping rather than trying
-      a fourth fix") is a different event from the work being handed on or
-      called off, and message 295 is exactly that case.
+      whose breach the system cannot detect or record is one it can express and
+      nothing more — and the breach is the entire reason such promises are worth
+      making in a shared tree. (This tool notifies and coordinates; it does not
+      enforce. Recording a violation is what lets a person act on it.)
+      `withdrawn` is likewise distinct from `cancelled` and `returned`: the
+      holder stepping back ("I am stopping rather than trying a fourth fix") is a
+      different event from the work being handed on or called off, and message
+      295 is exactly that case.
 
 - [ ] dispositions **typed against their targets** — `grant`/`revoke` apply to a
       clearance, `accept`/`decline`/`counter` to a request or handoff, `return`
@@ -537,16 +657,57 @@ promise. A message-level list loses which belongs to which.
       always means *until you return it or this episode closes*; without a
       terminator it becomes a permanent stale prohibition nobody remembers to
       lift
-- [ ] condition as `{ text, anchorRef?, handling }` where handling is
-      `automatic | resurface_on_related_event | manual`. The system never
-      evaluates natural language; it knows which commitments to surface when the
-      anchored object changes
-- [ ] responsibility as a discriminated union, so the contradictory state cannot
-      be represented: `{ kind: 'assigned'; agentIds: [string, ...string[]] } |
-      { kind: 'unassigned' }`. **Start with a single owner** — multiple owners
-      raise any-of versus all-of semantics and nothing in the corpus needs shared
-      ownership. An unassigned expected action is a **responsibility gap**;
-      assignment or acceptance converts it into an obligation
+- [ ] **an `automatic` condition needs a typed trigger, not an `ObjectRef`.** A
+      ref identifies the commit; it does not carry the predicate or the branch,
+      so `{ text, anchorRef?, handling }` could describe "the moment it lands on
+      master" and never evaluate it. The three handlings need three shapes:
+
+      ```ts
+      type TriggerSpec =
+        | { kind: 'commit_reachable'; commitRef: ObjectRef; branch: string }
+        | { kind: 'work_completed'; workRef: ObjectRef }
+        | { kind: 'work_step_completed'; workRef: ObjectRef; step: number }
+        | { kind: 'obligation_resolved'; obligationId: string;
+            outcome: 'fulfilled' | 'answered' };
+
+      type ObligationCondition =
+        | { text: string; handling: 'automatic'; trigger: TriggerSpec }
+        | { text: string; handling: 'resurface_on_related_event'; anchorRef: ObjectRef }
+        | { text: string; handling: 'manual'; anchorRef?: ObjectRef };
+      ```
+
+      The system still never evaluates natural language — `text` is what a human
+      reads, `trigger` is what the machine checks, and only the automatic variant
+      has one. `obligation_resolved` is what gives test 36 a real path: fulfilling
+      the answer obligation is what fires the move-file promise
+- [ ] **linked obligations need an edge.** The branching tests describe one act
+      activating or releasing another and nothing in the schema connected them:
+
+      ```ts
+      interface ObligationDependency {
+        sourceObligationId: string;
+        onResolution: string;          // 'fulfilled', or a named branch
+        targetObligationId: string;
+        effect: 'activate' | 'release';
+      }
+      ```
+
+      For a branch the resolving agent names it rather than the system guessing
+      from prose — `cli.ts answer 146 --resolution stale-claim` versus
+      `--resolution editing-file`. **Inferring which branch a sentence means is
+      exactly the parsing this design refuses to do elsewhere**
+- [ ] responsibility as `{ kind: 'assigned'; actor: ActorRef } |
+      { kind: 'unassigned' }` — **one owner**, since any-of versus all-of
+      semantics are undesigned and nothing in the corpus needs them. An
+      unassigned expected action is a **responsibility gap**; assignment or
+      acceptance converts it into an obligation
+- [ ] **`createdBy: ActorRef` is immutable; `currentResponsible: Responsibility`
+      moves.** Reassignment and inheritance change who owes it, never who made it
+- [ ] **new structured acts require trustworthy attribution.** Historical rows
+      may stay `legacy_uncertain`, but an obligation authored off the defective
+      `from_name` path would be a commitment attributed to the wrong agent —
+      worse than no obligation. Diary 40 and 41 must be closed for new writes
+      before this ships
 - [ ] correction carries `correctionType` and an optional `contradictsRef`.
       Attaching contradictory evidence only — supersession stays explicit
 - [ ] **`reportedThirdPartyAct` is not a boolean.** Provenance needs who
