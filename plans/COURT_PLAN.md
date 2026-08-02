@@ -226,11 +226,22 @@ interface InjectionEnvelope {
   // Conditionally mandatory: added whenever ANY peer-authored text is selected.
   peerFraming: string[];
   candidates: InjectionCandidate[];
-  budgetChars: number;
+  // NOT a hard output ceiling: the mandatory header may exceed it (and says so),
+  // and the aggregate fallback sits outside it. It is the figure candidates are
+  // allocated against, so it is named for that rather than for a total nothing
+  // actually enforces.
+  targetChars: number;
 }
 
 // The only budget any candidate ever sees:
-Math.max(0, budgetChars - renderedMandatoryHeader.length - renderedPeerFraming.length)
+Math.max(0, targetChars - renderedMandatoryHeader.length - renderedPeerFraming.length)
+```
+
+`cli.ts injection` reports the two separately, so an overflow is visible rather
+than implied:
+
+```text
+target: 700   rendered: 742   mandatory overflow: 42
 ```
 
 **The trust boundary is part of the envelope, not a candidate.** The shipped
@@ -401,12 +412,30 @@ wait on any of them:
     for new writes: diary 40 and 41 closed
 13. **typed `TriggerSpec` for automatic conditions**, and `ObligationDependency`
     for the linked cases the branching tests describe
-14. the v2 reviewer holdout passed (P1)
-15. `rubric-v2.md` written and frozen before that review runs (P1)
+14. **`created` seeds both folds** — it declares authority and activation, or the
+    fold has no valid starting state
+15. **relinquishing does not end the obligation** — `withdrawn` pulls an
+    unaccepted proposal, `relinquished` leaves it binding and unowned. Otherwise
+    an agent deletes required work by declining to do it
+16. **one resolution vocabulary** — `fulfilled` + `resolutionKey`, no `answered`,
+    no untyped `onResolution`
+17. **active refrain success is `fulfilled`, not `released`** — "it worked" and
+    "it stopped mattering" must not collapse into one state
+18. **`ActOrigin` carries only authoritative origins**; inferred and reported
+    records cannot inhabit `MessageAct`
+19. **`ResponsibleActorRef` narrows who may own an obligation** to agent or
+    operator
+20. the v2 reviewer holdout passed (P1)
+21. `rubric-v2.md` written and frozen before that review runs (P1)
 
-Items 1–13 are settled in this document. **14 and 15 are the gate**, and they
+Items 1–19 are settled in this document. **20 and 21 are the gate**, and they
 are P1's output — which is why P1 sits between the allocator and this slice
 rather than after it.
+
+**Stop iterating on this schema.** Items 14–19 came from reviewing the fold on
+paper, and the paper has now given up what it has: the remaining questions are
+better answered by writing the fold and its tests than by another pass over the
+types. P0 is the next thing built.
 
 **The boundary the whole slice rests on:**
 
@@ -427,19 +456,41 @@ it owes. `ask`, `request`, `promise`, `handoff` and `grant` each mint one act
  * 41) and force-correcting them would invent history.
  */
 type ActorRef =
-  | { kind: 'agent'; agentId: string }
+  | { kind: 'agent'; agentId: string }   // immutable session uuid, NOT the display name
   | { kind: 'operator' }
   | { kind: 'system'; component: string }
   | { kind: 'legacy_uncertain'; label: string };
 
+/**
+ * Who can OWE something — a strict subset of who can be referenced.
+ *
+ * `ActorRef` alone would permit `assigned` to a `system` component or to
+ * `legacy_uncertain`, i.e. an obligation owed by "probably Hopper". That
+ * contradicts the requirement that new obligations carry trustworthy
+ * attribution, so the narrowing is a type rather than a rule in prose.
+ * `legacy_uncertain` stays usable for historical AUTHORSHIP, never for
+ * ownership.
+ */
+type ResponsibleActorRef =
+  | { kind: 'agent'; agentId: string }
+  | { kind: 'operator' };
+
 /** ONE owner. Any-of versus all-of semantics are undesigned and nothing in the
  *  corpus needs them; widen this only when that design exists. */
 type Responsibility =
-  | { kind: 'assigned'; actor: ActorRef }
+  | { kind: 'assigned'; actor: ResponsibleActorRef }
   | { kind: 'unassigned' };
 
-/** Where an act came from. Only the first two may drive authoritative state. */
-type ActOrigin = 'explicit_command' | 'sender_declared' | 'inferred' | 'reported';
+/**
+ * Where an act came from — and ONLY the authoritative origins.
+ *
+ * `inferred` and `reported` were members here while the prose said inferred
+ * signals are not acts and are not stored as acts. Leaving them in the union
+ * meant a query that forgot to filter on origin could read a guess as a
+ * commitment; removing them makes that unrepresentable. Both live in their own
+ * records (`InferredSignal`, and `ReportedAct` if it is ever built).
+ */
+type ActOrigin = 'explicit_command' | 'sender_declared';
 
 interface ActBase {
   id: string;
@@ -472,7 +523,8 @@ type MessageAct =
   | (ActBase & { type: 'correction';
       correctionType: CorrectionType; contradictsRef?: ObjectRef })
   | (ActBase & { type: 'handoff';
-      subjectRef: ObjectRef; proposedRecipient: ActorRef; constraints?: string[] })
+      subjectRef: ObjectRef; proposedRecipient: ResponsibleActorRef;
+      constraints?: string[] })
   | (ActBase & { type: 'grant'; clearanceId: string })
   | (ActBase & { type: 'proposal'; subjectRef?: ObjectRef });
 
@@ -511,7 +563,7 @@ interface Clearance {
   sourceActId: string;
   scope: ObjectRef[];              // files, paths, subsystems
   grantedBy: ActorRef;
-  grantedTo: ActorRef;
+  grantedTo: ResponsibleActorRef;
   constraints: string[];           // "stay inside packBand/fillRow"
   releaseBoundary?: ObligationCondition;
 }
@@ -584,24 +636,45 @@ promise. A message-level list loses which belongs to which.
 
       ```ts
       type ObligationEvent =
+        // CREATION SEEDS BOTH FOLDS. `{ type: 'created' }` alone cannot say
+        // which of four real starting states this is: an unconditional request
+        // is proposed+active, a conditional one proposed+waiting, an
+        // unconditional self-promise binding+active, a conditional one
+        // binding+waiting. The fold would have no valid start.
+        | { type: 'created';
+            authority: 'proposed' | 'binding';
+            activation: 'waiting' | 'active';
+            responsible: Responsibility }
         // authority
-        | { type: 'created' }
         | { type: 'accepted' }
         | { type: 'declined'; reason?: string }
         | { type: 'countered'; replacementId: string }
-        | { type: 'withdrawn'; by: ActorRef; reason?: string }
+        | { type: 'withdrawn'; by: ActorRef; reason?: string }   // PROPOSAL pulled
         | { type: 'cancelled'; reason: string }
         // ownership -- moves the owner WITHOUT touching either state
-        | { type: 'reassigned'; from: ActorRef; to: ActorRef }
-        | { type: 'returned'; to: ActorRef }
+        | { type: 'relinquished'; from: ActorRef; reason?: string }
+        | { type: 'reassigned'; from: ActorRef; to: ResponsibleActorRef }
+        | { type: 'returned'; to: ResponsibleActorRef }
         // activation
         | { type: 'activated'; triggerRef?: ObjectRef }
         | { type: 'released'; why: string }
         | { type: 'expired'; episodeId: string }
-        // outcome
-        | { type: 'fulfilled'; evidenceRef?: ObjectRef }
+        // outcome -- `resolutionKey` names the branch a dependency keys on
+        | { type: 'fulfilled'; resolutionKey?: string; evidenceRef?: ObjectRef }
         | { type: 'violated'; evidenceRef?: ObjectRef };
       ```
+
+      **`withdrawn` and `relinquished` are different events and an earlier draft
+      had only the first.** Withdrawing pulls an *unaccepted proposal* — the
+      requester no longer wants it. Relinquishing is the *current holder
+      stopping* while the work stays necessary, which is message 295 exactly:
+      "I am stopping rather than trying a fourth fix" did not make the fix
+      unnecessary, it made it unowned. Folding the second into the first would
+      let an agent **delete required work by declining to do it** — the precise
+      inverse of what durable responsibility is for. So `relinquished` leaves
+      authority `binding` and activation untouched, and sets
+      `currentResponsible` to `unassigned`; a following `returned` or
+      `reassigned` names the next owner.
 
 - [ ] **the transition table, written before any of it is built.** An earlier
       draft had `satisfied` in the state union and `fulfilled` in the events,
@@ -610,22 +683,34 @@ promise. A message-level list loses which belongs to which.
 
       | event | required prior | result |
       |---|---|---|
+      | `created` | — | *as declared on the event* |
       | `accepted` | proposed | binding |
       | `declined` | proposed | declined |
       | `countered` | proposed | countered |
-      | `withdrawn` | binding | withdrawn |
+      | `withdrawn` | **proposed** | withdrawn |
       | `cancelled` | proposed \| binding | cancelled |
       | `activated` | binding + waiting | active |
       | `fulfilled` | binding + active | fulfilled |
-      | `released` | binding + waiting\|active | released |
+      | `released` | binding + **waiting** | released |
       | `violated` | binding + active | violated |
       | `expired` | binding + waiting\|active | expired |
+      | `relinquished` | binding | *owner → unassigned* |
       | `reassigned` | binding | *owner only* |
       | `returned` | binding | *owner only* |
 
-      The last two are the distinction worth keeping explicit: **ownership moves
-      without authority or activation moving.** Handing an obligation on does not
-      make it less binding or more active.
+      The last three are the distinction worth keeping explicit: **ownership
+      moves without authority or activation moving.** Handing an obligation on
+      does not make it less binding or more active.
+
+      **`released` is for a commitment that became moot, never for one that
+      succeeded.** An active refrain that reaches its release boundary without a
+      breach is `fulfilled` — the agent *did* the staying-out. An earlier draft
+      let `released` cover both, which would make "the promise worked" and "the
+      promise stopped mattering" indistinguishable in every later count. So:
+
+      - waiting, and the condition stops being relevant → `released`
+      - active, boundary reached with no breach → **`fulfilled`**
+      - active, edited anyway → `violated`
 
       **`violated` is load-bearing once `refrain` exists.** A no-touch promise
       whose breach the system cannot detect or record is one it can express and
@@ -668,7 +753,7 @@ promise. A message-level list loses which belongs to which.
         | { kind: 'work_completed'; workRef: ObjectRef }
         | { kind: 'work_step_completed'; workRef: ObjectRef; step: number }
         | { kind: 'obligation_resolved'; obligationId: string;
-            outcome: 'fulfilled' | 'answered' };
+            resolutionKey?: string };
 
       type ObligationCondition =
         | { text: string; handling: 'automatic'; trigger: TriggerSpec }
@@ -686,23 +771,37 @@ promise. A message-level list loses which belongs to which.
       ```ts
       interface ObligationDependency {
         sourceObligationId: string;
-        onResolution: string;          // 'fulfilled', or a named branch
+        on: { event: 'fulfilled'; resolutionKey?: string };
         targetObligationId: string;
         effect: 'activate' | 'release';
       }
       ```
 
+      **One resolution vocabulary.** An earlier draft had `answered` in the
+      trigger, `fulfilled` in the events, and an untyped `onResolution: string`
+      in the dependency — three spellings for one idea, in the one place the rest
+      of this schema had just been made type-safe. A question is resolved by
+      *fulfilling its answer obligation*; `resolutionKey` names which branch.
+
       For a branch the resolving agent names it rather than the system guessing
       from prose — `cli.ts answer 146 --resolution stale-claim` versus
       `--resolution editing-file`. **Inferring which branch a sentence means is
-      exactly the parsing this design refuses to do elsewhere**
-- [ ] responsibility as `{ kind: 'assigned'; actor: ActorRef } |
+      exactly the parsing this design refuses to do elsewhere.** The question
+      declares its valid resolution keys, so the CLI rejects a typo instead of
+      silently never firing the dependency
+- [ ] responsibility as `{ kind: 'assigned'; actor: ResponsibleActorRef } |
       { kind: 'unassigned' }` — **one owner**, since any-of versus all-of
       semantics are undesigned and nothing in the corpus needs them. An
       unassigned expected action is a **responsibility gap**; assignment or
       acceptance converts it into an obligation
+- [ ] **only a principal that can be held to something may own one.**
+      `ResponsibleActorRef` narrows `ActorRef` to agent-or-operator, so an
+      obligation owed by a `system` component or by "probably Hopper"
+      (`legacy_uncertain`) is unrepresentable rather than merely discouraged
 - [ ] **`createdBy: ActorRef` is immutable; `currentResponsible: Responsibility`
-      moves.** Reassignment and inheritance change who owes it, never who made it
+      moves.** Reassignment and inheritance change who owes it, never who made
+      it — and `createdBy` keeps the wider type, because historical authorship
+      is exactly where `legacy_uncertain` belongs
 - [ ] **new structured acts require trustworthy attribution.** Historical rows
       may stay `legacy_uncertain`, but an obligation authored off the defective
       `from_name` path would be a commitment attributed to the wrong agent —
