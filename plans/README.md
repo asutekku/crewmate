@@ -20,6 +20,7 @@ the least trustworthy file in the repo.**
 | [COORDINATION_PLAN.md](COORDINATION_PLAN.md) | generated `--help`, questions, bug state, plan links | P0–P2 shipped; P3 shipped bar two deferred items |
 | [LINEAGE_PLAN.md](LINEAGE_PLAN.md) | memory that outlives a uuid, disciple naming, handoff | P0–P4 pending |
 | [AFFINITY_PLAN.md](AFFINITY_PLAN.md) | which agents work well together | **deferred — measured, no data** |
+| [COURT_PLAN.md](COURT_PLAN.md) | obligations, message semantics, the session-start injection budget | P0–P5 pending |
 
 ## Reading order
 
