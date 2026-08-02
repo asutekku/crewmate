@@ -80,7 +80,16 @@ function executableParts(command: string): string {
       // Heredoc bodies: `<<'J' ... J`, quoted or not.
       .replace(/<<-?\s*(['"]?)(\w+)\1[\s\S]*?^\s*\2\s*$/gm, " ")
       // An inline script passed to an interpreter: `-e '...'` / `-e "..."`.
+      // NOT `-c`: `sh -c '<poll>'` is a shell that really will wait, and
+      // `test/prebash.test.ts` pins that it stays denied.
       .replace(/-e\s+(['"])[\s\S]*?\1/g, " ")
+      // A comment is data. Stripped from `#` to end of line, and only where `#`
+      // opens a word -- `$#`, `a#b` and a `#` inside a path are not comments.
+      .replace(/(^|\s)#[^\n]*/g, "$1")
+      // `echo "<poll>" > poll.sh` WRITES the pattern; it does not run it. The
+      // heredoc form of exactly this was already allowed, and an agent that
+      // reaches for `echo` instead should not get a different answer.
+      .replace(/\becho\s+(['"])[\s\S]*?\1/g, " ")
   );
 }
 
