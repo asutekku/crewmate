@@ -13,7 +13,13 @@
 
 import { withStore } from "../core/store.ts";
 import { readPayload } from "../core/shared.ts";
-import { currentBranch, resolveProject, worktreeRoot } from "../core/repo.ts";
+import {
+  baseBranch,
+  baseDistance,
+  currentBranch,
+  resolveProject,
+  worktreeRoot,
+} from "../core/repo.ts";
 
 async function main(): Promise<void> {
   const payload = await readPayload();
@@ -24,12 +30,19 @@ async function main(): Promise<void> {
   const project = resolveProject(next);
   const tree = worktreeRoot(next);
   const branch = currentBranch(next);
+  // The point of this hook: a session that moves into another worktree is now
+  // measured against a DIFFERENT checkout, so a cached distance from the old one
+  // is not merely stale, it is about somewhere else.
+  const inWorktree = project.isGit && tree !== project.root;
+  const base = inWorktree ? baseBranch(next) : "";
+  const distance = inWorktree ? baseDistance(next, base) : null;
 
   withStore(project.dbPath, (store) => {
     const now = Date.now();
     // `register` on a known session id refreshes worktree and branch rather than
     // creating a row, so this is the same path SessionStart uses.
     store.register(sessionId, tree, branch, now);
+    store.setBaseDistance(sessionId, distance?.behind ?? -1, base);
   });
 }
 

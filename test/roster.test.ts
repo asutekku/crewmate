@@ -27,6 +27,10 @@ function session(over: Partial<Session> = {}): Session {
     blocked: "",
     worktree: "I:/Projects/Traffic",
     branch: "master",
+    // -1 = not measured, so the default peer carries no staleness claim and the
+    // tests that care about it opt in explicitly.
+    behindBase: -1,
+    baseBranch: "",
     intent: "",
     title: "",
     summary: "",
@@ -173,5 +177,77 @@ describe("formatRoster layout", () => {
     ).map(plain);
     expect(head).toContain("waiting for permission approval");
     expect(head).not.toContain("idle");
+  });
+});
+
+/**
+ * A peer's drift changes what its claims are WORTH: a finding about `src/net/`
+ * from a checkout 845 commits adrift is about code that no longer exists.
+ */
+describe("a peer's base staleness", () => {
+  /** A peer in its own worktree — the only case where the marker is meaningful. */
+  const elsewhere = (over: Partial<Session> = {}): Session =>
+    session({
+      sessionId: "s2",
+      handle: "akira",
+      worktree: "I:/Projects/Traffic/.claude/worktrees/old-core-retirement",
+      branch: "worktree-old-core-retirement",
+      ...over,
+    });
+
+  test("a stale peer elsewhere is marked, with the base named", () => {
+    const [head] = formatRoster(
+      [elsewhere({ behindBase: 298, baseBranch: "master" })],
+      [],
+      2_000,
+      "I:/Projects/Traffic",
+    ).map(plain);
+    expect(head).toContain("298 behind master");
+  });
+
+  test("an unmeasured peer claims nothing", () => {
+    // -1 must never render as "0 behind" — an unmeasured checkout reading as
+    // in-sync is the one wrong answer this column can give.
+    const [head] = formatRoster(
+      [elsewhere({ behindBase: -1, baseBranch: "" })],
+      [],
+      2_000,
+      "I:/Projects/Traffic",
+    ).map(plain);
+    expect(head).not.toContain("behind");
+  });
+
+  test("a fresh peer is not marked", () => {
+    const [head] = formatRoster(
+      [elsewhere({ behindBase: 0, baseBranch: "master" })],
+      [],
+      2_000,
+      "I:/Projects/Traffic",
+    ).map(plain);
+    expect(head).not.toContain("behind");
+  });
+
+  test("a peer in MY tree is not marked, however stale the column says", () => {
+    // Same tree means the same checkout, so its drift is my own — already said
+    // once at session start, and saying it per peer would repeat it per line.
+    const [head] = formatRoster(
+      [session({ behindBase: 298, baseBranch: "master" })],
+      [],
+      2_000,
+      "I:/Projects/Traffic",
+    ).map(plain);
+    expect(head).not.toContain("298");
+  });
+
+  test("the marker does not break the spacing rules", () => {
+    for (const line of formatRoster(
+      [elsewhere({ behindBase: 298, baseBranch: "master", intent: "retire the old core" })],
+      [],
+      2_000,
+      "I:/Projects/Traffic",
+    ).map(plain)) {
+      expect(line).not.toMatch(/\S {3,}\S/);
+      expect(line).not.toMatch(/ $/);
+    }
   });
 });

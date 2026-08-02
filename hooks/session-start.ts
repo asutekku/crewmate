@@ -8,8 +8,22 @@
  */
 
 import { displayName, withStore } from "../core/store.ts";
-import { emit, formatMessages, formatRoster, readPayload, TRUST_NOTE } from "../core/shared.ts";
-import { currentBranch, installedVersion, resolveProject, worktreeRoot } from "../core/repo.ts";
+import {
+  baseStalenessLines,
+  emit,
+  formatMessages,
+  formatRoster,
+  readPayload,
+  TRUST_NOTE,
+} from "../core/shared.ts";
+import {
+  baseBranch,
+  baseDistance,
+  currentBranch,
+  installedVersion,
+  resolveProject,
+  worktreeRoot,
+} from "../core/repo.ts";
 import { listAgents } from "../core/agents.ts";
 import { withPersonal } from "../core/personal.ts";
 
@@ -80,6 +94,14 @@ async function main(): Promise<void> {
   const project = resolveProject(cwd);
   const tree = worktreeRoot(cwd);
 
+  // Two git calls, ~123 ms measured, and only in a linked worktree — `root` is
+  // the MAIN working tree, so this comparison is the "am I in a worktree" test
+  // without asking git a third time. Skipped in the main tree, where the answer
+  // is always zero and the line would be noise on every session in the repo.
+  const inWorktree = project.isGit && tree !== project.root;
+  const base = inWorktree ? baseBranch(cwd) : "";
+  const distance = inWorktree ? baseDistance(cwd, base) : null;
+
   // ~950 ms, so it belongs here and nowhere on a per-prompt path. Session start
   // is rare and already slow, and this is the moment the roster is read.
   const agents = listAgents();
@@ -92,6 +114,9 @@ async function main(): Promise<void> {
     // stamping it later would report the version installed by then, not the one
     // actually running.
     store.setCodeVersion(sessionId, installedVersion());
+    // Cached for the roster, which cannot afford a git call per peer. -1 when
+    // unmeasured or in the main tree — distinct from 0, which claims in-sync.
+    store.setBaseDistance(sessionId, distance?.behind ?? -1, base);
     // Registered first, so this session's own name is filled in too.
     if (agents.length > 0) store.syncAgents(agents);
 
@@ -103,6 +128,12 @@ async function main(): Promise<void> {
 
     const me = self ? displayName(self) : handle;
     const lines = [`You are "${me}" in ${project.name}'s shared presence log.`];
+    // HIGH, and above the roster. It changes how everything below it is read:
+    // a peer's finding about a file, and this session's own reading of `git
+    // log`, both mean something different from a checkout that is 500 commits
+    // adrift. Empty on the common path — see `baseStalenessLines`.
+    const staleness = baseStalenessLines(distance, base, inWorktree);
+    if (staleness.length > 0) lines.push("", ...staleness);
     if (peers.length === 0) {
       lines.push(
         "No other agents are active right now. Check the roster before editing a file",

@@ -157,6 +157,49 @@ export function emit(event: string, context: string, systemMessage?: string): vo
 }
 
 /**
+ * Below this, a worktree taken recently is simply current work, not drift.
+ *
+ * Sized against the real spread (measured 2026-08-02: of 42 worktrees here, 15
+ * sat at 0 and the rest at 46-845, with nothing in between) — so any small
+ * number separates "fresh" from "stale" and the exact value is not delicate.
+ */
+export const STALE_COMMITS = 10;
+
+/**
+ * What to tell a session about the checkout it is sitting in.
+ *
+ * Empty when there is nothing worth saying, which is most of the time: the main
+ * tree, an unknown distance, or a checkout close enough to the base to be
+ * current. A hook that speaks when nothing is wrong is one that gets scrolled
+ * past, taking the lines around it with it.
+ *
+ * IT NEVER SUGGESTS A COMMAND THAT COULD EAT ANOTHER AGENT'S WORK. With commits
+ * of its own, a branch is told the fact and nothing else — merging is a decision
+ * with conflict cost that belongs to the agent, and CLAUDE.md rules out the
+ * dangerous ways through it. `rebase`, `reset` and `checkout` appear nowhere.
+ */
+export function baseStalenessLines(
+  distance: { readonly behind: number; readonly ahead: number } | null,
+  base: string,
+  inWorktree: boolean,
+): string[] {
+  if (!inWorktree || distance === null || base === "") return [];
+  if (distance.behind < STALE_COMMITS) return [];
+  const { behind, ahead } = distance;
+  if (ahead > 0) {
+    return [
+      `This worktree is ${behind} commits behind ${base}, with ${ahead} of its own.`,
+      `  Plan against what is HERE, not what ${base} has — and note that its newest`,
+      `  commits are someone else's, so \`git log\` will not show yours on top.`,
+    ];
+  }
+  return [
+    `This worktree is ${behind} commits behind ${base} and has nothing of its own.`,
+    `  \`git merge ${base}\` before planning — ${base} moved under you.`,
+  ];
+}
+
+/**
  * One line per peer.
  *
  * A peer in a DIFFERENT worktree is called out explicitly, because it changes
@@ -202,6 +245,14 @@ export function formatRoster(
       treesDiffer && p.worktree !== "" && p.worktree !== selfWorktree && p.branch !== "";
     const where = elsewhere ? ` [worktree ${p.worktree.split("/").pop() ?? p.worktree}]` : "";
     const branch = elsewhere ? ` on ${p.branch}` : "";
+    // HOW MUCH A PEER'S CLAIM IS WORTH. A finding about `src/net/` from a
+    // checkout 845 commits adrift is about code that no longer exists. Only for
+    // a peer ELSEWHERE (in this tree the answer is the same as your own), only
+    // past the threshold, and never for an unmeasured -1.
+    const stale =
+      elsewhere && p.behindBase >= STALE_COMMITS
+        ? ` [${p.behindBase} behind ${p.baseBranch === "" ? "base" : p.baseBranch}]`
+        : "";
     const mine = claims.filter((c) => c.handle === p.handle);
     // The `editing:` line below already lists these files, so repeating them
     // here would spend two lines saying one thing.
@@ -229,7 +280,7 @@ export function formatRoster(
     const running =
       spawned > 0 ? ` [+${spawned} subagent${spawned === 1 ? "" : "s"} working as them]` : "";
     lines.push(
-      `  ${displayName(p)}${role}${where}${branch}${doing}${prog}${running} (${state}last active ${agoText(p.lastSeenMs, nowMs)})`,
+      `  ${displayName(p)}${role}${where}${branch}${stale}${doing}${prog}${running} (${state}last active ${agoText(p.lastSeenMs, nowMs)})`,
     );
     // Operator view only. The title identifies the conversation the way the user
     // sees it listed; the summary says what that conversation is doing NOW,

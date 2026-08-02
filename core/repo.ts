@@ -254,6 +254,69 @@ export function currentBranch(cwd: string): string {
   return git(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]) ?? "";
 }
 
+/**
+ * How far a checkout has drifted from the branch it was cut from.
+ *
+ * `behind` is commits on the base that this checkout lacks; `ahead` is its own
+ * commits the base lacks. Both null when there is no repo, no base branch, or
+ * git refuses — an unknown answer must not read as zero, because zero is the
+ * value that means "you are fine".
+ *
+ * WHY THIS EXISTS. An agent in a worktree cannot see this without asking, and
+ * the natural way to ask — `git log` — shows the NEWEST commits, which after a
+ * merge from the base are somebody else's. Measured 2026-08-02: an agent read
+ * its own fourteen commits as missing that way and spent five tool calls
+ * establishing they had landed. This is the same fact in 123 ms.
+ *
+ * BOTH NUMBERS OR NEITHER. `ahead` is what makes the advice safe: a branch with
+ * its own commits must never be told to merge, because merging is a decision
+ * with conflict cost that belongs to the agent.
+ */
+export interface BaseDistance {
+  readonly behind: number;
+  readonly ahead: number;
+}
+
+/**
+ * The branch a worktree is measured against.
+ *
+ * Tried in order: whatever `origin/HEAD` points at, then the conventional names.
+ * `origin/HEAD` is unset in plenty of clones — verified unset in THIS repo,
+ * which is why the fallback list is load-bearing rather than decoration.
+ *
+ * Local refs only, deliberately: `worktree.baseRef: "head"` means worktrees here
+ * branch from local HEAD, so local master is the honest base. Consulting a
+ * remote would also put the network on the session-start path.
+ */
+const BASE_BRANCH_NAMES = ["master", "main", "trunk"] as const;
+
+export function baseBranch(cwd: string): string {
+  const head = git(cwd, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]);
+  // `origin/master` -> `master`. Local, per the note above.
+  const named = head === null ? "" : (head.split("/").pop() ?? "");
+  const candidates = named === "" ? BASE_BRANCH_NAMES : [named, ...BASE_BRANCH_NAMES];
+  for (const name of candidates) {
+    if (git(cwd, ["rev-parse", "--verify", "--quiet", name]) !== null) return name;
+  }
+  return "";
+}
+
+export function baseDistance(cwd: string, base: string): BaseDistance | null {
+  if (base === "") return null;
+  // One process for both numbers. `--count --left-right A...B` prints them as
+  // `<left>\t<right>` — left is base-only (behind), right is ours (ahead).
+  const out = git(cwd, ["rev-list", "--count", "--left-right", `${base}...HEAD`]);
+  if (out === null) return null;
+  const parts = out.split(/\s+/);
+  const behind = Number(parts[0]);
+  const ahead = Number(parts[1]);
+  // A non-finite count means git printed something unexpected. Report unknown
+  // rather than letting NaN reach a comparison, where `NaN >= 10` is false and
+  // would silently mean "not stale".
+  if (!Number.isFinite(behind) || !Number.isFinite(ahead)) return null;
+  return { behind, ahead };
+}
+
 export function ensureBaseDir(): void {
   mkdirSync(BASE_DIR, { recursive: true });
 }

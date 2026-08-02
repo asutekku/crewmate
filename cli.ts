@@ -56,7 +56,14 @@ import {
   rosterName,
   withStore,
 } from "./core/store.ts";
-import { installedVersion, resolveProject } from "./core/repo.ts";
+import {
+  baseBranch,
+  baseDistance,
+  currentBranch,
+  installedVersion,
+  resolveProject,
+  worktreeRoot,
+} from "./core/repo.ts";
 import { listAgents } from "./core/agents.ts";
 import { refreshSummary, SUMMARY_TTL_MS } from "./core/summary.ts";
 import {
@@ -534,12 +541,44 @@ function clear(): void {
 }
 
 /** Which db this repo maps to — the first thing to check when a roster is empty. */
+/**
+ * Where this session is, including how far its checkout has drifted.
+ *
+ * NO THRESHOLD HERE, unlike the session-start line. `where` was asked a direct
+ * question, and a verb that withholds a fact because it judged it small is one
+ * that has to be double-checked. The threshold protects UNSOLICITED output.
+ */
 function where(): void {
   const note = PROJECT.isGit ? "" : dim("  (no git repo — keyed on directory)");
   console.log(`${dim("project:")} ${bold(PROJECT.name)}`);
   console.log(`${dim("key:    ")} ${cyan(PROJECT.key)}${note}`);
   console.log(`${dim("root:   ")} ${PROJECT.root}`);
   console.log(`${dim("db:     ")} ${PROJECT.dbPath}`);
+  if (!PROJECT.isGit) return;
+
+  const cwd = process.cwd();
+  const tree = worktreeRoot(cwd);
+  const inWorktree = tree !== PROJECT.root;
+  console.log(`${dim("tree:   ")} ${tree}${inWorktree ? "" : dim("  (main tree)")}`);
+  const branch = currentBranch(cwd);
+  if (branch !== "") console.log(`${dim("branch: ")} ${branch}`);
+  // The main tree sitting ON the base compares it against itself, and "up to
+  // date with master" under `branch: master` is a line that says nothing. A
+  // main tree on some OTHER branch still has a real answer, so gate on the
+  // comparison being trivial rather than on being in a worktree.
+  const base = baseBranch(cwd);
+  if (!inWorktree && branch === base) return;
+  const distance = baseDistance(cwd, base);
+  // An unknown distance is SAID, not hidden. A missing line reads as "fine"
+  // here, and the whole point of the row is that "fine" must be earned.
+  if (base === "" || distance === null) {
+    console.log(`${dim("base:   ")} ${dim("unknown")}`);
+    return;
+  }
+  const own = distance.ahead > 0 ? `${distance.ahead} of its own` : "nothing of its own";
+  const drift =
+    distance.behind === 0 ? `up to date with ${base}` : `${distance.behind} behind ${base}`;
+  console.log(`${dim("base:   ")} ${drift}, ${own}`);
 }
 
 /**

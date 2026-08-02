@@ -147,6 +147,17 @@ export interface Session {
   /** The session's working tree — differs per worktree within one repo. */
   readonly worktree: string;
   readonly branch: string;
+  /**
+   * Commits this checkout trails `baseBranch` by, or **-1 when not measured**.
+   *
+   * Sampled at SessionStart and on a cwd change rather than read live, so it is
+   * a HINT that may lag: the roster cannot afford a git subprocess per peer.
+   * `where` computes the same number fresh, because a direct question deserves
+   * a current answer.
+   */
+  readonly behindBase: number;
+  /** What `behindBase` was measured against; "" when it could not be resolved. */
+  readonly baseBranch: string;
   readonly intent: string;
   /**
    * Claude Code's conversation name. OPERATOR-FACING: it identifies a window on
@@ -488,6 +499,13 @@ function openDb(dbPath: string): Database {
   addColumnIfMissing(db, "sessions", "transcript", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(db, "sessions", "alias", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(db, "sessions", "role", "TEXT NOT NULL DEFAULT ''");
+  // How far this session's checkout trails its base branch, cached so the roster
+  // can show it without spawning git ONCE PER PEER on the per-turn path -- the
+  // exact shape `worktreeRoot` was cached to avoid (pre-edit 157 ms -> 106 ms).
+  // -1 is "not measured", which must stay distinct from 0: zero means in sync,
+  // and an unmeasured checkout reading as in-sync is the one wrong answer here.
+  addColumnIfMissing(db, "sessions", "behind_base", "INTEGER NOT NULL DEFAULT -1");
+  addColumnIfMissing(db, "sessions", "base_branch", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(db, "aliases", "ts_ms", "INTEGER NOT NULL DEFAULT 0");
   // Live dbs predate this; without it every existing board read fails on a
   // column the queries now select.
@@ -540,7 +558,8 @@ export function withStore<T>(dbPath: string, fn: (s: Store) => T): T {
 
 /** The column list every Session query selects, so the two cannot drift apart. */
 const SESSION_COLUMNS = `session_id, handle, name, alias, role, status, blocked, worktree, branch,
-                         intent, title, summary, summary_ms, last_seen_ms, started_ms`;
+                         behind_base, base_branch, intent, title, summary, summary_ms,
+                         last_seen_ms, started_ms`;
 
 function rowToSession(r: Record<string, string | number>): Session {
   return {
@@ -553,6 +572,9 @@ function rowToSession(r: Record<string, string | number>): Session {
     blocked: String(r["blocked"] ?? ""),
     worktree: String(r["worktree"]),
     branch: String(r["branch"]),
+    // `?? -1`, not `?? 0`: an unmeasured checkout must not read as in sync.
+    behindBase: Number(r["behind_base"] ?? -1),
+    baseBranch: String(r["base_branch"] ?? ""),
     intent: String(r["intent"]),
     title: String(r["title"] ?? ""),
     summary: String(r["summary"] ?? ""),
@@ -786,6 +808,19 @@ export class Store {
    * purpose: only the CLI's roster asks, so threading it through every reader
    * would cost more than the one query it saves.
    */
+  /**
+   * Cache this checkout's drift for the roster to read.
+   *
+   * Written by the hooks that already spawn git — SessionStart and CwdChanged —
+   * so the roster pays nothing. Pass -1 for "could not measure"; storing 0 there
+   * would tell every peer the checkout is current when nobody has checked.
+   */
+  setBaseDistance(sessionId: string, behind: number, base: string): void {
+    this.db
+      .query(`UPDATE sessions SET behind_base = ?, base_branch = ? WHERE session_id = ?`)
+      .run(behind, base, sessionId);
+  }
+
   setCodeVersion(sessionId: string, version: string): void {
     this.db
       .query(`UPDATE sessions SET code_version = ? WHERE session_id = ?`)

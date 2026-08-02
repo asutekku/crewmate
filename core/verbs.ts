@@ -60,7 +60,7 @@ export const VERBS: readonly Verb[] = [
   { verb: "log", args: "[n] [--raw]", blurb: "recent messages from every agent", group: "presence" },
   { verb: "say", args: "<text>", blurb: "tell every agent something", group: "presence" },
   { verb: "msg", args: '<name> "<text>" [--from <name>]', blurb: "tell one agent something", group: "presence" },
-  { verb: "where", args: "", blurb: "this session's repo, worktree and branch", group: "presence" },
+  { verb: "where", args: "", blurb: "this session's repo, worktree, branch and drift from base", group: "presence" },
   { verb: "ask", args: '<name> "<question>"', blurb: "ask a peer something and record that a reply is owed", group: "presence" },
   { verb: "answer", args: '<id> "<answer>"', blurb: "answer a question asked of you", group: "presence" },
   { verb: "asks", args: "", blurb: "questions waiting on you, and what you are waiting for", group: "presence" },
