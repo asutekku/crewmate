@@ -138,6 +138,36 @@ export function minionName(parent: string, seq: number): string {
   return `${possessive} Minion #${seq}`;
 }
 
+/**
+ * A successor's name: `Vega, Hopper's Disciple`.
+ *
+ * USER RULING 2026-08-01: "I prefer 'Vega, Hopper's Disciple'. We should have a
+ * little whimsy in our lives and keep that in the tool."
+ *
+ * IT IS ALSO THE TRUTHFUL FORM, which is why it is not merely decoration. A
+ * successor holds the knowledge and NOT the transcript. Naming it `hopper`
+ * would point `blame`, `--history` and every work row at a conversation that
+ * did not do the work — the same failure as a name outliving what it named,
+ * from the other direction. The disciple form carries both facts at once: the
+ * live name you can address, and where the knowledge came from. A disciple is
+ * by construction not the master, so the form cannot assert a continuity it
+ * does not have.
+ *
+ * A RESUME NEEDS NO MARKING and gets none: same uuid, same transcript, same
+ * everything the tool tracks. That is just `hopper`, which is why inheriting
+ * one's own lineage returns the bare name.
+ */
+export function discipleName(name: string, master: string): string {
+  const own = nameCase(name);
+  const from = master.trim();
+  if (from === "" || from.toLowerCase() === name.trim().toLowerCase()) return own;
+  const teacher = nameCase(from);
+  // `Chris'` rather than `Chris's` — the same rule `minionName` needs, and the
+  // one case where a possessive is not simply apostrophe-s.
+  const possessive = teacher.endsWith("s") ? `${teacher}'` : `${teacher}'s`;
+  return `${own}, ${possessive} Disciple`;
+}
+
 export function fullName(name: string, role: string, slug: string): string {
   // The two halves take DIFFERENT casers, which is the whole point of the split:
   // the suffix is prose and reads better with spaces (`Water Dynamic`), the name

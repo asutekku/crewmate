@@ -31,6 +31,7 @@ function session(over: Partial<Session> = {}): Session {
     // tests that care about it opt in explicitly.
     behindBase: -1,
     baseBranch: "",
+    lineageFrom: "",
     intent: "",
     title: "",
     summary: "",

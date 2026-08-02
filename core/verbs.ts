@@ -109,6 +109,7 @@ export const VERBS: readonly Verb[] = [
   { verb: "remember", args: '"<title>" [--body "<detail>"] [--tags a,b] [--global]', blurb: "keep something about the user across sessions", group: "memory" },
   { verb: "about-me", args: "[--all]", blurb: "what you have kept", group: "memory" },
   { verb: "forget", args: "<id>", blurb: "drop a memory outright -- a wrong one must not outlive you", group: "memory" },
+  { verb: "inherit", args: "[<name>]", blurb: "take up a departed agent's knowledge; bare lists them", group: "memory" },
 
   // ---- identity
   { verb: "call-me", args: "<name> [--agent <who>]", blurb: "take a different name; peers type it at msg", group: "identity", aliases: ["name"] },

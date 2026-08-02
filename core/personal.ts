@@ -17,9 +17,23 @@
  * project-scoped: a preference carried into the wrong repo is acted on
  * confidently and wrongly, which is worse than not remembering it.
  *
- * KEYED ON THE SESSION ID, which is the conversation uuid and survives a
- * restart. Hopper's read of the operator is not Luna's, deliberately — that is
- * the feature, not a limitation to design around.
+ * KEYED ON A LINEAGE, NOT A CONVERSATION. Hopper's read of the operator is not
+ * Luna's — that part is deliberate and stays. But a conversation uuid is the
+ * wrong grain for it: delete the transcript and the agent is gone, so memories
+ * keyed on the uuid die with the one thing guaranteed not to outlive them. The
+ * operator said it plainly: starting a new roadworks session when a roadworks
+ * agent already exists "might create a completely new empty state that has to
+ * learn everything from scratch".
+ *
+ * A LINEAGE IS A NAME. Not a new synthetic id — `aliases` already maps uuid to
+ * name durably (it survives `pruneStale`, which drops `sessions` rows at 90
+ * minutes), a name is held for 60 h against four sources, and a name is what
+ * the operator types and remembers. Adding a second identifier beside it would
+ * be a column that has to be kept in sync with the one that already works.
+ *
+ * `session_id` stays on every row untouched, frozen at write time, so "which
+ * conversation learned this" is still answerable after that conversation is
+ * gone — the same split the diary and `edits` already use.
  *
  * READABLE BY THE OPERATOR. `about-me` shows what an agent believes about
  * them, and `forget` is as easy to reach as `remember`. A private model of a
@@ -51,10 +65,19 @@ export const MEMORY_BODY_MAX = 2000;
 export interface Memory {
   readonly id: number;
   readonly tsMs: number;
-  /** The agent that learned it — its conversation uuid. */
+  /** The agent that learned it — its conversation uuid. Frozen, for history. */
   readonly sessionId: string;
   /** The agent's name when it wrote this, for the operator's benefit. */
   readonly agent: string;
+  /**
+   * The body of knowledge this belongs to: a lowercased agent name.
+   *
+   * What `forSession` filters on, so a successor adopting the lineage reads it.
+   * Falls back to the session uuid when an agent has no name — which keeps the
+   * old per-conversation behaviour rather than pooling every anonymous session
+   * into one shared identity.
+   */
+  readonly lineage: string;
   readonly title: string;
   readonly body: string;
   readonly tags: readonly string[];
@@ -77,10 +100,41 @@ export function createPersonalTables(db: Database): void {
       -- The repo this was learned in. Kept even on a global, because "where did
       -- I learn this" is the first question when one turns out to be wrong.
       project    TEXT NOT NULL DEFAULT '',
-      is_global  INTEGER NOT NULL DEFAULT 0
+      is_global  INTEGER NOT NULL DEFAULT 0,
+      -- The body of knowledge, not the conversation: a lowercased agent name.
+      -- See the header. Empty only on rows written before this existed.
+      lineage    TEXT NOT NULL DEFAULT ''
     );
     CREATE INDEX IF NOT EXISTS memories_agent ON memories (session_id, id);
   `);
+  // AFTER the table, never inside the CREATE above. `CREATE TABLE IF NOT
+  // EXISTS` leaves an existing table alone, so on a live db the column arrives
+  // only by migration -- and an index or query naming it inside that statement
+  // would run against a column that is not there. This tool has already shipped
+  // that exact bug once (`work.plan_doc`), and a fresh-db test cannot see it.
+  addPersonalColumn(db, "lineage", "TEXT NOT NULL DEFAULT ''");
+  db.exec(`CREATE INDEX IF NOT EXISTS memories_lineage ON memories (lineage, id)`);
+}
+
+/** `ALTER TABLE ADD COLUMN` guarded by what the table already has. */
+function addPersonalColumn(db: Database, column: string, decl: string): void {
+  const cols = db.query(`PRAGMA table_info(memories)`).all() as Array<{ name: string }>;
+  if (cols.some((c) => c.name === column)) return;
+  db.exec(`ALTER TABLE memories ADD COLUMN ${column} ${decl}`);
+}
+
+/**
+ * The lineage a name belongs to.
+ *
+ * Lowercased so `Hopper` and `hopper` are one body of knowledge — names are
+ * matched case-insensitively everywhere else in this tool, and two lineages
+ * differing only in case would be invisible to the operator who typed them.
+ * Empty name falls back to the uuid, keeping an anonymous session private to
+ * itself rather than pooling every unnamed agent together.
+ */
+export function lineageKey(name: string, sessionId: string): string {
+  const n = name.trim().toLowerCase();
+  return n === "" ? `session:${sessionId}` : n;
 }
 
 /** Opens the personal store, creating it on first use. */
@@ -122,6 +176,12 @@ export function checkMemory(title: string, body: string, tags: readonly string[]
 export class PersonalStore {
   constructor(private readonly db: Database) {}
 
+  /**
+   * `lineage` is passed in rather than derived from `agent`, because the writer
+   * may be a DISCIPLE: vega writing under hopper's lineage stores `agent: vega`
+   * (who learned it) and `lineage: hopper` (whose body of knowledge it joins).
+   * Deriving one from the other would collapse that distinction.
+   */
   remember(
     sessionId: string,
     agent: string,
@@ -129,13 +189,25 @@ export class PersonalStore {
     project: string,
     isGlobal: boolean,
     nowMs: number,
+    lineage: string,
   ): number {
     this.db
       .query(
-        `INSERT INTO memories (ts_ms, session_id, agent, title, body, tags, project, is_global)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO memories
+           (ts_ms, session_id, agent, title, body, tags, project, is_global, lineage)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(nowMs, sessionId, agent, m.title, m.body, m.tags.join(","), project, isGlobal ? 1 : 0);
+      .run(
+        nowMs,
+        sessionId,
+        agent,
+        m.title,
+        m.body,
+        m.tags.join(","),
+        project,
+        isGlobal ? 1 : 0,
+        lineage,
+      );
     return Number((this.db.query(`SELECT last_insert_rowid() AS id`).get() as { id: number }).id);
   }
 
@@ -147,32 +219,36 @@ export class PersonalStore {
    * agent carries one repo's specifics into another and acts on them
    * confidently — worse than not remembering at all.
    */
-  forSession(sessionId: string, project: string, opts: { allProjects?: boolean } = {}): Memory[] {
+  forLineage(lineage: string, project: string, opts: { allProjects?: boolean } = {}): Memory[] {
     const rows = opts.allProjects
       ? (this.db
-          .query(`SELECT * FROM memories WHERE session_id = ? ORDER BY id`)
-          .all(sessionId) as Array<Record<string, string | number>>)
+          .query(`SELECT * FROM memories WHERE lineage = ? ORDER BY id`)
+          .all(lineage) as Array<Record<string, string | number>>)
       : (this.db
           .query(
-            `SELECT * FROM memories WHERE session_id = ? AND (is_global = 1 OR project = ?)
+            `SELECT * FROM memories WHERE lineage = ? AND (is_global = 1 OR project = ?)
               ORDER BY id`,
           )
-          .all(sessionId, project) as Array<Record<string, string | number>>);
+          .all(lineage, project) as Array<Record<string, string | number>>);
     return rows.map(toMemory);
   }
 
-  /** Every agent that has recorded something, so the operator can audit them. */
-  agents(): Array<{ sessionId: string; agent: string; count: number }> {
+  /** Lineages with anything recorded, newest first — what `inherit` picks from. */
+  lineages(): Array<{ lineage: string; agents: string[]; count: number; lastMs: number }> {
     const rows = this.db
       .query(
-        `SELECT session_id, agent, COUNT(*) AS n FROM memories
-          GROUP BY session_id ORDER BY MAX(ts_ms) DESC`,
+        `SELECT lineage, COUNT(*) AS n, MAX(ts_ms) AS last,
+                GROUP_CONCAT(DISTINCT agent) AS who
+           FROM memories WHERE lineage != '' GROUP BY lineage ORDER BY last DESC`,
       )
       .all() as Array<Record<string, string | number>>;
     return rows.map((r) => ({
-      sessionId: String(r["session_id"]),
-      agent: String(r["agent"]),
+      lineage: String(r["lineage"]),
+      agents: String(r["who"] ?? "")
+        .split(",")
+        .filter((a) => a !== ""),
       count: Number(r["n"]),
+      lastMs: Number(r["last"]),
     }));
   }
 
@@ -211,5 +287,6 @@ function toMemory(r: Record<string, string | number>): Memory {
       .filter((t) => t !== ""),
     project: String(r["project"]),
     global: Number(r["is_global"]) === 1,
+    lineage: String(r["lineage"] ?? ""),
   };
 }

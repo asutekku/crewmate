@@ -27,7 +27,7 @@ import { ensureBaseDir } from "./repo.ts";
 import { createWorkTables, WorkStore } from "./work.ts";
 import { createDiaryTables, DiaryStore } from "./diary.ts";
 import { createQuestionTables, QuestionStore } from "./questions.ts";
-import { fullName, GIVEN_NAMES, pickName } from "./names.ts";
+import { discipleName, fullName, GIVEN_NAMES, pickName } from "./names.ts";
 import { loadConfig } from "./config.ts";
 
 /**
@@ -158,6 +158,15 @@ export interface Session {
   readonly behindBase: number;
   /** What `behindBase` was measured against; "" when it could not be resolved. */
   readonly baseBranch: string;
+  /**
+   * The lineage this session took up, if any — a lowercased agent name.
+   *
+   * "" for the ordinary session, which is nobody's successor. A session that
+   * inherited displays as `Vega, Hopper's Disciple` and never as `hopper`: it
+   * has the knowledge and not the transcript, so naming it for the master would
+   * point `blame` and every work row at a conversation that did not do the work.
+   */
+  readonly lineageFrom: string;
   readonly intent: string;
   /**
    * Claude Code's conversation name. OPERATOR-FACING: it identifies a window on
@@ -194,6 +203,20 @@ export function displayName(s: Pick<Session, "name" | "handle"> & { readonly ali
   // three of them in an afternoon — so preferring it made every peer reference
   // and every frozen log line a moving target.
   return hyphenate(s.handle !== "" ? s.handle : s.name);
+}
+
+/**
+ * What an agent is READ as when it carries a lineage: `Vega, Hopper's Disciple`.
+ *
+ * SEPARATE FROM `displayName` ON PURPOSE, and the split is load-bearing. That
+ * one is what a peer TYPES at `msg` and must stay a single unquoted word; this
+ * is prose for a human reading eight windows. Collapsing them would either
+ * break `msg` or throw the lineage away.
+ */
+export function lineageName(
+  s: Pick<Session, "name" | "handle" | "lineageFrom"> & { readonly alias?: string },
+): string {
+  return discipleName(displayName(s), s.lineageFrom);
 }
 
 /**
@@ -506,6 +529,10 @@ function openDb(dbPath: string): Database {
   // and an unmeasured checkout reading as in-sync is the one wrong answer here.
   addColumnIfMissing(db, "sessions", "behind_base", "INTEGER NOT NULL DEFAULT -1");
   addColumnIfMissing(db, "sessions", "base_branch", "TEXT NOT NULL DEFAULT ''");
+  // Whose body of knowledge this session took up; "" for the ordinary agent
+  // that is nobody's successor. Displayed as "Vega, Hopper's Disciple" -- see
+  // `displayName` for why a successor never simply reads as the master.
+  addColumnIfMissing(db, "sessions", "lineage_from", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(db, "aliases", "ts_ms", "INTEGER NOT NULL DEFAULT 0");
   // Live dbs predate this; without it every existing board read fails on a
   // column the queries now select.
@@ -558,8 +585,8 @@ export function withStore<T>(dbPath: string, fn: (s: Store) => T): T {
 
 /** The column list every Session query selects, so the two cannot drift apart. */
 const SESSION_COLUMNS = `session_id, handle, name, alias, role, status, blocked, worktree, branch,
-                         behind_base, base_branch, intent, title, summary, summary_ms,
-                         last_seen_ms, started_ms`;
+                         behind_base, base_branch, lineage_from, intent, title, summary,
+                         summary_ms, last_seen_ms, started_ms`;
 
 function rowToSession(r: Record<string, string | number>): Session {
   return {
@@ -575,6 +602,7 @@ function rowToSession(r: Record<string, string | number>): Session {
     // `?? -1`, not `?? 0`: an unmeasured checkout must not read as in sync.
     behindBase: Number(r["behind_base"] ?? -1),
     baseBranch: String(r["base_branch"] ?? ""),
+    lineageFrom: String(r["lineage_from"] ?? ""),
     intent: String(r["intent"]),
     title: String(r["title"] ?? ""),
     summary: String(r["summary"] ?? ""),
@@ -819,6 +847,42 @@ export class Store {
     this.db
       .query(`UPDATE sessions SET behind_base = ?, base_branch = ? WHERE session_id = ?`)
       .run(behind, base, sessionId);
+  }
+
+  /**
+   * Take up a lineage, or drop one by passing "".
+   *
+   * Records only the CLAIM. Whether the lineage is free is `liveHolder`'s
+   * question, asked by the caller, because the answer differs by verb: `inherit`
+   * refuses a live one, a shadow deliberately allows it.
+   */
+  setLineage(sessionId: string, from: string): void {
+    this.db
+      .query(`UPDATE sessions SET lineage_from = ? WHERE session_id = ?`)
+      .run(from.trim().toLowerCase(), sessionId);
+  }
+
+  /**
+   * The live session currently answering to a lineage name, if any.
+   *
+   * WHY IT MATTERS: adopting a lineage whose original is still working is a
+   * FORK, not a succession -- two sessions writing one body of knowledge makes
+   * it a composite of two agents' beliefs with no way to tell them apart. A
+   * session is matched on its own name or on a lineage it has already taken up,
+   * so a disciple's disciple cannot quietly start a third writer.
+   */
+  liveHolder(lineage: string, nowMs: number): Session | null {
+    const key = lineage.trim().toLowerCase();
+    if (key === "") return null;
+    const r = this.db
+      .query(
+        `SELECT ${SESSION_COLUMNS} FROM sessions
+          WHERE last_seen_ms > ?
+            AND (LOWER(handle) = ? OR LOWER(alias) = ? OR LOWER(lineage_from) = ?)
+          ORDER BY last_seen_ms DESC LIMIT 1`,
+      )
+      .get(nowMs - STALE_MS, key, key, key) as Record<string, string | number> | null;
+    return r ? rowToSession(r) : null;
   }
 
   setCodeVersion(sessionId: string, version: string): void {

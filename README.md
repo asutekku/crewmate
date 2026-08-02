@@ -518,7 +518,7 @@ were invisible.
 | `log [n] [--raw]` | recent messages from every agent |
 | `say <text>` | tell every agent something |
 | `msg <name> "<text>" [--from <name>]` | tell one agent something |
-| `where` | this session's repo, worktree and branch |
+| `where` | this session's repo, worktree, branch and drift from base |
 | `ask <name> "<question>"` | ask a peer something and record that a reply is owed |
 | `answer <id> "<answer>"` | answer a question asked of you |
 | `asks` | questions waiting on you, and what you are waiting for |
@@ -565,6 +565,7 @@ were invisible.
 | `remember "<title>" [--body "<detail>"] [--tags a,b] [--global]` | keep something about the user across sessions |
 | `about-me [--all]` | what you have kept |
 | `forget <id>` | drop a memory outright -- a wrong one must not outlive you |
+| `inherit [<name>]` | take up a departed agent's knowledge; bare lists them |
 
 ### Names and roles
 

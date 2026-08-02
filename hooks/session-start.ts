@@ -25,7 +25,8 @@ import {
   worktreeRoot,
 } from "../core/repo.ts";
 import { listAgents } from "../core/agents.ts";
-import { withPersonal } from "../core/personal.ts";
+import { discipleName, nameCase } from "../core/names.ts";
+import { lineageKey, withPersonal } from "../core/personal.ts";
 
 /** Enough log to see what the others are up to, short enough to stay skimmable. */
 const RECENT_LINES = 8;
@@ -187,13 +188,25 @@ async function main(): Promise<void> {
     // person in the room), and the whole difference between an agent that
     // remembers how you work and one that does not.
     //
-    // Titles only, and only this agent's own — Hopper's read of the operator is
-    // not Luna's, deliberately.
-    const mine = withPersonal((personal) =>
-      personal.forSession(sessionId, project.name),
-    );
+    // Titles only, and only this LINEAGE's — Hopper's read of the operator is
+    // not Luna's, deliberately. Keyed on the lineage rather than the uuid so a
+    // successor arrives already knowing what its predecessor learned; `self` is
+    // null on the very first hook of a session, where there is no name yet and
+    // the key falls back to this uuid, which is exactly the old behaviour.
+    const inherited = self?.lineageFrom ?? "";
+    const lineage = inherited !== "" ? inherited : lineageKey(me, sessionId);
+    const mine = withPersonal((personal) => personal.forLineage(lineage, project.name));
     if (mine.length > 0) {
-      lines.push("", "What you have learned about the person you work with:");
+      // WHOSE knowledge, when it is not your own. An inherited belief is by
+      // construction unverified by its inheritor, and a reader who cannot tell
+      // the difference will act on a stranger's conclusion as if it were theirs.
+      lines.push(
+        "",
+        inherited === ""
+          ? "What you have learned about the person you work with:"
+          : `What ${nameCase(inherited)} learned about the person you work with. You are` +
+            ` ${discipleName(me, inherited)}, so none of this is verified by you:`,
+      );
       for (const m of mine) lines.push(`  - ${m.title}${m.global ? "" : ` (in ${m.project})`}`);
       lines.push(
         "`cli.ts remember \"<what you learned>\"` adds one (`--global` if it is true of them" +

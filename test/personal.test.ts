@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import {
   checkMemory,
+  lineageKey,
   MEMORY_TITLE_MAX,
   personalDbPath,
   withPersonal,
@@ -70,30 +71,30 @@ describe("where it lives", () => {
 describe("project scope", () => {
   test("a project memory does NOT follow the agent to another repo", () => {
     withPersonal((p) => {
-      p.remember(HOPPER, "hopper", ok("run water tests alone, this box is loaded"), "Traffic", false, 1);
-      expect(p.forSession(HOPPER, "Traffic").length).toBe(1);
+      p.remember(HOPPER, "hopper", ok("run water tests alone, this box is loaded"), "Traffic", false, 1, "hopper");
+      expect(p.forLineage("hopper", "Traffic").length).toBe(1);
       // The failure this prevents: carrying one repo's specifics into another
       // and acting on them confidently.
-      expect(p.forSession(HOPPER, "wardatrobe").length).toBe(0);
+      expect(p.forLineage("hopper", "wardatrobe").length).toBe(0);
     });
   });
 
   test("a --global memory travels", () => {
     withPersonal((p) => {
-      p.remember(HOPPER, "hopper", ok("wants the numbers in the commit message"), "", true, 1);
-      expect(p.forSession(HOPPER, "Traffic").length).toBe(1);
-      expect(p.forSession(HOPPER, "wardatrobe").length).toBe(1);
-      expect(p.forSession(HOPPER, "anything-at-all").length).toBe(1);
+      p.remember(HOPPER, "hopper", ok("wants the numbers in the commit message"), "", true, 1, "hopper");
+      expect(p.forLineage("hopper", "Traffic").length).toBe(1);
+      expect(p.forLineage("hopper", "wardatrobe").length).toBe(1);
+      expect(p.forLineage("hopper", "anything-at-all").length).toBe(1);
     });
   });
 
   test("a session sees its project's memories AND its globals together", () => {
     withPersonal((p) => {
-      p.remember(HOPPER, "hopper", ok("global one"), "", true, 1);
-      p.remember(HOPPER, "hopper", ok("traffic one"), "Traffic", false, 2);
-      p.remember(HOPPER, "hopper", ok("elsewhere one"), "wardatrobe", false, 3);
+      p.remember(HOPPER, "hopper", ok("global one"), "", true, 1, "hopper");
+      p.remember(HOPPER, "hopper", ok("traffic one"), "Traffic", false, 2, "hopper");
+      p.remember(HOPPER, "hopper", ok("elsewhere one"), "wardatrobe", false, 3, "hopper");
 
-      expect(p.forSession(HOPPER, "Traffic").map((m) => m.title).sort()).toEqual([
+      expect(p.forLineage("hopper", "Traffic").map((m) => m.title).sort()).toEqual([
         "global one",
         "traffic one",
       ]);
@@ -102,10 +103,10 @@ describe("project scope", () => {
 
   test("--all-projects shows everything, which is how the operator audits it", () => {
     withPersonal((p) => {
-      p.remember(HOPPER, "hopper", ok("global one"), "", true, 1);
-      p.remember(HOPPER, "hopper", ok("traffic one"), "Traffic", false, 2);
-      p.remember(HOPPER, "hopper", ok("elsewhere one"), "wardatrobe", false, 3);
-      expect(p.forSession(HOPPER, "Traffic", { allProjects: true }).length).toBe(3);
+      p.remember(HOPPER, "hopper", ok("global one"), "", true, 1, "hopper");
+      p.remember(HOPPER, "hopper", ok("traffic one"), "Traffic", false, 2, "hopper");
+      p.remember(HOPPER, "hopper", ok("elsewhere one"), "wardatrobe", false, 3, "hopper");
+      expect(p.forLineage("hopper", "Traffic", { allProjects: true }).length).toBe(3);
     });
   });
 });
@@ -113,25 +114,29 @@ describe("project scope", () => {
 describe("one agent's read is not another's", () => {
   test("Luna does not inherit what Hopper learned", () => {
     // THE FEATURE, not a limitation: two agents can hold different and even
-    // contradictory reads of the same person, and inheritance is how one
-    // agent's misread would become permanent for everyone.
+    // contradictory reads of the same person, and automatic inheritance is how
+    // one agent's misread would become permanent for everyone.
+    //
+    // The isolation is between LINEAGES now, not conversations — which is the
+    // whole change. Luna reads nothing of Hopper's until it deliberately says
+    // `inherit hopper`, and then it is Hopper's Disciple and knows it.
     withPersonal((p) => {
-      p.remember(HOPPER, "hopper", ok("prefers a plan before code"), "Traffic", false, 1);
-      expect(p.forSession(HOPPER, "Traffic").length).toBe(1);
-      expect(p.forSession(LUNA, "Traffic").length).toBe(0);
+      p.remember(HOPPER, "hopper", ok("prefers a plan before code"), "Traffic", false, 1, "hopper");
+      expect(p.forLineage("hopper", "Traffic").length).toBe(1);
+      expect(p.forLineage("luna", "Traffic").length).toBe(0);
     });
   });
 
   test("the operator can list who holds memories about them", () => {
     withPersonal((p) => {
-      p.remember(HOPPER, "hopper", ok("a"), "Traffic", false, 1);
-      p.remember(HOPPER, "hopper", ok("b"), "Traffic", false, 2);
-      p.remember(LUNA, "luna", ok("c"), "Traffic", false, 3);
+      p.remember(HOPPER, "hopper", ok("a"), "Traffic", false, 1, "hopper");
+      p.remember(HOPPER, "hopper", ok("b"), "Traffic", false, 2, "hopper");
+      p.remember(LUNA, "luna", ok("c"), "Traffic", false, 3, "luna");
 
-      const agents = p.agents();
-      expect(agents.length).toBe(2);
-      expect(agents.find((a) => a.agent === "hopper")?.count).toBe(2);
-      expect(agents.find((a) => a.agent === "luna")?.count).toBe(1);
+      const held = p.lineages();
+      expect(held.length).toBe(2);
+      expect(held.find((l) => l.lineage === "hopper")?.count).toBe(2);
+      expect(held.find((l) => l.lineage === "luna")?.count).toBe(1);
     });
   });
 });
@@ -143,16 +148,16 @@ describe("forgetting", () => {
     // injected every session and compounds — and a tombstone would mean the
     // agent could still read what it was told to forget.
     withPersonal((p) => {
-      const id = p.remember(HOPPER, "hopper", ok("a wrong read of them"), "Traffic", false, 1);
+      const id = p.remember(HOPPER, "hopper", ok("a wrong read of them"), "Traffic", false, 1, "hopper");
       expect(p.forget(id)).toBe(true);
       expect(p.get(id)).toBeNull();
-      expect(p.forSession(HOPPER, "Traffic", { allProjects: true }).length).toBe(0);
+      expect(p.forLineage("hopper", "Traffic", { allProjects: true }).length).toBe(0);
     });
   });
 
   test("forgetting something twice is not an error the second time", () => {
     withPersonal((p) => {
-      const id = p.remember(HOPPER, "hopper", ok("x"), "Traffic", false, 1);
+      const id = p.remember(HOPPER, "hopper", ok("x"), "Traffic", false, 1, "hopper");
       expect(p.forget(id)).toBe(true);
       expect(p.forget(id)).toBe(false);
     });
@@ -184,23 +189,23 @@ describe("validation", () => {
 
 describe("the project filter cannot be tricked", () => {
   test("A PROJECT NAME THAT IS A SQL WILDCARD matches only itself", () => {
-    // `forSession` filters with `project = ?`, an equality bind — so `%` is a
+    // `forLineage` filters with `project = ?`, an equality bind — so `%` is a
     // literal name and not a pattern. Asserted rather than assumed because the
     // sibling filter one file over (`tags LIKE ?`) IS a pattern, and the day
     // this becomes a LIKE for some reason, every agent starts carrying every
     // repo's private preferences into every other repo.
     withPersonal((p) => {
-      p.remember(HOPPER, "hopper", ok("learned in a repo literally named %"), "%", false, 1);
-      p.remember(HOPPER, "hopper", ok("learned in Traffic"), "Traffic", false, 2);
+      p.remember(HOPPER, "hopper", ok("learned in a repo literally named %"), "%", false, 1, "hopper");
+      p.remember(HOPPER, "hopper", ok("learned in Traffic"), "Traffic", false, 2, "hopper");
 
-      expect(p.forSession(HOPPER, "Traffic").map((m) => m.title)).toEqual(["learned in Traffic"]);
-      expect(p.forSession(HOPPER, "%").map((m) => m.title)).toEqual([
+      expect(p.forLineage("hopper", "Traffic").map((m) => m.title)).toEqual(["learned in Traffic"]);
+      expect(p.forLineage("hopper", "%").map((m) => m.title)).toEqual([
         "learned in a repo literally named %",
       ]);
       // An underscore is the other LIKE metacharacter, and a one-character
       // project name would match it if this were ever a pattern.
-      p.remember(HOPPER, "hopper", ok("underscore repo"), "_", false, 3);
-      expect(p.forSession(HOPPER, "x").length).toBe(0);
+      p.remember(HOPPER, "hopper", ok("underscore repo"), "_", false, 3, "hopper");
+      expect(p.forLineage("hopper", "x").length).toBe(0);
     });
   });
 
@@ -209,11 +214,11 @@ describe("the project filter cannot be tricked", () => {
     // it must not become "everything". A hook that failed to resolve a project
     // name would pass "" here.
     withPersonal((p) => {
-      p.remember(LUNA, "luna", ok("no project recorded"), "", false, 1);
-      p.remember(LUNA, "luna", ok("traffic one"), "Traffic", false, 2);
+      p.remember(LUNA, "luna", ok("no project recorded"), "", false, 1, "luna");
+      p.remember(LUNA, "luna", ok("traffic one"), "Traffic", false, 2, "luna");
 
-      expect(p.forSession(LUNA, "").map((m) => m.title)).toEqual(["no project recorded"]);
-      expect(p.forSession(LUNA, "Traffic").map((m) => m.title)).toEqual(["traffic one"]);
+      expect(p.forLineage("luna", "").map((m) => m.title)).toEqual(["no project recorded"]);
+      expect(p.forLineage("luna", "Traffic").map((m) => m.title)).toEqual(["traffic one"]);
     });
   });
 
@@ -223,8 +228,8 @@ describe("the project filter cannot be tricked", () => {
     // this" is the first question when one turns out to be wrong. The travel
     // must key on the flag, not on the project being blank.
     withPersonal((p) => {
-      p.remember(HOPPER, "hopper", ok("wants numbers in the commit message"), "Traffic", true, 1);
-      expect(p.forSession(HOPPER, "wardatrobe").map((m) => m.title)).toEqual([
+      p.remember(HOPPER, "hopper", ok("wants numbers in the commit message"), "Traffic", true, 1, "hopper");
+      expect(p.forLineage("hopper", "wardatrobe").map((m) => m.title)).toEqual([
         "wants numbers in the commit message",
       ]);
       expect(p.get(1)?.project).toBe("Traffic");
@@ -237,12 +242,12 @@ describe("the project filter cannot be tricked", () => {
     // filter in either direction — including for globals, which are the ones
     // that travel furthest.
     withPersonal((p) => {
-      p.remember(HOPPER, "hopper", ok("a global of hopper's"), "", true, 1);
-      p.remember(HOPPER, "hopper", ok("a local of hopper's"), "Traffic", false, 2);
+      p.remember(HOPPER, "hopper", ok("a global of hopper's"), "", true, 1, "hopper");
+      p.remember(HOPPER, "hopper", ok("a local of hopper's"), "Traffic", false, 2, "hopper");
       for (const project of ["Traffic", "wardatrobe", "", "%"]) {
-        expect(p.forSession(LUNA, project)).toEqual([]);
+        expect(p.forLineage("luna", project)).toEqual([]);
       }
-      expect(p.forSession(LUNA, "Traffic", { allProjects: true })).toEqual([]);
+      expect(p.forLineage("luna", "Traffic", { allProjects: true })).toEqual([]);
     });
   });
 });
@@ -254,7 +259,7 @@ describe("the store survives what an agent will actually type", () => {
       const c = checkMemory("a title", body, []);
       expect(c.ok).toBe(true);
       if (!c.ok) return;
-      const id = p.remember(HOPPER, "hopper", c, "Traffic", false, 1);
+      const id = p.remember(HOPPER, "hopper", c, "Traffic", false, 1, "hopper");
       expect(p.get(id)?.body.length).toBe(2000);
     });
   });
@@ -278,26 +283,37 @@ describe("the store survives what an agent will actually type", () => {
     if (c.ok) expect(c.title).toBe("first line second line");
   });
 
-  test("a renamed agent is listed ONCE, with all of its memories counted", () => {
-    // The operator reads `about-me` to audit who holds what. An agent that
-    // renamed itself must not appear as two agents, or the audit under-reports
-    // each of them and the count the operator acts on is wrong.
+  test("renaming yourself SPLITS the lineage — stated, because it is a real cost", () => {
+    // A lineage is a name, so `call-me` starts a new body of knowledge. The
+    // previous version of this test asserted the opposite ("a renamed agent is
+    // listed ONCE") because the key was the session uuid, which did not move.
     //
-    // WHAT IS NOT ASSERTED: which of the names is shown. `agents()` groups by
-    // session and selects a BARE `agent` column, so SQLite is free to pick any
-    // row in the group — measured 2026-08-01 it returns the last one INSERTED,
-    // which is not the same as the most recent by `ts_ms` (a memory written
-    // with an older timestamp after a newer one still wins). Pinning a
-    // particular name here would be asserting an implementation accident. The
-    // grouping is the contract; the label is cosmetic.
+    // NOT PAPERED OVER, deliberately. The alternative — following renames — needs
+    // an alias chain that would also merge two genuinely different agents that
+    // happened to reuse a name, and this tool holds names for only 60 h. The
+    // honest behaviour is that the old lineage stays readable and inheritable
+    // under its old name, which `inherit` exists to do.
     withPersonal((p) => {
-      p.remember(HOPPER, "tooling", ok("learned early"), "Traffic", false, 1);
-      p.remember(HOPPER, "hopper", ok("learned later"), "Traffic", false, 2);
-      const rows = p.agents().filter((a) => a.sessionId === HOPPER);
-      expect(rows.length).toBe(1);
-      expect(rows[0]?.count).toBe(2);
-      // Whichever it picked, it must be one the agent actually used.
-      expect(["tooling", "hopper"]).toContain(rows[0]?.agent ?? "");
+      p.remember(HOPPER, "tooling", ok("learned early"), "Traffic", false, 1, "tooling");
+      p.remember(HOPPER, "hopper", ok("learned later"), "Traffic", false, 2, "hopper");
+
+      expect(p.forLineage("hopper", "Traffic").map((m) => m.title)).toEqual(["learned later"]);
+      expect(p.forLineage("tooling", "Traffic").map((m) => m.title)).toEqual(["learned early"]);
+      // Both are offered, so nothing is stranded: the old one can be inherited.
+      expect(p.lineages().map((l) => l.lineage).sort()).toEqual(["hopper", "tooling"]);
+    });
+  });
+
+  test("an agent with no name keeps its memories PRIVATE to its conversation", () => {
+    // The fallback must not pool every anonymous session into one shared
+    // identity — that would be the opposite failure to the one this fixes,
+    // handing a stranger's beliefs to whoever starts up without a name.
+    withPersonal((p) => {
+      const key = lineageKey("", HOPPER);
+      expect(key).toBe(`session:${HOPPER}`);
+      p.remember(HOPPER, "", ok("learned namelessly"), "Traffic", false, 1, key);
+      expect(p.forLineage(key, "Traffic").length).toBe(1);
+      expect(p.forLineage(lineageKey("", LUNA), "Traffic").length).toBe(0);
     });
   });
 });

@@ -11,7 +11,9 @@
  */
 
 import type { Claim } from "../core/store.ts";
-import { agoText, claimName, withStore } from "../core/store.ts";
+import { agoText, claimName, displayName, withStore } from "../core/store.ts";
+import { discipleName } from "../core/names.ts";
+import { withPersonal } from "../core/personal.ts";
 import { emit, readPayload } from "../core/shared.ts";
 import { currentBranch, relPath, resolveProject, worktreeRoot } from "../core/repo.ts";
 import { dirtyFiles } from "../core/dirty.ts";
@@ -129,6 +131,71 @@ export function planLinkLine(store: StoreHandle, sessionId: string, path: string
  * those are the ones somebody wrote down specifically so the next person would
  * not repeat them, and a pointer they have to follow is a pointer they will not.
  */
+/**
+ * "Someone already knows this ground, and they are gone" — offered once, at the
+ * moment the file is touched.
+ *
+ * THE CASE THE OPERATOR NAMED: "I might start a new session with roadworks, and
+ * if I forget a roadwork agent already exists, it might create a completely new
+ * empty state that has to learn everything from scratch." Naming a lineage
+ * fixes nothing if the new agent never learns one exists, so it has to be TOLD.
+ *
+ * WHY THE SHARED DIARY IS THE INDEX and not the personal store: a memory is
+ * about the OPERATOR and carries no scope, so it cannot answer "who knows this
+ * folder". A scoped finding can, and measured 2026-08-02, all 11 scopes in this
+ * repo have exactly one author — the signal is clean.
+ *
+ * SILENT UNLESS ALL OF THESE HOLD. A live author is a peer to ASK, not a
+ * lineage to take (`msg` already covers that, and `inherit` would refuse it
+ * anyway); an author with nothing in the personal store has no knowledge to
+ * pass on; and a session that already has a lineage has decided.
+ */
+/**
+ * Which lineages have anything worth inheriting, lowercased.
+ *
+ * Opened separately from the project store because the personal db is the one
+ * store that is NOT per-repo. Cheap (one grouped read of a small table) and on
+ * the per-edit path, so it is called once and passed in rather than queried per
+ * candidate author.
+ */
+export function lineagesHeld(): Set<string> {
+  return withPersonal(
+    (personal) => new Set(personal.lineages().map((l) => l.lineage.toLowerCase())),
+  );
+}
+
+export function lineageLines(
+  store: StoreHandle,
+  sessionId: string,
+  path: string,
+  held: ReadonlySet<string>,
+): string[] {
+  const self = store.findBySession(sessionId);
+  if (!self || self.lineageFrom !== "") return [];
+  const me = displayName(self).toLowerCase();
+
+  const now = Date.now();
+  const authors = new Set<string>();
+  for (const e of store.diary.forPath(path, { limit: 40 })) {
+    const who = e.agent.trim().toLowerCase();
+    // Not me, has memories to pass on, and gone — `liveHolder` covers both a
+    // live session under that name and one that already took the lineage up.
+    if (who === "" || who === me || !held.has(who)) continue;
+    if (store.liveHolder(who, now) !== null) continue;
+    authors.add(who);
+  }
+  if (authors.size === 0) return [];
+
+  // ONE line, naming ONE lineage. Two would be a menu, and a menu at edit time
+  // is the thing that gets scrolled past — taking the diary findings above it
+  // along with it.
+  const [first] = [...authors];
+  return [
+    `- ${first} worked this ground and is gone. \`cli.ts inherit ${first}\` takes up what` +
+      ` it learned, as ${discipleName(displayName(self), first ?? "")}.`,
+  ];
+}
+
 export function diaryLines(store: StoreHandle, path: string): string[] {
   const total = store.diary.countForPath(path);
   if (total === 0) return [];
@@ -244,6 +311,10 @@ async function main(): Promise<void> {
     // "what should you know before touching this file", and a second delivery
     // path is a second place for one of them to be silently dropped.
     diary.push(...planLinkLine(store, sessionId, path));
+    // The lineage offer goes LAST in this block: the diary findings above it are
+    // about the file being edited right now, which outranks an offer to adopt
+    // somebody's accumulated knowledge.
+    diary.push(...lineageLines(store, sessionId, path, lineagesHeld()));
 
     /** The diary alone, when there is no overlap to report alongside it. */
     const diaryOnly = (): string | null => (diary.length > 0 ? diary.join("\n") : null);

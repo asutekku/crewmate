@@ -48,6 +48,7 @@
  * times. It posts under a fixed handle so agents can tell it from a peer.
  */
 
+import type { Session } from "./core/store.ts";
 import {
   agoText,
   claimName,
@@ -86,10 +87,10 @@ import {
 } from "./core/work.ts";
 import { validateAlias, validateRole } from "./core/topic.ts";
 import { loadConfig } from "./core/config.ts";
-import { minionName } from "./core/names.ts";
+import { discipleName, minionName } from "./core/names.ts";
 import { usage, usageFor } from "./core/verbs.ts";
 import { checkNote, nearTopic, parseTags } from "./core/diary.ts";
-import { checkMemory, withPersonal } from "./core/personal.ts";
+import { checkMemory, lineageKey, withPersonal } from "./core/personal.ts";
 import type { DiaryEntry, DiaryKind } from "./core/diary.ts";
 import { dirtyFiles } from "./core/dirty.ts";
 import { agentTally, briefAge, briefAgo, itemLines } from "./core/board.ts";
@@ -1610,6 +1611,17 @@ function diaryCheck(): void {
 }
 
 /** Records something about the operator, for THIS agent only. */
+/**
+ * Which body of knowledge a session reads and writes.
+ *
+ * An adopted lineage wins over the session's own name — that is what adoption
+ * MEANS. Without a lineage it is the agent's own name, so an ordinary session
+ * keeps exactly the behaviour it had before lineages existed.
+ */
+function lineageOf(s: Session): string {
+  return s.lineageFrom !== "" ? s.lineageFrom : lineageKey(displayName(s), s.sessionId);
+}
+
 function remember(args: string[]): void {
   const body = takeFlag(args, "--body");
   const tagList = takeFlag(args, "--tags");
@@ -1627,10 +1639,13 @@ function remember(args: string[]): void {
     notAnAgent("`remember`");
     return;
   }
-  const name = withStore(PROJECT.dbPath, (store) => {
-    const self = store.findBySession(ENV_SESSION);
-    return self ? displayName(self) : "";
-  });
+  const self = withStore(PROJECT.dbPath, (store) => store.findBySession(ENV_SESSION));
+  const name = self ? displayName(self) : "";
+  // A DISCIPLE WRITES INTO ITS MASTER'S LINEAGE. `agent` stays this session's
+  // own name (who learned it), while `lineage` is the body of knowledge it
+  // joins — so an inherited store keeps growing rather than forking on the
+  // first thing its successor learns.
+  const lineage = self ? lineageOf(self) : lineageKey(name, ENV_SESSION);
   withPersonal((personal) => {
     const id = personal.remember(
       ENV_SESSION,
@@ -1639,6 +1654,7 @@ function remember(args: string[]): void {
       isGlobal ? "" : PROJECT.name,
       isGlobal,
       Date.now(),
+      lineage,
     );
     console.log(`${green("✓")} ${bold(`#${id}`)} ${check.title}`);
     console.log(
@@ -1664,30 +1680,39 @@ function aboutMe(args: string[]): void {
 
   const resolved = withStore(PROJECT.dbPath, (store) => {
     if (target !== "") {
+      // A named agent may be GONE, and that is the interesting case — the whole
+      // point of a lineage is reading a departed agent's knowledge. So a name
+      // that resolves to no live session still resolves to a lineage.
       const s = store.findByName(target, Date.now());
-      return s ? { sessionId: s.sessionId, name: displayName(s) } : null;
+      if (s) return { lineage: lineageOf(s), name: displayName(s) };
+      return { lineage: target.trim().toLowerCase(), name: target.trim() };
     }
     if (ENV_SESSION === "") return null;
     const self = store.findBySession(ENV_SESSION);
-    return { sessionId: ENV_SESSION, name: self ? displayName(self) : "" };
+    const name = self ? displayName(self) : "";
+    return { lineage: self ? lineageOf(self) : lineageKey(name, ENV_SESSION), name };
   });
 
   withPersonal((personal) => {
     if (!resolved) {
-      // No agent named: show WHO holds memories, so the operator can pick one.
-      const agents = personal.agents();
-      if (agents.length === 0) {
+      // No agent named: show which LINEAGES hold memories, so the operator can
+      // pick one. Lineages rather than sessions, because a body of knowledge is
+      // the thing that persists and the thing `inherit` takes up.
+      const held = personal.lineages();
+      if (held.length === 0) {
         console.log(dim("no agent has recorded anything about you yet."));
         return;
       }
-      console.log(bold("agents holding memories about you"));
-      for (const a of agents) {
-        const who = a.agent !== "" ? a.agent : a.sessionId.slice(0, 8);
-        console.log(`  ${cyan(who)} ${dim(`— ${a.count}`)}  ${dim(`cli.ts about-me --agent ${who}`)}`);
+      console.log(bold("lineages holding memories about you"));
+      for (const l of held) {
+        const who = l.lineage.startsWith("session:") ? l.lineage.slice(8, 16) : l.lineage;
+        console.log(
+          `  ${cyan(who)} ${dim(`— ${l.count}`)}  ${dim(`cli.ts about-me --agent ${who}`)}`,
+        );
       }
       return;
     }
-    const mine = personal.forSession(resolved.sessionId, PROJECT.name, { allProjects });
+    const mine = personal.forLineage(resolved.lineage, PROJECT.name, { allProjects });
     if (mine.length === 0) {
       console.log(dim(`${resolved.name || "this agent"} has recorded nothing about you here.`));
       if (!allProjects) console.log(dim("  `--all-projects` looks in every repo."));
@@ -1715,6 +1740,93 @@ function aboutMe(args: string[]): void {
     }
     console.log(dim("  `cli.ts forget <id>` removes one."));
   });
+}
+
+/**
+ * Take up a departed agent's body of knowledge.
+ *
+ * A LIVE LINEAGE IS REFUSED, and that is the rule the whole feature rests on.
+ * Adopting from an agent that is still working is a FORK, not a succession: two
+ * sessions writing one lineage makes it a composite of two agents' beliefs with
+ * no way to tell them apart, and `forget` could then remove something its
+ * author never wrote. When the original goes, the lineage becomes inheritable.
+ */
+function inherit(args: string[]): void {
+  const target = args.join(" ").trim();
+  if (target === "") {
+    // Bare `inherit` lists what is available rather than erroring: an agent
+    // that does not know a lineage exists is the case this feature is FOR.
+    withPersonal((personal) => {
+      const held = personal.lineages().filter((l) => !l.lineage.startsWith("session:"));
+      if (held.length === 0) {
+        console.log(dim("no lineage has recorded anything yet."));
+        return;
+      }
+      const now = Date.now();
+      const rows = withStore(PROJECT.dbPath, (store) =>
+        held.map((l) => ({ ...l, live: store.liveHolder(l.lineage, now) !== null })),
+      );
+      const free = rows.filter((l) => !l.live);
+      const busy = rows.filter((l) => l.live);
+      // THE FREE ONES ARE THE ANSWER TO THE QUESTION ASKED. A live lineage is
+      // listed too, because "hopper knows this ground but is still working" is
+      // useful — it says whom to ASK — but it is listed second and marked, not
+      // offered as something to take.
+      if (free.length > 0) {
+        console.log(bold("lineages you could take up"));
+        for (const l of free) {
+          console.log(
+            `  ${cyan(l.lineage)} ${dim(`${l.count} ${l.count === 1 ? "memory" : "memories"}`)} ` +
+              `${dim(`· last active ${shortAge(l.lastMs, now)}`)}`,
+          );
+        }
+        console.log(dim("  `cli.ts inherit <name>` takes one up."));
+      } else {
+        console.log(dim("no lineage is free to take up right now."));
+      }
+      if (busy.length > 0) {
+        console.log(bold("\nstill held — ask them instead of inheriting"));
+        for (const l of busy) {
+          console.log(`  ${cyan(l.lineage)} ${dim(`${l.count} ${l.count === 1 ? "memory" : "memories"}`)}`);
+        }
+      }
+    });
+    return;
+  }
+  if (ENV_SESSION === "") {
+    notAnAgent("`inherit`");
+    return;
+  }
+  const key = target.toLowerCase();
+  const outcome = withStore(PROJECT.dbPath, (store) => {
+    const self = store.findBySession(ENV_SESSION);
+    const me = self ? displayName(self) : "";
+    if (key === me.toLowerCase()) return { ok: false as const, why: "that is your own name" };
+    const holder = store.liveHolder(key, Date.now());
+    if (holder) {
+      return {
+        ok: false as const,
+        why: `${displayName(holder)} is live and still holds it — inheriting now would fork it`,
+      };
+    }
+    store.setLineage(ENV_SESSION, key);
+    return { ok: true as const, me };
+  });
+  if (!outcome.ok) {
+    console.error(`${red("✗")} ${outcome.why}`);
+    process.exitCode = 1;
+    return;
+  }
+  const count = withPersonal((personal) => personal.forLineage(key, PROJECT.name).length);
+  console.log(`${green("✓")} you are ${bold(discipleName(outcome.me, key))}`);
+  console.log(
+    dim(
+      count === 0
+        ? `  ${key} left no memories in ${PROJECT.name} — you start clean, under its name`
+        : `  ${count} ${count === 1 ? "memory" : "memories"} from ${key}, unverified by you` +
+          ` — \`cli.ts about-me\` reads them`,
+    ),
+  );
 }
 
 /** Removes a memory outright — see `PersonalStore.forget` for why not a tombstone. */
@@ -2026,6 +2138,9 @@ switch (cmd) {
     break;
   case "about-me":
     aboutMe([...rest]);
+    break;
+  case "inherit":
+    inherit(rest);
     break;
   case "forget":
     forget(rest[0] ?? "");
