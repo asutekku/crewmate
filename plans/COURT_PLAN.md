@@ -49,8 +49,10 @@ which scored `true` on the strength of the first. **Action-level orphaning was
 not measurable under v1 and is deferred to the v2 pass.**
 
 The prediction recorded before the audit ran was "mostly FYI, no future action
-expected." It was wrong: two thirds of directed traffic expects an action, and
-every instance names an owner.
+expected." It was wrong: under rubric v1, two thirds of directed traffic expects
+an action, and every future-action message contains **at least one** named
+responsible party. That is not the same as every action having an owner — which
+is exactly the distinction v1 could not see.
 
 ### Obligation episodes, not messages
 
@@ -221,13 +223,23 @@ an off-by-one in truncation. Identity must not be in the auction at all.
 ```ts
 interface InjectionEnvelope {
   mandatoryHeader: string[];   // identity, role, project. Never eligible for eviction.
+  // Conditionally mandatory: added whenever ANY peer-authored text is selected.
+  peerFraming: string[];
   candidates: InjectionCandidate[];
   budgetChars: number;
 }
 
 // The only budget any candidate ever sees:
-Math.max(0, budgetChars - renderedMandatoryHeader.length)
+Math.max(0, budgetChars - renderedMandatoryHeader.length - renderedPeerFraming.length)
 ```
+
+**The trust boundary is part of the envelope, not a candidate.** The shipped
+session-start text already says peer messages are reference rather than operator
+instruction, and that text addressed to another agent is not yours to act on.
+That framing is what makes injected peer prose safe to read — so it must be
+subtracted from the budget alongside identity, never ranked against the content
+whose authority it explains. It is *conditionally* mandatory: no peer content
+selected, no framing needed, and the budget keeps the space.
 
 If the configured budget is smaller than the mandatory header, **render the
 header in full and record that the budget was exceeded**. A block that silently
@@ -276,6 +288,9 @@ Unblocked; nothing here depends on the taxonomy.
 
 - [ ] `InjectionEnvelope` with the mandatory header outside the budget, and a
       test that fails if identity can be evicted by any candidate arrangement
+- [ ] the **peer trust framing** subtracted from the budget too, whenever any
+      peer-authored text is selected — with a test that no arrangement of
+      candidates can inject peer prose without it
 - [ ] one allocator: deterministic order, stable tie-breaks, dedupe before
       budgeting, omission count preserved, no model call on the path
 - [ ] suppression by `stateVersion` across lifecycle hooks — an obligation shown
@@ -316,10 +331,16 @@ on P0.
 - [ ] re-run the **original 15 as a regression set** — v2 was designed around
       their failures, so they check that the known-hard cases now have somewhere
       to live. That is not validation
-- [ ] **a fresh 15 drawn from the other 30 as a holdout**, classified blind by a
-      new reviewer. A v2 pass by one classifier re-inherits the problem the first
-      blind review exposed, and grading v2 on the examples that produced it
-      grades its own homework
+- [ ] **a fresh 15 drawn from the other 30 as a reviewer holdout**, classified
+      blind by a new reviewer. A v2 pass by one classifier re-inherits the
+      problem the first blind review exposed, and grading v2 on the examples that
+      produced it grades its own homework.
+
+      **This is not a corpus holdout and the plan must not imply it is.** The
+      rubric's author has read all 45 messages, so nothing here is unseen data.
+      What it tests is narrower and still worth having: *can a fresh reviewer
+      apply v2 consistently to examples that did not directly produce its
+      known-defect list?*
 - [ ] **per-dimension agreement is the primary result; whole-message exact match
       is secondary and deliberately strict.** A richer orthogonal schema can hold
       exact match low while every dimension that matters improves — v1's two
@@ -345,12 +366,19 @@ wait on any of them:
 4. branching acceptance tests for 36 and 146 — below
 5. conditions and constraints attached to acts, not messages — below
 6. obligation history as events, not a mutable state column — below
-7. the v2 holdout review passed (P1)
-8. `rubric-v2.md` written and frozen before that review runs (P1)
+7. **binding separated from activation** — below
+8. **the event union covers activation, release, withdrawal and violation** —
+   below
+9. **clearance is a real object**, not prose about a disposition with no type —
+   below
+10. **warning and priority restored as orthogonal data** — `hazard` on the act,
+    `priority` on delivery
+11. the v2 reviewer holdout passed (P1)
+12. `rubric-v2.md` written and frozen before that review runs (P1)
 
-Items 1–6 are settled in this document. **7 and 8 are the gate**, and they are
-P1's output — which is why P1 sits between the allocator and this slice rather
-than after it.
+Items 1–10 are settled in this document. **11 and 12 are the gate**, and they
+are P1's output — which is why P1 sits between the allocator and this slice
+rather than after it.
 
 **The boundary the whole slice rests on:**
 
@@ -365,17 +393,46 @@ it owes. `ask`, `request`, `promise`, `handoff` and `grant` each mint one act
 ```ts
 type SpeechAct =
   | 'inform' | 'question' | 'request' | 'promise'
-  | 'proposal' | 'correction' | 'handoff';
+  | 'proposal' | 'correction' | 'handoff' | 'clearance';
+
+/** Where an act came from. Only the first two may drive authoritative state. */
+type ActOrigin = 'explicit_command' | 'sender_declared' | 'inferred' | 'reported';
 
 interface MessageAct {
   id: string;
   sourceMessageId: number;
   type: SpeechAct;
-  actorSessionId: string;
-  targetSessionIds: string[];
+  origin: ActOrigin;
+
+  // ROUTING is not RESPONSIBILITY. "I will tell Rowan when P3 lands" reaches
+  // Rowan, but the author is the one who owes the telling.
+  authorSessionId: string;          // immutable: who made this act
+  recipientSessionIds: string[];    // who the prose is addressed to
+  responsibility?: Responsibility;  // who owes the action, if anyone yet
+
   text: string;
   condition?: ObligationCondition;   // per ACT, not per message
   constraints?: string[];            // per ACT
+  hazard?: { summary: string; subjectRef?: ObjectRef };  // semantic, not delivery
+}
+
+/** Delivery weight. Orthogonal to `hazard` — an urgent question is not a warning,
+ *  and a warning about something months away is not urgent. */
+interface MessageDelivery {
+  priority: 'normal' | 'important' | 'urgent';
+}
+
+/**
+ * Clearance is NOT an obligation and does not fit the obligation lifecycle:
+ * nobody owes anything, and it ends by revocation rather than fulfilment.
+ * It gets its own object with its own `grant -> revoke` life.
+ */
+interface Clearance {
+  scope: ObjectRef[];              // files, paths, subsystems
+  grantedBy: string;
+  grantedTo: string;
+  constraints: string[];           // "stay inside packBand/fillRow"
+  releaseBoundary?: ObligationCondition;
 }
 ```
 
@@ -397,23 +454,68 @@ promise. A message-level list loses which belongs to which.
 - [ ] acts as their own records; a message may have none, one, or several
 - [ ] the **sender's declared act wins**. Parsing may surface *"this appears to
       contain an expected action — record a request?"* and may never manufacture
-      one. "FYI, not a request" wins, and inferred signals stay advisory and
-      auditable
+      one. "FYI, not a request" wins
+- [ ] **inferred signals are not acts and are not stored as acts.** A separate,
+      weaker record keeps a guess from ever being mistaken for a commitment by a
+      later query that forgets to filter on `origin`:
+
+      ```ts
+      interface InferredSignal {
+        sourceMessageId: number;
+        suggestedType: SpeechAct;
+        confidence: number;
+      }
+      ```
+
+      Promotion to a real act requires the sender confirming it
+- [ ] **binding is not activation** — two independent folds, not one state
+      column. "Do I owe this?" and "is it actionable now?" are different
+      questions, and collapsing them is what made an earlier draft say a
+      self-promise *opens immediately* while the branching tests had the same
+      promise *activate later*:
+
+      ```ts
+      type AuthorityState  = 'proposed' | 'binding' | 'declined' | 'cancelled';
+      type ActivationState = 'waiting' | 'active' | 'released' | 'satisfied' | 'violated';
+      ```
+
+      In test 36 the promise to move the file is **binding the moment it is
+      made** and **waiting** until the folder question is answered. In 146 the
+      refrain promise is binding immediately and only becomes active if the peer
+      confirms they are editing `waterSim.ts`. Both states are real from the
+      start; neither implies the other.
+
 - [ ] obligation state is a **fold over events**, not a mutable column — the
       work-records tables already do this and it is the pattern that keeps
       `counter`, `return`, reassignment and inheritance from erasing history:
 
       ```ts
       type ObligationEvent =
-        | { type: 'proposed' }
+        // authority
+        | { type: 'created' }
         | { type: 'accepted' }
         | { type: 'declined'; reason?: string }
         | { type: 'countered'; replacementId: string }
         | { type: 'reassigned'; from: string; to: string }
         | { type: 'returned'; to: string }
+        | { type: 'withdrawn'; by: string; reason?: string }
+        | { type: 'cancelled'; reason: string }
+        // activation
+        | { type: 'activated'; triggerRef?: ObjectRef }
+        | { type: 'released'; why: string }
+        | { type: 'expired'; episodeId: string }
+        // outcome
         | { type: 'fulfilled'; evidenceRef?: ObjectRef }
-        | { type: 'cancelled'; reason: string };
+        | { type: 'violated'; evidenceRef?: ObjectRef };
       ```
+
+      **`violated` is load-bearing once `refrain` exists.** A no-touch promise
+      whose breach cannot be recorded is a promise the system can express but
+      not enforce — and the breach is the entire reason such promises are worth
+      making in a shared tree. `withdrawn` is likewise distinct from `cancelled`
+      and `returned`: the holder stepping back ("I am stopping rather than trying
+      a fourth fix") is a different event from the work being handed on or
+      called off, and message 295 is exactly that case.
 
 - [ ] dispositions **typed against their targets** — `grant`/`revoke` apply to a
       clearance, `accept`/`decline`/`counter` to a request or handoff, `return`
@@ -421,10 +523,13 @@ promise. A message-level list loses which belongs to which.
       revocation
 - [ ] **automatic creation rule, stated once so it cannot drift:** an explicitly
       structured directed *question* and an explicitly structured *self-promise*
-      open immediately — the first because the recipient is named, the second
-      because the maker binds themselves and should not have to accept their own
-      promise. *Requests* and *handoffs* start `proposed` and need the
-      recipient's act. **Inferred prose never creates authoritative state.**
+      become **binding** on creation — the first because the recipient is named,
+      the second because the maker binds themselves and should not have to accept
+      their own promise. *Requests* and *handoffs* start `proposed` and need the
+      recipient's act. Binding says nothing about activation: a conditional
+      commitment is binding and `waiting` until its trigger fires. **Inferred
+      prose never creates authoritative state** — only `explicit_command` and
+      `sender_declared` origins may drive a transition
 - [ ] `CommitmentMode: 'perform' | 'refrain'` — forbearance is not a negated
       action; fulfilment and violation are detected differently
 - [ ] **a refrain commitment requires a release boundary** — a release condition,
@@ -457,18 +562,23 @@ Acceptance tests, from the four lost obligations. Two of them **branch**, and
 the branches have different consequences — which is the clearest evidence that
 one message can produce *linked* obligations rather than one status:
 
-- [ ] **#36** — the question opens an answer obligation, survives unrelated work,
-      resurfaces within budget. The answer resolves it **and activates the
-      sender's conditional promise to move the file**, which stays open until the
-      move happens. Two obligations, chained
+- [ ] **#36** — two linked obligations from one message. The question is
+      `binding` + `active` on arrival; the sender's promise to move the file is
+      `binding` + **`waiting`** from the same instant. Answering the question
+      satisfies the first and emits `activated` on the second, which stays
+      `active` until the move. **A test that only checks the question passes on
+      half the message**
 - [ ] **#97** — condition and anchor preserved; outcome may stay honestly
       unassessable and is **never** falsely marked fulfilled
 - [ ] **#146** — recipient and file anchor retained; activity in `waterSim.ts`
-      produces a delivery. Then it branches: *"stale claim"* closes the question
-      and nothing more; *"yes, I'm in there"* closes the question **and activates
-      the sender's refrain commitment** to stay out until cleared
+      produces a delivery. The refrain commitment is `binding` + `waiting`
+      throughout. Then it branches: *"stale claim"* satisfies the question and
+      emits `released` on the commitment; *"yes, I'm in there"* satisfies the
+      question and emits `activated`, holding until cleared. **Same two events,
+      opposite branches — the test must exercise both**
 - [ ] **#295** — stays visible despite an inactive recipient; reassignable,
-      cancellable, inheritable. **Inactivity never implies completion**
+      cancellable, inheritable. `withdrawn` is recorded as itself, not folded
+      into `cancelled` or `returned`. **Inactivity never implies completion**
 
 ### P3 — Full exposure ledger + denominator-aware stats [ ]
 
