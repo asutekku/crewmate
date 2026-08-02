@@ -425,17 +425,26 @@ wait on any of them:
     records cannot inhabit `MessageAct`
 19. **`ResponsibleActorRef` narrows who may own an obligation** to agent or
     operator
-20. the v2 reviewer holdout passed (P1)
-21. `rubric-v2.md` written and frozen before that review runs (P1)
+20. **an authenticated actor on every event record, and the authorization matrix
+    written before the CLI**
+21. **`assigned` as its own transition from unowned** — `reassigned` cannot start
+    from nowhere
+22. **version-checked appends and idempotency keys**, because several agents and
+    hooks write one store
+23. the v2 reviewer holdout passed (P1)
+24. `rubric-v2.md` written and frozen before that review runs (P1)
 
-Items 1–19 are settled in this document. **20 and 21 are the gate**, and they
+Items 1–22 are settled in this document. **23 and 24 are the gate**, and they
 are P1's output — which is why P1 sits between the allocator and this slice
 rather than after it.
 
-**Stop iterating on this schema.** Items 14–19 came from reviewing the fold on
-paper, and the paper has now given up what it has: the remaining questions are
-better answered by writing the fold and its tests than by another pass over the
-types. P0 is the next thing built.
+**Schema iteration ends here.** Items 14–22 all came from reading the fold on
+paper, and the paper has given up what it has: three of the last six were places
+the *types* permitted what the *prose* forbade, which is precisely the class a
+compiler and a test suite catch for free. Further prose passes are now more
+likely to add complexity than remove risk. **The fold and its tests are the
+authority from this point** — when they disagree with this document, they are
+right and it gets corrected.
 
 **The boundary the whole slice rests on:**
 
@@ -652,9 +661,10 @@ promise. A message-level list loses which belongs to which.
         | { type: 'withdrawn'; by: ActorRef; reason?: string }   // PROPOSAL pulled
         | { type: 'cancelled'; reason: string }
         // ownership -- moves the owner WITHOUT touching either state
-        | { type: 'relinquished'; from: ActorRef; reason?: string }
-        | { type: 'reassigned'; from: ActorRef; to: ResponsibleActorRef }
-        | { type: 'returned'; to: ResponsibleActorRef }
+        | { type: 'relinquished'; from: ResponsibleActorRef; reason?: string }
+        | { type: 'assigned'; to: ResponsibleActorRef }          // from UNOWNED
+        | { type: 'reassigned'; from: ResponsibleActorRef; to: ResponsibleActorRef }
+        | { type: 'returned'; from: ResponsibleActorRef; to: ResponsibleActorRef }
         // activation
         | { type: 'activated'; triggerRef?: ObjectRef }
         | { type: 'released'; why: string }
@@ -694,13 +704,22 @@ promise. A message-level list loses which belongs to which.
       | `released` | binding + **waiting** | released |
       | `violated` | binding + active | violated |
       | `expired` | binding + waiting\|active | expired |
-      | `relinquished` | binding | *owner → unassigned* |
-      | `reassigned` | binding | *owner only* |
-      | `returned` | binding | *owner only* |
+      | `relinquished` | binding + assigned | *owner → unassigned* |
+      | `assigned` | binding + **unassigned** | *owner set* |
+      | `reassigned` | binding + assigned(from) | *owner → to* |
+      | `returned` | binding + assigned(from) | *owner → to, "went back"* |
 
-      The last three are the distinction worth keeping explicit: **ownership
+      The last four are the distinction worth keeping explicit: **ownership
       moves without authority or activation moving.** Handing an obligation on
       does not make it less binding or more active.
+
+      **`assigned` exists because `reassigned` cannot start from nowhere.**
+      `relinquished` leaves the obligation `unassigned`, and every other
+      ownership event requires a `from` — so without this row, message 295's
+      obligation becomes permanently unownable the moment its holder steps back,
+      which is the same "required work disappears" failure one level down.
+      Initial assignment, lateral reassignment and *giving work back* stay three
+      distinct events, because the third carries a fact the other two do not.
 
       **`released` is for a commitment that became moot, never for one that
       succeeded.** An active refrain that reaches its release boundary without a
@@ -765,6 +784,44 @@ promise. A message-level list loses which belongs to which.
       reads, `trigger` is what the machine checks, and only the automatic variant
       has one. `obligation_resolved` is what gives test 36 a real path: fulfilling
       the answer obligation is what fires the move-file promise
+- [ ] **every event is written by somebody, and the payloads do not say who.**
+      `{ type: 'accepted' }` carries no actor, so nothing in the schema stops one
+      agent accepting, fulfilling or cancelling another's obligation. The actor
+      belongs on the record rather than in every variant:
+
+      ```ts
+      interface ObligationEventRecord {
+        id: string;
+        obligationId: string;
+        actor: ResponsibleActorRef;    // authenticated, never from `from_name`
+        occurredAt: number;
+        expectedVersion: number;       // optimistic concurrency, see below
+        idempotencyKey: string;        // a hook retry must not double-append
+        payload: ObligationEvent;
+      }
+      ```
+
+      | event | who may perform it |
+      |---|---|
+      | `accepted` `declined` `countered` | the proposed recipient |
+      | `withdrawn` | the proposal's creator |
+      | `fulfilled` `relinquished` | the current responsible actor |
+      | `assigned` (from unowned) | operator, or an authorized coordinator |
+      | `reassigned` | current owner, or operator |
+      | `returned` | current owner, to the previous or declared recipient |
+      | `cancelled` | creator or operator, per an explicit policy |
+      | `violated` | a system detector, the operator, or the owner with evidence |
+
+      This matrix is written **before** the CLI, not discovered by it. And the
+      actor must come from the authenticated session — diary 40 and 41 are why
+      `from_name` cannot be the source of an authorization decision
+- [ ] **append is transactional and version-checked.** Several agents and
+      several lifecycle hooks write this store concurrently, so: read the fold
+      and its version, validate actor and transition, append **only if
+      `expectedVersion` still matches**, commit. `idempotencyKey` covers the
+      other direction — a hook that fires twice must not produce two `accepted`
+      or two exposure rows. Both are implementation requirements, recorded here
+      so they are not rediscovered mid-build
 - [ ] **linked obligations need an edge.** The branching tests describe one act
       activating or releasing another and nothing in the schema connected them:
 
