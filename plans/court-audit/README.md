@@ -11,9 +11,17 @@ it. Disagree with a number and you can find the text it came from.
 | `audit-source.json` | **source facts** | all 50 directed `say` messages, verbatim, from the live store. Never normalised or edited before classification |
 | `audit-classify.json` | **reviewed interpretation** | per-message labels from the first classifier, each with a confidence and the phrase that decided it |
 | `audit-blind-review.json` | **independent interpretation** | a second classifier's labels on a stratified 15-message sample, blind to the first, against the frozen rubric |
+| `audit-manifest.json` | **provenance** | selection query, max message id at export, exclusions with reasons, reviewers, blind-sample ids and how they were chosen, file hashes |
+| `rubric-v1.md` | **the definitions** | the rubric both reviewers applied, frozen, with its known defects recorded |
 
 Aggregates are not stored. They are derived from these files and reported in the
 plan, so a recount is always possible and a stale total cannot outlive the data.
+
+**`audit-source.json` is verbatim *stored* text, which is not always the
+sender's intended prose.** Two messages in the corpus exist only to correct
+bodies the shell mangled before storage, and two rows carry a known-wrong
+`from_name` (diary findings 40 and 41). It is source evidence about what the
+database holds, not a transcript of what an agent meant to write.
 
 ## Why the layers are separate
 

@@ -18,11 +18,17 @@ verified against the code, not against this document.
 
 ---
 
-## What the messages actually contain
+## What the messages contain, under rubric v1
 
 Every number below is from `messages` in the live store, 2026-08-02. The source
 text, the per-message labels and both reviewers' classifications are preserved
 so any aggregate can be traced to the message that produced it.
+
+**These are rubric-v1 observations, not settled facts about the corpus.** The
+blind review found v1 systematically inadequate — that is what P1 exists to fix
+— so every figure here is provisional and is re-derived in the v2 pass. They are
+kept because they are what the design was reasoned from, not because they are
+final.
 
 **50 directed messages examined, 5 excluded** (4 attribution self-tests, 1
 channel test), **45 analysed.**
@@ -30,10 +36,17 @@ channel test), **45 analysed.**
 | | |
 |---|---|
 | expect a future action | **30/45 (67%)**, all explicit |
-| name who is responsible | **30/45** — the same 30; no action was ever orphaned |
+| contain **at least one** named responsible party | **30/45** |
 | carry an explicit condition | **15/45 (33%)** |
 | carry more than one purpose | **41/45** — *threshold-dependent, see below* |
 | warning ∪ correction | **29/45 (64%)** — a UNION; the labels overlap on 2 |
+
+An earlier draft of this table read *"the same 30; no action was ever orphaned"*.
+That claim was an artefact of the boolean, and this very document reports the
+counter-example: the blind reviewer found a message carrying an owned action
+**and** a separate unowned one ("they're real and someone should chase them"),
+which scored `true` on the strength of the first. **Action-level orphaning was
+not measurable under v1 and is deferred to the v2 pass.**
 
 The prediction recorded before the audit ran was "mostly FYI, no future action
 expected." It was wrong: two thirds of directed traffic expects an action, and
@@ -267,6 +280,19 @@ Unblocked; nothing here depends on the taxonomy.
       budgeting, omission count preserved, no model call on the path
 - [ ] suppression by `stateVersion` across lifecycle hooks — an obligation shown
       at session start is not re-injected at the next prompt unless it changed
+- [ ] **an oversized candidate degrades, it does not vanish.** Candidates are
+      atomic and never cut mid-line; every producer supplies a bounded compact
+      rendering; an actionable item too large for the remaining budget leaves a
+      pointer rather than silence:
+
+      ```text
+      Review request from Rowan omitted for length — run `cli.ts obligation 42`.
+      ```
+
+      Otherwise one verbose obligation either monopolises the block or disappears
+      from it, and both failures are invisible
+- [ ] selected/omitted recorded **per recipient and `stateVersion`**, so what an
+      agent was actually shown is reconstructable after the fact
 - [ ] `cli.ts injection [--session <name>]` — mandatory / selected / omitted with
       the budget line. Prioritisation *will* be wrong; debugging a rendered
       paragraph after an agent behaves oddly is the hard way
@@ -287,10 +313,18 @@ on P0.
       from one week against ~12 dimensions means some fields will rest on two or
       three examples, and a field justified by two must not look as well-founded
       as one justified by thirty
-- [ ] re-run the same 15-message blind sample against v2 with a fresh reviewer.
-      A v2 pass by one classifier re-inherits the problem the first blind review
-      exposed. **If exact-match agreement does not improve, that is a finding
-      about the rubric, not about the messages.**
+- [ ] re-run the **original 15 as a regression set** — v2 was designed around
+      their failures, so they check that the known-hard cases now have somewhere
+      to live. That is not validation
+- [ ] **a fresh 15 drawn from the other 30 as a holdout**, classified blind by a
+      new reviewer. A v2 pass by one classifier re-inherits the problem the first
+      blind review exposed, and grading v2 on the examples that produced it
+      grades its own homework
+- [ ] **per-dimension agreement is the primary result; whole-message exact match
+      is secondary and deliberately strict.** A richer orthogonal schema can hold
+      exact match low while every dimension that matters improves — v1's two
+      failure modes (a threshold nobody stated, and outcomes borrowed from the
+      previous message) had different causes and would move independently
 
 The corpus is not only design evidence — it becomes regression fixtures, CLI
 formatting examples, and evaluation data if intent suggestion is ever automated.
@@ -302,64 +336,137 @@ One vertical slice. Splitting it fails in both directions: kinds alone label
 traffic nobody can act on; obligations alone are a command an agent must
 remember unprompted — which is how a feature ends up at one row.
 
+**Do not lock this schema until all of these hold.** P0 is unblocked and does not
+wait on any of them:
+
+1. every rubric-v1 aggregate labelled provisional — done, above
+2. act-level records rather than a singular message kind — specified below
+3. the automatic-creation rule stated once, not twice differently — below
+4. branching acceptance tests for 36 and 146 — below
+5. conditions and constraints attached to acts, not messages — below
+6. obligation history as events, not a mutable state column — below
+7. the v2 holdout review passed (P1)
+8. `rubric-v2.md` written and frozen before that review runs (P1)
+
+Items 1–6 are settled in this document. **7 and 8 are the gate**, and they are
+P1's output — which is why P1 sits between the allocator and this slice rather
+than after it.
+
+**The boundary the whole slice rests on:**
+
+> Messages carry prose. **Structured acts** create obligations, corrections,
+> clearances and handoffs.
+
+A message is transport. Zero or more acts attach to it, so a plain `msg` stays
+unstructured and the system never has to parse a compound sentence to know what
+it owes. `ask`, `request`, `promise`, `handoff` and `grant` each mint one act
+*and* emit readable prose.
+
 ```ts
 type SpeechAct =
   | 'inform' | 'question' | 'request' | 'promise'
   | 'proposal' | 'correction' | 'handoff';
 
-type Disposition =
-  | 'accept' | 'decline' | 'counter'
-  | 'grant' | 'revoke' | 'withdraw' | 'return';
-
-interface MessageModifiers {
-  warning: boolean;
-  conditions: string[];
-  constraints: string[];
-  reportedThirdPartyAct: boolean;
-}
-
-interface MessageSemantics {
-  declaredKind?: SpeechAct;    // the sender's own word. Controls affordances.
-  inferredSignals?: string[];  // advisory, auditable, never automatic.
+interface MessageAct {
+  id: string;
+  sourceMessageId: number;
+  type: SpeechAct;
+  actorSessionId: string;
+  targetSessionIds: string[];
+  text: string;
+  condition?: ObligationCondition;   // per ACT, not per message
+  constraints?: string[];            // per ACT
 }
 ```
 
-- [ ] speech act, disposition, modifiers and priority as **separate** fields
-- [ ] `declaredKind` governs what the recipient is offered. Parsing may surface
-      *"this appears to contain an expected action — record a request?"* and may
-      never manufacture one. "FYI, not a request" wins
-- [ ] obligation states `proposed | open | fulfilled | declined | cancelled`
-- [ ] entry rules: a **directed question** opens immediately (asking is already a
-      scoped expectation); a **self-promise** opens immediately (the maker binds
-      themselves); a **peer request** starts `proposed`
-- [ ] `accept` / `decline` / `counter` as real operations. `counter` preserves
-      the original — amend with history or create a linked replacement, never a
-      silent overwrite
+**One act per message is the wrong unit** — an earlier draft of this file had a
+singular `declaredKind`, which is the flat-bag error this plan spends a section
+arguing against, committed in the schema two pages later. Message 36 carries a
+question *and* a self-promise; answering the question does not fulfil the
+promise. Message 112 carries a clearance, a scope constraint on that clearance,
+and a promise with its own separate landing condition.
+
+That last example is also why conditions and constraints live on the act:
+
+> Go ahead on `packBand`, but stay inside `packBand/fillRow`. I'll ping you when
+> my change lands.
+
+The scope constraint governs the clearance; the landing condition governs the
+promise. A message-level list loses which belongs to which.
+
+- [ ] acts as their own records; a message may have none, one, or several
+- [ ] the **sender's declared act wins**. Parsing may surface *"this appears to
+      contain an expected action — record a request?"* and may never manufacture
+      one. "FYI, not a request" wins, and inferred signals stay advisory and
+      auditable
+- [ ] obligation state is a **fold over events**, not a mutable column — the
+      work-records tables already do this and it is the pattern that keeps
+      `counter`, `return`, reassignment and inheritance from erasing history:
+
+      ```ts
+      type ObligationEvent =
+        | { type: 'proposed' }
+        | { type: 'accepted' }
+        | { type: 'declined'; reason?: string }
+        | { type: 'countered'; replacementId: string }
+        | { type: 'reassigned'; from: string; to: string }
+        | { type: 'returned'; to: string }
+        | { type: 'fulfilled'; evidenceRef?: ObjectRef }
+        | { type: 'cancelled'; reason: string };
+      ```
+
+- [ ] dispositions **typed against their targets** — `grant`/`revoke` apply to a
+      clearance, `accept`/`decline`/`counter` to a request or handoff, `return`
+      to held responsibility. One untyped union permits nonsense like accepting a
+      revocation
+- [ ] **automatic creation rule, stated once so it cannot drift:** an explicitly
+      structured directed *question* and an explicitly structured *self-promise*
+      open immediately — the first because the recipient is named, the second
+      because the maker binds themselves and should not have to accept their own
+      promise. *Requests* and *handoffs* start `proposed` and need the
+      recipient's act. **Inferred prose never creates authoritative state.**
 - [ ] `CommitmentMode: 'perform' | 'refrain'` — forbearance is not a negated
       action; fulfilment and violation are detected differently
+- [ ] **a refrain commitment requires a release boundary** — a release condition,
+      an `untilRef`, or explicit clearance. "I will not touch `emit.ts`" almost
+      always means *until you return it or this episode closes*; without a
+      terminator it becomes a permanent stale prohibition nobody remembers to
+      lift
 - [ ] condition as `{ text, anchorRef?, handling }` where handling is
       `automatic | resurface_on_related_event | manual`. The system never
       evaluates natural language; it knows which commitments to surface when the
       anchored object changes
-- [ ] responsibility as `{ responsibleAgentIds[], isUnassigned }`. An unassigned
-      expected action is a **responsibility gap**, not an obligation owned by
-      everyone; assignment or acceptance converts it
+- [ ] responsibility as a discriminated union, so the contradictory state cannot
+      be represented: `{ kind: 'assigned'; agentIds: [string, ...string[]] } |
+      { kind: 'unassigned' }`. **Start with a single owner** — multiple owners
+      raise any-of versus all-of semantics and nothing in the corpus needs shared
+      ownership. An unassigned expected action is a **responsibility gap**;
+      assignment or acceptance converts it into an obligation
 - [ ] correction carries `correctionType` and an optional `contradictsRef`.
       Attaching contradictory evidence only — supersession stays explicit
-- [ ] **communication never mutates authoritative state.** Only a directed
-      question creates an obligation automatically, because the recipient is
-      named. Request, proposal, correction and handoff each need a second act
+- [ ] **`reportedThirdPartyAct` is not a boolean.** Provenance needs who
+      reportedly acted, what they committed to, where the report came from and
+      whether it was confirmed — `{ reportedActorId?, actType, summary,
+      sourceRef?, confidence: 'reported' | 'confirmed' }`. A boolean would record
+      only that provenance once existed. **Defer it from P2 if that is too much
+      for the first slice; do not ship the boolean**
 - [ ] minimal exposure record written when obligations are first surfaced:
       `sessionId · featureKey · surface · exposedAt · installedRevision`
 
-Acceptance tests, from the four lost obligations:
+Acceptance tests, from the four lost obligations. Two of them **branch**, and
+the branches have different consequences — which is the clearest evidence that
+one message can produce *linked* obligations rather than one status:
 
-- [ ] **#36** — a directed question opens an obligation, survives unrelated work,
-      resurfaces within budget, resolves on answer or explicit cancellation
+- [ ] **#36** — the question opens an answer obligation, survives unrelated work,
+      resurfaces within budget. The answer resolves it **and activates the
+      sender's conditional promise to move the file**, which stays open until the
+      move happens. Two obligations, chained
 - [ ] **#97** — condition and anchor preserved; outcome may stay honestly
       unassessable and is **never** falsely marked fulfilled
 - [ ] **#146** — recipient and file anchor retained; activity in `waterSim.ts`
-      produces a delivery; either response resolves it
+      produces a delivery. Then it branches: *"stale claim"* closes the question
+      and nothing more; *"yes, I'm in there"* closes the question **and activates
+      the sender's refrain commitment** to stay out until cleared
 - [ ] **#295** — stays visible despite an inactive recipient; reassignable,
       cancellable, inheritable. **Inactivity never implies completion**
 

@@ -1,0 +1,75 @@
+{
+ "exportedAt": "2026-08-02",
+ "project": "Traffic",
+ "database": "Traffic-7338dc38.db",
+ "selectionRule": "SELECT id, ts_ms, from_name, to_name, body FROM messages WHERE kind = \"say\" AND to_name != \"\" ORDER BY id",
+ "maxMessageIdInStore": 424,
+ "maxSelectedMessageId": 399,
+ "selected": 50,
+ "excluded": [
+  {
+   "id": 10,
+   "why": "attribution self-test"
+  },
+  {
+   "id": 11,
+   "why": "attribution self-test"
+  },
+  {
+   "id": 12,
+   "why": "attribution self-test, sent to self"
+  },
+  {
+   "id": 13,
+   "why": "attribution self-test"
+  },
+  {
+   "id": 24,
+   "why": "channel test -- real request shape, but not real traffic"
+  }
+ ],
+ "analysed": 45,
+ "rubricV1": "rubric-v1.md",
+ "reviewers": [
+  {
+   "role": "primary",
+   "who": "hopper (session c5ce05bc)",
+   "scope": "all 50",
+   "rubric": "v1",
+   "note": "also wrote the rubric and recorded a prediction beforehand"
+  },
+  {
+   "role": "blind",
+   "who": "independent subagent",
+   "scope": "15 stratified",
+   "rubric": "v1 frozen",
+   "note": "blind to primary labels; told not to open other audit files"
+  }
+ ],
+ "blindSample": {
+  "ids": [
+   36,
+   40,
+   97,
+   110,
+   112,
+   141,
+   146,
+   155,
+   161,
+   249,
+   262,
+   284,
+   289,
+   295,
+   399
+  ],
+  "method": "stratified on hard cases: multi-kind, apparent obligations, corrections, unassessable outcomes, and the four dropped obligations. NOT representative -- cannot be used for prevalence."
+ },
+ "sourceCaveat": "audit-source.json is VERBATIM STORED text, which is not always the sender intended prose. Two messages (155, 268) exist only to correct bodies the shell mangled before storage, and two rows carry known-wrong from_name (see diary 40, 41).",
+ "fileHashes": {
+  "audit-source.json": "30a723ba2f4b118a",
+  "audit-classify.json": "d8aa548030e8efde",
+  "audit-blind-review.json": "77f307bcdc6a670c"
+ }
+}
