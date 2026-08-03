@@ -20,6 +20,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { FEATURE_IDS } from "./core/features.ts";
 
 const HOME = homedir().replace(/\\/g, "/");
 const BIN = `${HOME}/.claude/agent-presence/bin`;
@@ -100,37 +101,21 @@ function headRevision(): string {
 }
 
 /** Raised when a name in FEATURE_SET starts meaning something different. */
-const FEATURE_SET_VERSION = 1;
+const FEATURE_SET_VERSION = 2;
 
 /**
  * Bumped by hand when the store's shape changes in a way a reader must know
  * about. Deliberately NOT content-hashed: this answers "can an older session
  * still read this db", which is a judgement, not a diff.
  */
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 3;
 
 /**
  * Capabilities this build claims to provide, for exposure telemetry to compare
  * against. A feature absent here is one no session can be said to have been
  * given, however much of its code shipped.
  */
-const FEATURE_SET = [
-  "roster",
-  "messages",
-  "work",
-  "diary",
-  "questions",
-  "memories",
-  "lineage",
-  "stats",
-  // Split, because a partially migrated build must not claim the same thing a
-  // complete one does: the allocator can ship without the store tables behind
-  // it, and exposure telemetry asking "did this session have suppression?"
-  // needs an answer the word "injection" alone cannot give.
-  "injection",
-  "injection-suppression",
-  "injection-inbox",
-] as const;
+const FEATURE_SET = FEATURE_IDS;
 
 interface HookEntry {
   readonly matcher?: string;

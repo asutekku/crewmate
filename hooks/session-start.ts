@@ -14,6 +14,7 @@ import {
   baseDistance,
   currentBranch,
   installedVersion,
+  installManifest,
   resolveProject,
   worktreeRoot,
 } from "../core/repo.ts";
@@ -56,7 +57,8 @@ async function main(): Promise<void> {
     // Recorded once, here, because this is the moment the scripts were loaded —
     // stamping it later would report the version installed by then, not the one
     // actually running.
-    store.setCodeVersion(sessionId, installedVersion());
+    const build=installManifest();
+    store.setCodeVersion(sessionId, installedVersion(),build?.featureSet??[],now,build?.featureSetVersion??0);
     // Cached for the roster, which cannot afford a git call per peer. -1 when
     // unmeasured or in the main tree — distinct from 0, which claims in-sync.
     store.setBaseDistance(sessionId, distance?.behind ?? -1, base);
@@ -127,6 +129,7 @@ async function main(): Promise<void> {
         form: s.form,
         priority: s.candidate.priority,
         chars: s.text.length,
+        actionable: s.candidate.actionable,
       })),
       // EVERY OMISSION, whatever the reason. The inbox wants only the
       // actionable ones dropped for space — but the LEDGER wants all of them,

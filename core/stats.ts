@@ -21,6 +21,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { FEATURES, featureLabel, type FeatureId } from "./features.ts";
 
 /** One table and how many rows are in it. */
 export interface TableCount {
@@ -68,9 +69,20 @@ export interface MessageStats {
  * closed, asked vs answered) and is empty when a bare count says it all.
  */
 export interface FeatureUse {
+  readonly id: FeatureId;
   readonly feature: string;
   readonly rows: number;
   readonly detail: string;
+  readonly availability: FeatureMeasure;
+  readonly exposure: FeatureMeasure;
+  readonly use: FeatureMeasure;
+}
+
+export interface FeatureMeasure {
+  readonly observations: number;
+  readonly sessions: number;
+  readonly opportunities: number;
+  readonly surfaces: ReadonlyArray<{ surface: string; observations: number; sessions: number }>;
 }
 
 export interface Stats {
@@ -319,20 +331,16 @@ export function featureUse(db: Database, memories: number): FeatureUse[] {
   const open = count(db, "work", "closed_ms = 0");
   const bugs = count(db, "diary", `kind = 'error'`);
   const fixed = count(db, "diary", `kind = 'error' AND fixed_ms > 0`);
-  return [
-    { feature: "questions", rows: questions, detail: `${answered} answered` },
-    { feature: "diary findings", rows: findings, detail: `${authors} distinct authors` },
-    { feature: "diary bugs", rows: bugs, detail: `${fixed} fixed` },
-    { feature: "work items", rows: work, detail: `${open} open, ${work - open} closed` },
-    { feature: "work steps", rows: count(db, "work_steps"), detail: "" },
-    { feature: "work events", rows: count(db, "work_events"), detail: "" },
-    { feature: "minions", rows: count(db, "minions"), detail: "" },
-    { feature: "aliases", rows: count(db, "aliases"), detail: "" },
-    { feature: "claims", rows: count(db, "claims"), detail: "live only, TTL-swept" },
-    { feature: "tasks", rows: count(db, "tasks"), detail: "" },
-    { feature: "personal memories", rows: memories, detail: "separate db" },
-  ];
+  const evidence=allFeatureMeasures(db);
+  const rowData:Partial<Record<FeatureId,{rows:number;detail:string}>>={questions:{rows:questions,detail:`${answered} answered`},diary:{rows:findings,detail:`${authors} authors; ${bugs} bugs, ${fixed} fixed`},work:{rows:work,detail:`${open} open, ${work-open} closed`},minions:{rows:count(db,"minions"),detail:""},aliases:{rows:count(db,"aliases"),detail:""},claims:{rows:count(db,"claims"),detail:"live only, TTL-swept"},tasks:{rows:count(db,"tasks"),detail:""},memories:{rows:memories,detail:"separate db"},obligations:{rows:count(db,"obligations"),detail:"append-only fold"},clearances:{rows:count(db,"clearances"),detail:"own lifecycle"},hazards:{rows:count(db,"hazard_notices"),detail:"orthogonal notices"},corrections:{rows:count(db,"message_acts",`act_type = 'correction'`),detail:"explicit only"},messages:{rows:count(db,"messages"),detail:""}};
+  return FEATURES.map(({id})=>{const base=rowData[id]??{rows:0,detail:"telemetry only"};const m=evidence.get(id)??emptyStages();return {id,feature:featureLabel(id),...base,availability:m.availability,exposure:m.exposure,use:{...m.use,opportunities:m.exposure.opportunities}};});
 }
+
+type MutableMeasure={observations:number;sessions:number;opportunities:number;surfaces:Array<{surface:string;observations:number;sessions:number}>};
+type Stages={availability:MutableMeasure;exposure:MutableMeasure;use:MutableMeasure};
+const emptyMeasure=():MutableMeasure=>({observations:0,sessions:0,opportunities:0,surfaces:[]});
+const emptyStages=():Stages=>({availability:emptyMeasure(),exposure:emptyMeasure(),use:emptyMeasure()});
+function allFeatureMeasures(db:Database):Map<FeatureId,Stages>{const out=new Map<FeatureId,Stages>();if(!hasTable(db,"feature_events"))return out;const rows=db.query(`WITH evidence AS (SELECT * FROM feature_events) SELECT feature,stage,'' surface,COUNT(*) observations,COUNT(DISTINCT session_id) sessions,COUNT(DISTINCT opportunity_id) opportunities FROM evidence GROUP BY feature,stage UNION ALL SELECT feature,stage,surface,COUNT(*),COUNT(DISTINCT session_id),COUNT(DISTINCT opportunity_id) FROM evidence GROUP BY feature,stage,surface ORDER BY feature,stage,surface`).all() as Array<{feature:FeatureId;stage:keyof Stages;surface:string;observations:number;sessions:number;opportunities:number}>;for(const r of rows){const stages=out.get(r.feature)??emptyStages();const m=stages[r.stage];if(r.surface===""){m.observations=Number(r.observations);m.sessions=Number(r.sessions);m.opportunities=Number(r.opportunities);}else m.surfaces=[...m.surfaces,{surface:r.surface,observations:Number(r.observations),sessions:Number(r.sessions)}];out.set(r.feature,stages);}return out;}
 
 /** Everything in one pass, for a caller that just wants to print it. */
 export function collectStats(db: Database, memories: number, topAgents = 10): Stats {
@@ -379,7 +387,9 @@ export function sizeText(bytes: number): string {
  * stronger sentence, and until that exists the honest reading of a zero is
  * `exposure unknown`.
  */
-export function usageFlag(rows: number): string {
+export function usageFlag(rows: number, exposureOpportunities = 0): string {
+  if (exposureOpportunities > 0 && rows === 0) return `(no rows across ${exposureOpportunities} exposed session opportunities)`;
+  if (exposureOpportunities > 0 && rows <= SPARSE_ROWS) return `(${rows} row across ${exposureOpportunities} exposed session opportunities)`;
   if (rows === 0) return "(no rows in sample — exposure unknown)";
   if (rows <= SPARSE_ROWS) return `(${rows} row in sample — exposure unknown)`;
   return "";

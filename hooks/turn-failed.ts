@@ -16,6 +16,7 @@ import { withStore } from "../core/store.ts";
 import { readPayload } from "../core/shared.ts";
 import { resolveProject } from "../core/repo.ts";
 import { summarize } from "../core/topic.ts";
+import { runHook } from "../core/hook.ts";
 
 /** Enough to tell a rate limit from an auth failure; not a stack trace. */
 const ERROR_MAX = 80;
@@ -39,12 +40,4 @@ async function main(): Promise<void> {
   });
 }
 
-try {
-  await main();
-} catch (err) {
-  // Fail open — but REPORT. A silent catch turns a programmer error into a
-  // hook that exits 0 having done nothing, which is indistinguishable from
-  // "nothing to report" and is exactly how a missing import shipped.
-  console.error(`[presence] ${import.meta.file} failed:`, err);
-  // Fail open.
-}
+await runHook(import.meta.file, main);

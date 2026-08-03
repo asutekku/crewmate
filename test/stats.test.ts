@@ -395,6 +395,10 @@ describe("usageFlag", () => {
     expect(usageFlag(2)).toBe("");
     expect(usageFlag(400)).toBe("");
   });
+  test("known exposure carries its denominator instead of claiming exposure unknown",()=>{
+    expect(usageFlag(0,3)).toBe("(no rows across 3 exposed session opportunities)");
+    expect(usageFlag(1,3)).toBe("(1 row across 3 exposed session opportunities)");
+  });
 
   /**
    * The flag reports an observation and stops. A row count cannot separate

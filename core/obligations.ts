@@ -2,6 +2,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { Database } from "bun:sqlite";
 import type { InjectionCandidate } from "./injection.ts";
+import { featureForAct, type FeatureId } from "./features.ts";
 
 export type ActorRef =
   | { kind: "agent"; agentId: string }
@@ -181,12 +182,12 @@ export type StructuredActInput =
   | (ActCommon & { type: "grant"; scopeText: string; releaseBoundary?: ObligationCondition })
   | (ActCommon & { type: "correction"; correctionType: CorrectionType; contradictsActId?: string })
   | (ActCommon & { type: "hazard"; subject: string; relatedActKeys?: string[] });
-export interface StructuredBatchInput { senderSessionId: string; senderName: string; recipientSessionId: string; recipientName: string; acts: StructuredActInput[]; dependencies?: Array<{ sourceKey: string; resolutionKey?: string; targetKey: string; effect: "activate" | "release" }>; idempotencyKey: string; nowMs: number }
+export interface StructuredBatchInput { senderSessionId: string; senderName: string; recipientSessionId: string; recipientName: string; acts: StructuredActInput[]; dependencies?: Array<{ sourceKey: string; resolutionKey?: string; targetKey: string; effect: "activate" | "release" }>; idempotencyKey: string; nowMs: number; surface?: "cli" | "api" }
 export interface StructuredBatchResult { messageId: number; actIds: Record<string, string>; obligationIds: Record<string, string>; clearanceIds: Record<string, string> }
 export interface HazardNotice { id: string; sourceMessageId: number; relatedActIds: string[]; summary: string; subject: string }
 
 export class ObligationStore {
-  constructor(private readonly db: Database) { }
+  constructor(private readonly db: Database, private readonly observe?: (input: { sessionId: string; feature: FeatureId; stage: "use"; surface: "cli" | "api"; opportunityId: string; sourceKey: string; nowMs: number; eventId: string }) => void) { }
   definition(id: string): ObligationDefinition | null { const r = this.db.query(`SELECT * FROM obligations WHERE obligation_id=?`).get(id) as Record<string, string | number> | null; return r ? definitionFromRow(r) : null; }
   events(id: string): ObligationEventRecord[] { return (this.db.query(`SELECT * FROM obligation_events WHERE obligation_id=? ORDER BY seq`).all(id) as Record<string, string | number>[]).map(eventFromRow); }
   snapshot(id: string): ObligationSnapshot | null { const d = this.definition(id); return d ? foldObligation(d, this.events(id)) : null; }
@@ -241,6 +242,8 @@ export class ObligationStore {
       }
       this.db.query(`INSERT INTO message_deliveries(source_message_id,recipient_json,priority) VALUES(?,?,?)`).run(messageId, JSON.stringify(recipient), input.acts.reduce<Priority>((p, a) => obligationPriority(a.priority ?? "important") > obligationPriority(p) ? a.priority ?? "important" : p, "normal"));
       for (const d of input.dependencies ?? []) this.addDependency({ sourceObligationId: obligationIds[d.sourceKey] ?? fail("invalid", "dependency source is not an obligation"), resolutionKey: d.resolutionKey, targetObligationId: obligationIds[d.targetKey] ?? fail("invalid", "dependency target is not an obligation"), effect: d.effect });
+      const used = new Set(input.acts.map(a => featureForAct(a.type)));
+      for (const feature of used) this.observe?.({ sessionId: input.senderSessionId, feature, stage: "use", surface: input.surface ?? "api", opportunityId: input.senderSessionId, sourceKey: input.idempotencyKey, nowMs: input.nowMs, eventId: `${input.senderSessionId}\u0000${feature}\u0000use\u0000${input.surface ?? "api"}\u0000${input.idempotencyKey}` });
       const result = { messageId, actIds, obligationIds, clearanceIds }; this.db.query(`INSERT INTO semantic_batches(idempotency_key,input_json,result_json) VALUES(?,?,?)`).run(input.idempotencyKey, canonical, JSON.stringify(result)); return result;
     }); try { return run.immediate(); } catch (e) { if (e instanceof ObligationError) throw e; throw mapSqlError(e); }
   }

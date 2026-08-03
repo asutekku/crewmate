@@ -22,6 +22,7 @@
  */
 
 import { Database } from "bun:sqlite";
+import { randomUUID } from "node:crypto";
 
 import { ensureBaseDir } from "./repo.ts";
 import { createWorkTables, WorkStore } from "./work.ts";
@@ -32,6 +33,7 @@ import { collectStats } from "./stats.ts";
 import type { Stats } from "./stats.ts";
 import { discipleName, fullName, GIVEN_NAMES, pickName } from "./names.ts";
 import { loadConfig } from "./config.ts";
+import { featureForCandidate, isFeatureId, type FeatureId } from "./features.ts";
 
 /**
  * A session with no heartbeat for this long is treated as gone. Sessions die by
@@ -292,6 +294,7 @@ export interface InjectionShown {
   readonly form: "full" | "compact";
   readonly priority: number;
   readonly chars: number;
+  readonly actionable?: boolean;
 }
 
 /** One candidate that did not fit, with the version that was withheld. */
@@ -313,6 +316,9 @@ export interface InjectionOmitted {
   /** Whether the agent was expected to act on it — the inbox's filter. */
   readonly actionable: boolean;
 }
+
+export type FeatureStage = "availability" | "exposure" | "use";
+export type FeatureSurface = "build" | "actionable" | "context" | "help" | "cli" | "api";
 
 /** A row of delivery history. `form` is empty for an omission, `reason` for a selection. */
 export interface InjectionLedgerRow {
@@ -559,6 +565,26 @@ function openDb(dbPath: string): Database {
       ts_ms       INTEGER NOT NULL,
       PRIMARY KEY (session_id, key)
     );
+    -- P3 raw observations. Availability, exposure and use are separate events;
+    -- opportunity_id supplies the session-level denominator so repeated hooks
+    -- in one conversation never masquerade as independent opportunities.
+    CREATE TABLE IF NOT EXISTS feature_events (
+      event_id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      feature TEXT NOT NULL,
+      stage TEXT NOT NULL,
+      surface TEXT NOT NULL,
+      opportunity_id TEXT NOT NULL,
+      source_key TEXT NOT NULL DEFAULT '',
+      delivery_id INTEGER NOT NULL DEFAULT 0,
+      ts_ms INTEGER NOT NULL,
+      code_version TEXT NOT NULL DEFAULT '',
+      feature_set_version INTEGER NOT NULL DEFAULT 0,
+      CHECK(stage IN ('availability','exposure','use')),
+      CHECK(surface IN ('build','actionable','context','help','cli','api'))
+    );
+    CREATE INDEX IF NOT EXISTS feature_events_feature
+      ON feature_events(feature, stage, session_id);
     -- APPEND-ONLY history of who touched what. Distinct from the claims table,
     -- which is live state and is DELETED with its session: 95 commits landed in
     -- this repo in one day, every one authored by the same person, so git can
@@ -657,6 +683,8 @@ function openDb(dbPath: string): Database {
   // already have this table need the column added. Empty means "recorded before
   // versions were kept", which a reader must be able to tell from a real one.
   addColumnIfMissing(db, "injection_omissions", "state_ver", "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(db, "feature_events", "delivery_id", "INTEGER NOT NULL DEFAULT 0");
+  addColumnIfMissing(db, "feature_events", "feature_set_version", "INTEGER NOT NULL DEFAULT 0");
   addColumnIfMissing(db, "injection_ledger", "delivery_id", "INTEGER NOT NULL DEFAULT 0");
   // AFTER the column it indexes, and deliberately not up with the CREATEs.
   // `CREATE TABLE IF NOT EXISTS` is a no-op on a db that already has this
@@ -763,7 +791,7 @@ export class Store {
 
   /** Explicit acts and append-only obligation state (COURT_PLAN P2). */
   get obligations(): ObligationStore {
-    return new ObligationStore(this.db);
+    return new ObligationStore(this.db, (input) => this.recordFeatureEvent(input));
   }
 
   /**
@@ -1038,10 +1066,33 @@ export class Store {
     return r ? rowToSession(r) : null;
   }
 
-  setCodeVersion(sessionId: string, version: string): void {
+  setCodeVersion(sessionId: string, version: string, features: readonly string[] = [], nowMs = Date.now(), featureSetVersion = 0): void {
     this.db
       .query(`UPDATE sessions SET code_version = ? WHERE session_id = ?`)
       .run(version, sessionId);
+    for (const feature of features) {
+      if (!isFeatureId(feature)) continue;
+      this.recordFeatureEvent({ sessionId, feature, stage: "availability", surface: "build", opportunityId: sessionId, sourceKey: version, nowMs, codeVersion: version, featureSetVersion });
+    }
+  }
+
+  recordFeatureEvent(input: { sessionId: string; feature: FeatureId; stage: FeatureStage; surface: FeatureSurface; opportunityId: string; sourceKey?: string; deliveryId?:number; nowMs: number; codeVersion?: string; featureSetVersion?:number; eventId?:string }): void {
+    if (!input.sessionId.trim() || !input.opportunityId.trim() || !isFeatureId(input.feature)) throw new Error("invalid feature observation identity");
+    const allowed = input.stage === "availability"
+      ? input.surface === "build"
+      : input.stage === "exposure"
+        ? ["actionable", "context", "help"].includes(input.surface)
+        : ["cli", "api"].includes(input.surface);
+    if (!allowed) throw new Error("feature stage and surface do not match");
+    const deliveryId = input.deliveryId ?? 0;
+    if (["actionable", "context"].includes(input.surface)) {
+      const delivery = this.db.query(`SELECT 1 FROM injection_ledger WHERE session_id = ? AND delivery_id = ?`).get(input.sessionId, deliveryId);
+      if (deliveryId <= 0 || !delivery) throw new Error("injection exposure requires its delivery");
+    } else if (deliveryId !== 0) {
+      throw new Error("only injection exposure may reference a delivery");
+    }
+    const source = input.sourceKey ?? "";
+    this.db.query(`INSERT OR IGNORE INTO feature_events(event_id,session_id,feature,stage,surface,opportunity_id,source_key,delivery_id,ts_ms,code_version,feature_set_version) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(input.eventId??randomUUID(), input.sessionId, input.feature, input.stage, input.surface, input.opportunityId, source,deliveryId, input.nowMs, input.codeVersion ?? "",input.featureSetVersion??0);
   }
 
   /** Session id → the build it loaded, for the roster's skew warning. */
@@ -1936,6 +1987,8 @@ export class Store {
           sessionId, delivery, result.nowMs, s.key, s.dedupeKey, s.stateVersion,
           "selected", s.form, "", s.priority, s.chars,
         );
+        const feature = featureForCandidate(s.key);
+        if (feature) this.recordFeatureEvent({ sessionId, feature, stage: "exposure", surface: s.actionable === true ? "actionable" : "context", opportunityId: sessionId, sourceKey: `${s.key}:${s.stateVersion}`, deliveryId: delivery, nowMs: result.nowMs });
       }
       // Replaced wholesale: what a session is missing is a current fact, and an
       // item that fitted this time is no longer owed.

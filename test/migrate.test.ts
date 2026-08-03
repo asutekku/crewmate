@@ -151,13 +151,18 @@ describe("a database from the previous build still opens", () => {
     old.query(`CREATE TABLE legacy_marker (id INTEGER PRIMARY KEY, value TEXT NOT NULL)`).run();
     old.query(`INSERT INTO legacy_marker VALUES (1, 'preserve me')`).run();
     old.close();
-    const expected = ["message_acts","semantic_batches","obligations","obligation_events","obligation_dependencies","clearances","clearance_events","hazard_notices","message_deliveries"];
+    const expected = ["message_acts","semantic_batches","obligations","obligation_events","obligation_dependencies","clearances","clearance_events","hazard_notices","message_deliveries","feature_events"];
     for (let pass = 0; pass < 2; pass++) withStore(path, () => {});
     const migrated = new Database(path, { readonly: true });
     const names = new Set((migrated.query(`SELECT name FROM sqlite_master WHERE type='table'`).all() as Array<{name:string}>).map(x=>x.name));
     for (const name of expected) expect(names.has(name)).toBe(true);
     expect((migrated.query(`SELECT value FROM legacy_marker WHERE id=1`).get() as {value:string}).value).toBe("preserve me");
     migrated.close();
+  });
+
+  test("the first P3 event table gains its delivery link without losing evidence",()=>{
+    const path=oldDbPath();const old=new Database(path);old.exec(`CREATE TABLE feature_events(event_id TEXT PRIMARY KEY,session_id TEXT NOT NULL,feature TEXT NOT NULL,stage TEXT NOT NULL,surface TEXT NOT NULL,opportunity_id TEXT NOT NULL,source_key TEXT NOT NULL DEFAULT '',ts_ms INTEGER NOT NULL,code_version TEXT NOT NULL DEFAULT '');INSERT INTO feature_events VALUES('e','s','obligations','exposure','help','s','help',1,'v')`);old.close();
+    withStore(path,()=>{});const migrated=new Database(path,{readonly:true});const row=migrated.query(`SELECT delivery_id,feature FROM feature_events WHERE event_id='e'`).get() as {delivery_id:number;feature:string};expect(row).toEqual({delivery_id:0,feature:"obligations"});migrated.close();
   });
 
   test("opening TWICE is idempotent", () => {

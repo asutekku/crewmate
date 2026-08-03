@@ -60,6 +60,7 @@ import {
   rosterName,
   withStore,
 } from "./core/store.ts";
+import { featureForVerb, helpFeatures } from "./core/features.ts";
 import {
   baseBranch,
   baseDistance,
@@ -780,13 +781,15 @@ function stats(): void {
     console.log(bold("\nfeature usage"));
     const featCol = s.features.reduce((w, f) => Math.max(w, f.feature.length), 0);
     for (const f of s.features) {
-      const flag = usageFlag(f.rows);
+      const flag = usageFlag(f.rows, f.exposure.opportunities);
       // Dim, not red. Red reads as a fault, and a zero here is an OBSERVATION
       // with an unknown cause — the feature may be new, or never surfaced to a
       // single session. It is still the row a reader came for, so it carries
       // the longest label in the table; it just does not carry an alarm.
       const tail = flag !== "" ? ` ${dim(flag)}` : f.detail !== "" ? ` ${dim(f.detail)}` : "";
       console.log(`  ${f.feature.padEnd(featCol)}  ${String(f.rows).padStart(6)}${tail}`);
+      console.log(dim(`    availability ${f.availability.observations}/${f.availability.opportunities}  exposure ${f.exposure.observations}/${f.exposure.opportunities}  use ${f.use.observations}/${f.use.opportunities}`));
+      if(f.exposure.surfaces.length>0)console.log(dim(`    surfaces ${f.exposure.surfaces.map(x=>`${x.surface}:${x.observations}/${x.sessions}`).join("  ")}`));
     }
   });
 }
@@ -2076,7 +2079,7 @@ function structured(target:string,acts:StructuredActInput[],idempotencyKey=rando
   const result=withStore(PROJECT.dbPath,store=>{
     const now=Date.now();const self=store.findBySession(ENV_SESSION);const to=store.findByName(target,now);
     if(!self)return {error:"this session is not registered"} as const;if(!to)return {error:`no live agent named ${target}`} as const;
-    try{return {value:store.obligations.createBatch({senderSessionId:ENV_SESSION,senderName:displayName(self),recipientSessionId:to.sessionId,recipientName:displayName(to),acts,dependencies,idempotencyKey,nowMs:now})} as const;}catch(e){return {error:e instanceof Error?e.message:String(e)} as const;}
+    try{return {value:store.obligations.createBatch({senderSessionId:ENV_SESSION,senderName:displayName(self),recipientSessionId:to.sessionId,recipientName:displayName(to),acts,dependencies,idempotencyKey,nowMs:now,surface:"cli"})} as const;}catch(e){return {error:e instanceof Error?e.message:String(e)} as const;}
   });
   if("error" in result){console.error(`${red("✗")} ${result.error}`);process.exitCode=1;return;}
   console.log(`${green("✓")} structured message #${result.value.messageId}`);for(const [key,id] of Object.entries(result.value.obligationIds))console.log(`  ${key}: obligation ${id}`);for(const [key,id] of Object.entries(result.value.clearanceIds))console.log(`  ${key}: clearance ${id}`);
@@ -2099,6 +2102,7 @@ function clearanceCommand(id:string,eventName:string|undefined,args:string[]):vo
 }
 
 const [cmd, ...rest] = Bun.argv.slice(2);
+const structuredVerbs=new Set(["ask","request","promise","handoff","grant","correct","hazard","act"]);
 switch (cmd) {
   case "who":
   case undefined:
@@ -2434,6 +2438,7 @@ switch (cmd) {
   case "help":
   case "--help":
   case "-h":
+    if(ENV_SESSION!=="")withStore(PROJECT.dbPath,store=>{for(const feature of helpFeatures())store.recordFeatureEvent({sessionId:ENV_SESSION,feature,stage:"exposure",surface:"help",opportunityId:ENV_SESSION,sourceKey:"cli-help",nowMs:Date.now()});});
     console.log(usage(terminalWidth()));
     break;
   default:
@@ -2441,6 +2446,11 @@ switch (cmd) {
     console.error(usage(terminalWidth()));
     process.exit(1);
 }
+
+// A CLI invocation is use only after its handler succeeds. Structured verbs
+// record inside their own transaction, so a failed batch cannot leave a use
+// event and a successful one cannot be counted twice here.
+if((process.exitCode??0)===0&&ENV_SESSION!==""&&cmd&&!structuredVerbs.has(cmd)&&!["help","--help","-h"].includes(cmd)){const feature=featureForVerb(cmd);if(feature)withStore(PROJECT.dbPath,store=>store.recordFeatureEvent({sessionId:ENV_SESSION,feature,stage:"use",surface:"cli",opportunityId:ENV_SESSION,sourceKey:`${cmd}:${randomUUID()}`,nowMs:Date.now()}));}
 
 /** Pulls `--flag <value>` out of an arg list, returning "" when absent. */
 function takeFlag(args: string[], flag: string): string {

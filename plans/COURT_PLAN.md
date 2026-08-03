@@ -1221,14 +1221,14 @@ requires:
       reproduce the same candidates and `stateVersion` values without relying
       on cached current-state columns
 
-### P3 — Full exposure ledger + denominator-aware stats [ ]
+### P3 — Full exposure ledger + denominator-aware stats [x]
 
-- [ ] availability / exposure / use kept **separate**. A session can run a build
+- [x] availability / exposure / use kept **separate**. A session can run a build
       containing a feature and never see it mentioned
-- [ ] `surface` distinguishes an actionable delivery from a line in `cli.ts help`
-- [ ] session-level denominators derived from raw events — twenty session-start
+- [x] `surface` distinguishes an actionable delivery from a line in `cli.ts help`
+- [x] session-level denominators derived from raw events — twenty session-start
       reminders are not twenty adoption opportunities
-- [ ] `stats` reports observations and denominators as **fields**, so the caveat
+- [x] `stats` reports observations and denominators as **fields**, so the caveat
       travels with the number instead of being a formatter line someone drops
       when quoting it
 
