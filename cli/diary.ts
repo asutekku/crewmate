@@ -2,17 +2,57 @@ import { briefAgo } from "../core/board.ts";
 import { bold, cyan, dim, green, red, yellow } from "../core/colour.ts";
 import {
   checkNote,
+  DIARY_KINDS,
   nearTopic,
   parseTags,
   type DiaryEntry,
-  type DiaryKind,
 } from "../core/diary.ts";
 import { fit, pad, shortAge, terminalWidth, wrap } from "../core/layout.ts";
 import { withStore } from "../core/store.ts";
-import { takeFlag } from "./args.ts";
-import { failUsage } from "./command.ts";
+import {
+  booleanFlag,
+  parseArguments,
+  parseEnum,
+  parseSafeInteger,
+  requireSafeInteger,
+  stringFlag,
+  type ParsedArguments,
+} from "./args.ts";
+import { failCommand, failUsage } from "./command.ts";
 import { callerIdentity, notAnAgent } from "./identity.ts";
 import type { CliContext, CommandMap } from "./types.ts";
+
+const DEFAULT_DIARY_LIMIT = 20;
+const MAX_DIARY_LIMIT = 1_000;
+const STALE_TOPIC_MS = 30 * 24 * 60 * 60 * 1000;
+
+function diaryArguments(
+  context: CliContext,
+  command: string,
+  args: readonly string[],
+  schema: Parameters<typeof parseArguments>[1],
+): ParsedArguments | undefined {
+  const parsed = parseArguments(args, schema);
+  if (parsed.ok) return parsed.value;
+  failCommand(context, `${command}: ${parsed.error}`);
+  return undefined;
+}
+
+function diaryLimit(
+  context: CliContext,
+  command: string,
+  input: ParsedArguments,
+): number | undefined {
+  const parsed = parseSafeInteger(stringFlag(input, "--limit"), "limit", {
+    min: 1,
+    max: MAX_DIARY_LIMIT,
+  });
+  if (!parsed.ok) {
+    failCommand(context, `${command}: ${parsed.error}`);
+    return undefined;
+  }
+  return parsed.value ?? DEFAULT_DIARY_LIMIT;
+}
 
 function entryLines(entry: DiaryEntry, nowMs: number, width: number): string[] {
   const age = shortAge(entry.tsMs, nowMs);
@@ -48,21 +88,22 @@ function entryLines(entry: DiaryEntry, nowMs: number, width: number): string[] {
 }
 
 function show(context: CliContext, idRaw: string): void {
-  const id = Number(idRaw);
-  if (!Number.isFinite(id) || id <= 0) {
-    context.error("usage: cli.ts note <id>");
-    context.fail();
-    return;
-  }
+  const parsed = requireSafeInteger(idRaw, "diary entry id", {
+    min: 1,
+    max: Number.MAX_SAFE_INTEGER,
+  });
+  if (!parsed.ok) return failCommand(context, parsed.error);
+  const id = parsed.value;
+  const now = context.now();
+  const width = terminalWidth();
   withStore(context.dbPath, (store) => {
-    const now = context.now();
     const entry = store.diary.get(id);
     if (!entry) {
       context.error(`no diary entry #${id} in ${context.projectName}`);
       context.fail();
       return;
     }
-    for (const line of entryLines(entry, now, terminalWidth()))
+    for (const line of entryLines(entry, now, width))
       context.log(line);
     if (entry.body !== "") {
       context.log("");
@@ -71,25 +112,30 @@ function show(context: CliContext, idRaw: string): void {
   });
 }
 
-function recall(context: CliContext, args: string[]): void {
-  const topic = takeFlag(args, "--topic");
-  const tag = takeFlag(args, "--tag");
-  const kind = takeFlag(args, "--kind");
-  const scope = takeFlag(args, "--scope");
-  const limit = Number(takeFlag(args, "--limit")) || 20;
-  const allIndex = args.indexOf("--all");
-  const all = allIndex >= 0;
-  if (all) args.splice(allIndex, 1);
-  const mineIndex = args.indexOf("--mine");
-  const mine = mineIndex >= 0;
-  if (mine) args.splice(mineIndex, 1);
-  const query = args.join(" ").trim();
+function recall(context: CliContext, args: readonly string[]): void {
+  const input = diaryArguments(context, "recall", args, {
+    valueFlags: ["--topic", "--tag", "--kind", "--scope", "--limit"],
+    booleanFlags: ["--all", "--mine"],
+  });
+  if (!input) return;
+  const kind = parseEnum(stringFlag(input, "--kind"), "kind", DIARY_KINDS);
+  if (!kind.ok) return failCommand(context, `recall: ${kind.error}`);
+  const limit = diaryLimit(context, "recall", input);
+  if (limit === undefined) return;
+  const topic = stringFlag(input, "--topic") ?? "";
+  const tag = stringFlag(input, "--tag") ?? "";
+  const scope = stringFlag(input, "--scope") ?? "";
+  const all = booleanFlag(input, "--all");
+  const mine = booleanFlag(input, "--mine");
+  const query = input.positionals.join(" ").trim();
+  const now = context.now();
+  const width = terminalWidth();
   withStore(context.dbPath, (store) => {
     const hits = store.diary.recall({
       query,
       topic,
       tag,
-      ...(kind ? { kind: kind as DiaryKind } : {}),
+      ...(kind.value ? { kind: kind.value } : {}),
       scope,
       ...(mine ? { sessionId: context.sessionId } : {}),
       all,
@@ -111,9 +157,8 @@ function recall(context: CliContext, args: string[]): void {
         );
       return;
     }
-    const now = context.now();
     for (const entry of hits)
-      for (const line of entryLines(entry, now, terminalWidth()))
+      for (const line of entryLines(entry, now, width))
         context.log(line);
   });
 }
@@ -121,9 +166,13 @@ function recall(context: CliContext, args: string[]): void {
 export function createDiaryCommands(context: CliContext): CommandMap {
   return {
     note(args) {
-      if (args.length === 1 && /^\d+$/.test(args[0] ?? ""))
-        return show(context, args[0] ?? "");
-      if (args.length === 0) {
+      const input = diaryArguments(context, "note", args, {
+        valueFlags: ["--topic", "--body", "--tags", "--kind", "--scope", "--fixes"],
+      });
+      if (!input) return;
+      if (input.positionals.length === 1 && input.flags.size === 0)
+        return show(context, input.positionals[0] ?? "");
+      if (input.positionals.length === 0) {
         context.error(
           'usage: cli.ts note "<title>" --topic <t> [--body "<detail>"]',
         );
@@ -139,19 +188,20 @@ export function createDiaryCommands(context: CliContext): CommandMap {
         context.fail();
         return;
       }
-      const topic = takeFlag(args, "--topic");
-      const body = takeFlag(args, "--body");
-      const tags = takeFlag(args, "--tags");
-      const kind = takeFlag(args, "--kind");
-      const scope = takeFlag(args, "--scope");
-      const fixes = takeFlag(args, "--fixes");
+      const kind = parseEnum(stringFlag(input, "--kind"), "kind", DIARY_KINDS);
+      if (!kind.ok) return failCommand(context, `note: ${kind.error}`);
+      const fixes = parseSafeInteger(stringFlag(input, "--fixes"), "fixes id", {
+        min: 1,
+        max: Number.MAX_SAFE_INTEGER,
+      });
+      if (!fixes.ok) return failCommand(context, `note: ${fixes.error}`);
       const check = checkNote({
-        title: args.join(" ").trim(),
-        body,
-        topic,
-        tags: parseTags(tags),
-        ...(kind ? { kind: kind as DiaryKind } : {}),
-        scope,
+        title: input.positionals.join(" ").trim(),
+        body: stringFlag(input, "--body") ?? "",
+        topic: stringFlag(input, "--topic") ?? "",
+        tags: parseTags(stringFlag(input, "--tags") ?? ""),
+        ...(kind.value ? { kind: kind.value } : {}),
+        scope: stringFlag(input, "--scope") ?? "",
       });
       if (!check.ok) {
         context.error(`${red("✗")} ${check.why}`);
@@ -162,12 +212,34 @@ export function createDiaryCommands(context: CliContext): CommandMap {
         const who = callerIdentity(context, store);
         if (!who) return notAnAgent(context, "`note`");
         const now = context.now();
-        const id = store.diary.write(
-          context.sessionId,
-          who.agentName,
-          check.note,
-          now,
-        );
+        let id: number;
+        if (fixes.value !== undefined) {
+          const result = store.diary.writeAndFix(
+            context.sessionId,
+            who.agentName,
+            check.note,
+            fixes.value,
+            now,
+          );
+          if (!result.ok) {
+            const detail =
+              result.reason === "missing"
+                ? `no entry #${fixes.value}`
+                : result.reason === "not-error"
+                  ? `#${fixes.value} is a ${result.target?.kind ?? "non-error"}`
+                  : `#${fixes.value} is already fixed`;
+            failCommand(context, `--fixes: ${detail}`);
+            return;
+          }
+          id = result.entryId;
+        } else {
+          id = store.diary.write(
+            context.sessionId,
+            who.agentName,
+            check.note,
+            now,
+          );
+        }
         context.log(`${green("✓")} ${bold(`#${id}`)} ${check.note.title}`);
         const where = check.note.scope !== "" ? ` in ${check.note.scope}` : "";
         context.log(
@@ -181,26 +253,23 @@ export function createDiaryCommands(context: CliContext): CommandMap {
               "  no --scope, so this will not surface when someone edits a related file",
             ),
           );
-        if (!fixes) return;
-        const target = Number(fixes);
-        const bug = Number.isFinite(target) ? store.diary.get(target) : null;
-        if (!bug) context.error(`${red("✗")} --fixes: no entry #${fixes}`);
-        else if (bug.kind !== "error")
-          context.error(
-            `${red("✗")} --fixes: #${target} is a ${bug.kind}, and only an error can be fixed`,
-          );
-        else if (!store.diary.fix(target, id, now))
-          context.error(`${red("✗")} --fixes: #${target} is already fixed`);
-        else
-          context.log(`${green("✓")} fixed ${dim(`#${target} ${bug.title}`)}`);
+        if (fixes.value !== undefined) {
+          context.log(`${green("fixed")} ${dim(`#${fixes.value}`)}`);
+          return;
+        }
       });
     },
 
     recall: (args) => recall(context, args),
     topics(args) {
-      const stale = args.includes("--stale");
+      const input = diaryArguments(context, "topics", args, {
+        booleanFlags: ["--stale"],
+        maxPositionals: 0,
+      });
+      if (!input) return;
+      const stale = booleanFlag(input, "--stale");
+      const now = context.now();
       withStore(context.dbPath, (store) => {
-        const now = context.now();
         const all = store.diary.topics();
         if (all.length === 0) {
           context.log(
@@ -211,7 +280,7 @@ export function createDiaryCommands(context: CliContext): CommandMap {
           return;
         }
         const shown = stale
-          ? all.filter((topic) => now - topic.lastMs > 30 * 24 * 60 * 60 * 1000)
+          ? all.filter((topic) => now - topic.lastMs > STALE_TOPIC_MS)
           : all;
         const width = Math.max(...shown.map((topic) => topic.topic.length), 5);
         context.log(bold(`${all.length} topics in ${context.projectName}`));
@@ -227,7 +296,9 @@ export function createDiaryCommands(context: CliContext): CommandMap {
         }
       });
     },
-    tags() {
+    tags(args) {
+      const input = diaryArguments(context, "tags", args, { maxPositionals: 0 });
+      if (!input) return;
       withStore(context.dbPath, (store) => {
         const cloud = store.diary.tagCloud();
         if (cloud.length === 0) {
@@ -245,8 +316,15 @@ export function createDiaryCommands(context: CliContext): CommandMap {
       });
     },
     bugs(args) {
-      const scope = takeFlag(args, "--scope");
-      const limit = Number(takeFlag(args, "--limit")) || 20;
+      const input = diaryArguments(context, "bugs", args, {
+        valueFlags: ["--scope", "--limit"],
+        maxPositionals: 0,
+      });
+      if (!input) return;
+      const limit = diaryLimit(context, "bugs", input);
+      if (limit === undefined) return;
+      const scope = stringFlag(input, "--scope") ?? "";
+      const now = context.now();
       withStore(context.dbPath, (store) => {
         const open = store.diary.openBugs(scope, limit);
         if (open.length === 0) {
@@ -255,7 +333,6 @@ export function createDiaryCommands(context: CliContext): CommandMap {
           );
           return;
         }
-        const now = context.now();
         for (const bug of open) {
           context.log(`${red("●")} ${bold(`#${bug.id}`)} ${bug.title}`);
           context.log(
@@ -272,9 +349,14 @@ export function createDiaryCommands(context: CliContext): CommandMap {
       });
     },
     "note-deprecate"(args) {
-      const id = Number(args.shift());
-      const why = args.join(" ");
-      if (!Number.isFinite(id) || id <= 0 || !why.trim()) {
+      const input = diaryArguments(context, "note-deprecate", args, {});
+      if (!input) return;
+      const parsedId = requireSafeInteger(input.positionals[0], "diary entry id", {
+        min: 1,
+        max: Number.MAX_SAFE_INTEGER,
+      });
+      const why = input.positionals.slice(1).join(" ");
+      if (!parsedId.ok || !why.trim()) {
         failUsage(context, "note-deprecate");
         context.error(
           dim(
@@ -283,8 +365,9 @@ export function createDiaryCommands(context: CliContext): CommandMap {
         );
         return;
       }
+      const id = parsedId.value;
+      const now = context.now();
       withStore(context.dbPath, (store) => {
-        const now = context.now();
         const entry = store.diary.get(id);
         if (!entry) {
           context.error(`no diary entry #${id} in ${context.projectName}`);
@@ -307,14 +390,23 @@ export function createDiaryCommands(context: CliContext): CommandMap {
       });
     },
     "note-supersede"(args) {
-      const id = Number(args[0]);
-      const by = Number(args[1]);
-      if (!Number.isFinite(id) || !Number.isFinite(by) || id <= 0 || by <= 0) {
-        failUsage(context, "note-supersede");
-        return;
-      }
+      const input = diaryArguments(context, "note-supersede", args, {
+        maxPositionals: 2,
+      });
+      if (!input) return;
+      const parsedId = requireSafeInteger(input.positionals[0], "diary entry id", {
+        min: 1,
+        max: Number.MAX_SAFE_INTEGER,
+      });
+      const parsedBy = requireSafeInteger(input.positionals[1], "replacement entry id", {
+        min: 1,
+        max: Number.MAX_SAFE_INTEGER,
+      });
+      if (!parsedId.ok || !parsedBy.ok) return failUsage(context, "note-supersede");
+      const id = parsedId.value;
+      const by = parsedBy.value;
+      const now = context.now();
       withStore(context.dbPath, (store) => {
-        const now = context.now();
         if (!store.diary.supersede(id, by, now)) {
           context.error(`${red("✗")} could not supersede #${id} with #${by}`);
           context.fail();
@@ -324,14 +416,20 @@ export function createDiaryCommands(context: CliContext): CommandMap {
       });
     },
     topic(args) {
-      if (args[0] === "merge") {
-        if (args.length !== 3) {
+      const input = diaryArguments(context, "topic", args, {
+        valueFlags: ["--limit"],
+      });
+      if (!input) return;
+      if (input.positionals[0] === "merge") {
+        if (input.positionals.length !== 3 || input.flags.size !== 0) {
           context.error("usage: cli.ts topic merge <from> <into>");
           context.fail();
           return;
         }
+        const from = input.positionals[1] ?? "";
+        const into = input.positionals[2] ?? "";
         withStore(context.dbPath, (store) => {
-          const count = store.diary.mergeTopic(args[1] ?? "", args[2] ?? "");
+          const count = store.diary.mergeTopic(from, into);
           if (count === 0) {
             context.error(
               `${red("✗")} nothing moved — check both names with \`cli.ts topics\``,
@@ -345,8 +443,9 @@ export function createDiaryCommands(context: CliContext): CommandMap {
         });
         return;
       }
-      const limit = Number(takeFlag(args, "--limit")) || 20;
-      const name = args.join(" ").trim();
+      const limit = diaryLimit(context, "topic", input);
+      if (limit === undefined) return;
+      const name = input.positionals.join(" ").trim();
       if (!name) {
         context.error("usage: cli.ts topic <name> [--limit n]");
         context.fail();
@@ -355,12 +454,14 @@ export function createDiaryCommands(context: CliContext): CommandMap {
       recall(context, ["--topic", name, "--limit", String(limit)]);
     },
     diary(args) {
-      if (args[0] !== "check") {
+      const input = diaryArguments(context, "diary", args, { maxPositionals: 1 });
+      if (!input) return;
+      if (input.positionals[0] !== "check") {
         failUsage(context, "diary");
         return;
       }
+      const now = context.now();
       withStore(context.dbPath, (store) => {
-        const now = context.now();
         const problems = store.diary.check(now);
         if (problems.length === 0) {
           context.log(

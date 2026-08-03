@@ -1,8 +1,16 @@
 import type { StructuredActInput } from "../core/obligations.ts";
+import { booleanFlag, parseArguments, stringFlag } from "./args.ts";
 import { failure, success, type Result } from "./result.ts";
 
-export type StructuredShortcut =
-  "request" | "promise" | "handoff" | "grant" | "correct" | "hazard";
+export const STRUCTURED_SHORTCUTS = [
+  "request",
+  "promise",
+  "handoff",
+  "grant",
+  "correct",
+  "hazard",
+] as const;
+export type StructuredShortcut = (typeof STRUCTURED_SHORTCUTS)[number];
 
 export interface ParsedStructuredShortcut {
   readonly command: StructuredShortcut;
@@ -17,59 +25,61 @@ export type StructuredShortcutResult =
       readonly result: Result<ParsedStructuredShortcut>;
     };
 
-const SHORTCUTS: ReadonlySet<string> = new Set<StructuredShortcut>([
-  "request",
-  "promise",
-  "handoff",
-  "grant",
-  "correct",
-  "hazard",
-]);
-
-function takeFlag(args: string[], flag: string): string {
-  const index = args.indexOf(flag);
-  if (index < 0) return "";
-  const value = args[index + 1] ?? "";
-  args.splice(index, 2);
-  return value;
+function shortcutNamed(
+  command: string | undefined,
+): StructuredShortcut | undefined {
+  return STRUCTURED_SHORTCUTS.find((candidate) => candidate === command);
 }
 
-/** Pure parser for the short, one-act semantic messaging commands. */
+function invalid(message: string): StructuredShortcutResult {
+  return { matched: true, result: failure(message) };
+}
+
+/** Pure, non-mutating parser for the short single-act semantic commands. */
 export function parseStructuredShortcut(
   command: string | undefined,
-  rawArgs: readonly string[],
+  argv: readonly string[],
 ): StructuredShortcutResult {
-  if (!command || !SHORTCUTS.has(command)) return { matched: false };
-  const shortcut = command as StructuredShortcut;
-  const args = [...rawArgs];
-  const target = args.shift() ?? "";
+  const shortcut = shortcutNamed(command);
+  if (!shortcut) return { matched: false };
+  const parsed = parseArguments(
+    argv,
+    shortcut === "promise"
+      ? { valueFlags: ["--until"], booleanFlags: ["--refrain"] }
+      : {},
+  );
+  if (!parsed.ok) return invalid(parsed.error);
+  const [target = "", ...rest] = parsed.value.positionals;
 
   if (shortcut === "promise") {
-    const refrainIndex = args.indexOf("--refrain");
-    const refrain = refrainIndex >= 0;
-    if (refrain) args.splice(refrainIndex, 1);
-    const until = takeFlag(args, "--until");
-    const text = args.join(" ").trim();
-    if (!target || !text || (refrain && !until)) {
-      return { matched: true, result: failure("invalid shortcut arguments") };
-    }
-    const promise: StructuredActInput = {
-      key: "promise",
-      type: "promise",
-      text,
-      mode: refrain ? "refrain" : "perform",
-      ...(until
-        ? { releaseBoundary: { text: until, handling: "manual" } }
-        : {}),
-    };
+    const refrain = booleanFlag(parsed.value, "--refrain");
+    const until = stringFlag(parsed.value, "--until");
+    const text = rest.join(" ").trim();
+    if (!target || !text) return invalid("promise requires a target and text");
+    if (refrain && !until)
+      return invalid("--refrain requires --until <condition>");
     return {
       matched: true,
-      result: success({ command: shortcut, target, acts: [promise] }),
+      result: success({
+        command: shortcut,
+        target,
+        acts: [
+          {
+            key: "promise",
+            type: "promise",
+            text,
+            mode: refrain ? "refrain" : "perform",
+            ...(until
+              ? { releaseBoundary: { text: until, handling: "manual" } }
+              : {}),
+          },
+        ],
+      }),
     };
   }
 
   if (shortcut === "correct") {
-    const kind = args.shift();
+    const [kind, ...words] = rest;
     const correctionType =
       kind === "self"
         ? "self_erratum"
@@ -78,10 +88,9 @@ export function parseStructuredShortcut(
           : kind === "implementation"
             ? "implementation_correction"
             : undefined;
-    const text = args.join(" ").trim();
-    if (!target || !correctionType || !text) {
-      return { matched: true, result: failure("invalid shortcut arguments") };
-    }
+    const text = words.join(" ").trim();
+    if (!target || !correctionType || !text)
+      return invalid("correct requires target, correction kind, and text");
     return {
       matched: true,
       result: success({
@@ -93,11 +102,10 @@ export function parseStructuredShortcut(
   }
 
   if (shortcut === "hazard") {
-    const subject = args.shift() ?? "";
-    const text = args.join(" ").trim();
-    if (!target || !subject || !text) {
-      return { matched: true, result: failure("invalid shortcut arguments") };
-    }
+    const [subject = "", ...words] = rest;
+    const text = words.join(" ").trim();
+    if (!target || !subject || !text)
+      return invalid("hazard requires target, subject, and warning text");
     return {
       matched: true,
       result: success({
@@ -108,10 +116,9 @@ export function parseStructuredShortcut(
     };
   }
 
-  const text = args.join(" ").trim();
+  const text = rest.join(" ").trim();
   if (!target || !text)
-    return { matched: true, result: failure("invalid shortcut arguments") };
-
+    return invalid(`${shortcut} requires a target and text`);
   const act: StructuredActInput =
     shortcut === "request"
       ? { key: "request", type: "request", text }

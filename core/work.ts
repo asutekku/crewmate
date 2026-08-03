@@ -319,6 +319,22 @@ export interface PlanRollup {
 export class WorkStore {
   constructor(private readonly db: Database) {}
 
+  /** Atomically replaces inferred work with an agent-authored item. */
+  replaceAutoWithWork(
+    agentId: string,
+    agentName: string,
+    subject: string,
+    steps: readonly string[],
+    nowMs: number,
+    planDoc = "",
+  ): number {
+    const run = this.db.transaction(() => {
+      this.closeAuto(agentId, nowMs);
+      return this.open(agentId, agentName, subject, steps, nowMs, planDoc);
+    });
+    return run.immediate();
+  }
+
   /** Opens an item. Steps are optional — an item with none is a valid end state. */
   open(
     agentId: string,

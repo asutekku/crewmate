@@ -11,19 +11,23 @@ import {
   type Store,
 } from "../core/store.ts";
 import type { CliContext, CommandMap } from "./types.ts";
+import {
+  parseArguments,
+  parseSubjectSelector,
+  type SubjectSelector,
+} from "./args.ts";
+import { failCommand } from "./command.ts";
+import { resolveLiveName } from "./identity.ts";
+import { TerminalReport } from "./terminal.ts";
 
 function subject(
   context: CliContext,
   store: Store,
-  args: readonly string[],
+  selector: SubjectSelector,
   now: number,
 ): Session | null {
-  const flag = (name: string): string => {
-    const index = args.indexOf(name);
-    return index >= 0 ? (args[index + 1] ?? "") : "";
-  };
   const live = store.liveSessions(now);
-  const wanted = flag("--session");
+  const wanted = selector.session ?? "";
   if (wanted) {
     const hit = live.find((session) => session.sessionId === wanted);
     if (hit) return hit;
@@ -31,15 +35,17 @@ function subject(
     context.fail();
     return null;
   }
-  const named = flag("--agent").toLowerCase();
+  const named = selector.agent ?? "";
   if (named) {
-    const hit = live.find(
-      (session) =>
-        displayName(session).toLowerCase() === named ||
-        session.handle === named,
+    const hit = resolveLiveName(live, named);
+    if (hit.ok) return hit.value;
+    context.error(
+      red(
+        hit.kind === "ambiguous"
+          ? `ambiguous live session ${named}: ${hit.candidates.join(", ")}`
+          : `no live session named ${named}`,
+      ),
     );
-    if (hit) return hit;
-    context.error(red(`no live session named ${named}`));
     context.fail();
     return null;
   }
@@ -67,11 +73,29 @@ function clip(text: string, max = 52): string {
 }
 
 export function createInjectionCommands(context: CliContext): CommandMap {
+  const parseSelector = (command: string, args: readonly string[]): SubjectSelector | undefined => {
+    const parsed = parseArguments(args, {
+      valueFlags: ["--agent", "--session"],
+      maxPositionals: 0,
+    });
+    if (!parsed.ok) {
+      failCommand(context, `${command}: ${parsed.error}`);
+      return undefined;
+    }
+    const selector = parseSubjectSelector(parsed.value);
+    if (!selector.ok) {
+      failCommand(context, `${command}: ${selector.error}`);
+      return undefined;
+    }
+    return selector.value;
+  };
   return {
     inbox(args) {
+      const selector = parseSelector("inbox", args);
+      if (!selector) return;
       withStore(context.dbPath, (store) => {
         const now = context.now();
-        const recipient = subject(context, store, args, now);
+        const recipient = subject(context, store, selector, now);
         if (!recipient) return;
         const owed = store.injectionOmissions(recipient.sessionId);
         if (owed.length === 0) {
@@ -88,9 +112,11 @@ export function createInjectionCommands(context: CliContext): CommandMap {
       });
     },
     injection(args) {
+      const selector = parseSelector("injection", args);
+      if (!selector) return;
       withStore(context.dbPath, (store) => {
         const now = context.now();
-        const recipient = subject(context, store, args, now);
+        const recipient = subject(context, store, selector, now);
         if (!recipient) return;
         const sessionId = recipient.sessionId;
         const name = displayName(recipient);
@@ -112,7 +138,8 @@ export function createInjectionCommands(context: CliContext): CommandMap {
         context.log(
           `${dim("recipient")} ${name} ${dim(sessionId.slice(0, 8))}`,
         );
-        context.log(bold("\nmandatory"));
+        context.log("");
+        context.log(bold("mandatory"));
         for (const line of envelope.mandatoryHeader.filter(Boolean))
           context.log(
             `  ${green("✓")} ${dim(clip(line))} ${dim(`${line.length}`)}`,
@@ -124,13 +151,15 @@ export function createInjectionCommands(context: CliContext): CommandMap {
           context.log(
             `  ${framed ? green("✓") : dim("–")} ${dim(clip(line))} ${dim(`${line.length}`)}${framed ? "" : dim(" (no peer text selected)")}`,
           );
-        context.log(bold("\nselected"));
+        context.log("");
+        context.log(bold("selected"));
         if (packed.selected.length === 0) context.log(dim("  nothing"));
         for (const selected of packed.selected)
           context.log(
             `  ${green("✓")} ${selected.candidate.key.padEnd(18)} ${dim(`p${selected.candidate.priority}`)} ${dim(`${selected.text.length}`)}${selected.form === "compact" ? yellow(" compact") : ""}`,
           );
-        context.log(bold("\nomitted"));
+        context.log("");
+        context.log(bold("omitted"));
         if (packed.omitted.length === 0) context.log(dim("  nothing"));
         for (const omitted of packed.omitted)
           context.log(
@@ -142,9 +171,10 @@ export function createInjectionCommands(context: CliContext): CommandMap {
           const latest = history.filter(
             (entry) => entry.deliveryId === delivery,
           );
+          context.log("");
           context.log(
             bold(
-              `\nlast delivered ${dim(briefAgo(latest[0]?.tsMs ?? now, now))}`,
+              `last delivered ${dim(briefAgo(latest[0]?.tsMs ?? now, now))}`,
             ),
           );
           for (const entry of latest)
@@ -156,16 +186,17 @@ export function createInjectionCommands(context: CliContext): CommandMap {
           if (deliveries > 1)
             context.log(dim(`  (${deliveries} deliveries in history)`));
         }
-        context.log(bold("\nbudget"));
-        context.log(`  ${dim("target  ")} ${envelope.targetChars}`);
-        context.log(`  ${dim("rendered")} ${packed.renderedChars}`);
-        context.log(
-          `  ${dim("reserved")} ${packed.reservedChars} ${dim("(header + framing)")}`,
-        );
+        const budget = new TerminalReport()
+          .blank()
+          .line(bold("budget"))
+          .field("target", envelope.targetChars)
+          .field("rendered", packed.renderedChars)
+          .field("reserved", `${packed.reservedChars} (header + framing)`);
         if (packed.mandatoryOverflow)
-          context.log(
+          budget.line(
             `  ${red("mandatory overflow")} — the header alone exceeds the target and renders anyway`,
           );
+        budget.emit(context.log);
       });
     },
   };

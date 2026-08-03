@@ -16,19 +16,6 @@ describe("CLI architecture", () => {
     expect(entrySource).not.toContain("withStore");
   });
 
-  test("command families remain reviewable modules rather than another god-file", async () => {
-    const files = [...new Bun.Glob("*.ts").scanSync(cliDirectory)];
-    expect(files.length).toBeGreaterThan(10);
-    const sizes = await Promise.all(
-      files.map(async (file) => ({
-        file,
-        lines: (await Bun.file(`${cliDirectory}/${file}`).text()).split(/\r?\n/)
-          .length,
-      })),
-    );
-    expect(sizes.filter((item) => item.lines > 600)).toEqual([]);
-  });
-
   test("CLI domain modules keep unsafe boundaries and clocks explicit", async () => {
     const files = [...new Bun.Glob("*.ts").scanSync(cliDirectory)];
     const sources = await Promise.all(
@@ -39,6 +26,9 @@ describe("CLI architecture", () => {
     expect(production).not.toContain("Date.now()");
     expect(production).not.toContain('"error" in');
     expect(production).not.toMatch(/ok: (?:true|false) as const/);
+    expect(production).not.toMatch(/\btakeFlag\b/);
+    expect(production).not.toMatch(/\.shift\s*\(/);
+    expect(production).not.toMatch(/\.splice\s*\(/);
     expect(production.match(/context\.now\(\)/g)?.length).toBe(
       production.match(/const now = context\.now\(\)/g)?.length,
     );

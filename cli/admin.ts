@@ -14,15 +14,17 @@ import {
   withStore,
 } from "../core/store.ts";
 import { validateAlias, validateRole } from "../core/topic.ts";
-import { takeFlag } from "./args.ts";
-import { failUsage } from "./command.ts";
-import { resolveSelf } from "./identity.ts";
+import { parseArguments, stringFlag } from "./args.ts";
+import { failCommand, failUsage } from "./command.ts";
+import { resolveLiveName, resolveSelf } from "./identity.ts";
 import type { CliContext, CommandMap } from "./types.ts";
 
 export function createAdminCommands(context: CliContext): CommandMap {
   const rename = (args: string[]): void => {
-    const target = takeFlag(args, "--agent");
-    const check = validateAlias(args.join(" ").trim());
+    const parsed = parseArguments(args, { valueFlags: ["--agent"] });
+    if (!parsed.ok) return failCommand(context, `call-me: ${parsed.error}`);
+    const target = stringFlag(parsed.value, "--agent") ?? "";
+    const check = validateAlias(parsed.value.positionals.join(" ").trim());
     if (!check.ok) {
       context.error(`${red("✗")} ${check.why}`);
       context.fail();
@@ -51,8 +53,10 @@ export function createAdminCommands(context: CliContext): CommandMap {
     });
   };
   const role = (args: string[]): void => {
-    const target = takeFlag(args, "--agent");
-    const check = validateRole(args.join(" ").trim());
+    const parsed = parseArguments(args, { valueFlags: ["--agent"] });
+    if (!parsed.ok) return failCommand(context, `call-you: ${parsed.error}`);
+    const target = stringFlag(parsed.value, "--agent") ?? "";
+    const check = validateRole(parsed.value.positionals.join(" ").trim());
     if (!check.ok) {
       context.error(`${red("✗")} ${check.why}`);
       context.fail();
@@ -79,7 +83,9 @@ export function createAdminCommands(context: CliContext): CommandMap {
     name: rename,
     "call-you": role,
     role,
-    clear() {
+    clear(args) {
+      const parsed = parseArguments(args, { maxPositionals: 0 });
+      if (!parsed.ok) return failCommand(context, `clear: ${parsed.error}`);
       withStore(context.dbPath, (store) => {
         const now = context.now();
         for (const session of store.liveSessions(now))
@@ -90,7 +96,9 @@ export function createAdminCommands(context: CliContext): CommandMap {
           dim("(Message log is kept; it self-prunes.)"),
       );
     },
-    where() {
+    where(args) {
+      const parsed = parseArguments(args, { maxPositionals: 0 });
+      if (!parsed.ok) return failCommand(context, `where: ${parsed.error}`);
       const note = context.isGit
         ? ""
         : dim("  (no git repo — keyed on directory)");
@@ -118,7 +126,9 @@ export function createAdminCommands(context: CliContext): CommandMap {
       );
     },
     quit(args) {
-      const target = args[0];
+      const parsed = parseArguments(args, { maxPositionals: 1 });
+      if (!parsed.ok) return failCommand(context, `quit: ${parsed.error}`);
+      const target = parsed.value.positionals[0];
       if (!target) {
         failUsage(context, "quit");
         return;
@@ -127,14 +137,12 @@ export function createAdminCommands(context: CliContext): CommandMap {
       withStore(context.dbPath, (store) => {
         const now = context.now();
         const sessions = store.liveSessions(now);
-        const match = sessions.find(
-          (session) =>
-            displayName(session).toLowerCase() === target.toLowerCase() ||
-            session.handle === target,
-        );
-        if (!match) {
+        const resolved = resolveLiveName(sessions, target);
+        if (!resolved.ok) {
           context.error(
-            `no agent named ${bold(target)} in ${context.projectName}`,
+            resolved.kind === "ambiguous"
+              ? `ambiguous agent ${bold(target)}: ${resolved.candidates.join(", ")}`
+              : `no agent named ${bold(target)} in ${context.projectName}`,
           );
           context.error(
             dim(
@@ -144,6 +152,7 @@ export function createAdminCommands(context: CliContext): CommandMap {
           context.fail();
           return;
         }
+        const match = resolved.value;
         const claims = store.allClaims(now);
         const mine = claims.filter((claim) => claim.handle === match.handle);
         const counts = new Map<string, number>();

@@ -24,14 +24,36 @@ import {
   normalisePlanPath,
   parsePlan,
   progress,
+  type WorkEvent,
+  type WorkItem,
+  type WorkStep,
 } from "../core/work.ts";
 import { briefAgo } from "../core/board.ts";
-import { takeFlag } from "./args.ts";
-import { failUsage } from "./command.ts";
-import { callerIdentity, notAnAgent } from "./identity.ts";
+import {
+  booleanFlag,
+  parseArguments,
+  requireSafeInteger,
+  stringFlag,
+  type ParsedArguments,
+} from "./args.ts";
+import { failCommand, failUsage } from "./command.ts";
+import { callerIdentity, notAnAgent, resolveLiveName } from "./identity.ts";
 import type { CliContext, CommandMap } from "./types.ts";
 
 const BOARD_PAINT: BoardPaint = { bold, dim, green, red, cyan, name: cyan };
+const BREAK_NOTIFICATION_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+function commandArguments(
+  context: CliContext,
+  command: string,
+  argv: readonly string[],
+  schema: Parameters<typeof parseArguments>[1],
+): ParsedArguments | undefined {
+  const parsed = parseArguments(argv, schema);
+  if (parsed.ok) return parsed.value;
+  failCommand(context, `${command}: ${parsed.error}`);
+  return undefined;
+}
 
 function noOpenItem(context: CliContext, match: string): void {
   context.error(
@@ -63,17 +85,63 @@ function printProgress(
     context.log(dim("  every step ticked — `cli.ts done` to close it"));
 }
 
+interface WorkItemView {
+  readonly item: WorkItem;
+  readonly steps: readonly WorkStep[];
+  readonly events: readonly WorkEvent[];
+}
+
+function renderMine(
+  context: CliContext,
+  views: readonly WorkItemView[],
+  nowMs: number,
+  width: number,
+): void {
+  if (views.length === 0) {
+    context.log(dim("No open work items."));
+    context.log(dim('  `cli.ts doing "<subject>" --plan "a; b; c"` opens one.'));
+    return;
+  }
+  for (const view of views) {
+    const fold = foldEvents(view.events);
+    for (const line of itemLines(view.item, view.steps, fold, nowMs, width, BOARD_PAINT))
+      context.log(line);
+  }
+}
+
+type AgentResolution =
+  | { readonly ok: true; readonly agentId: string }
+  | {
+      readonly ok: false;
+      readonly kind: "not_found" | "ambiguous";
+      readonly candidates: readonly string[];
+    };
+
 function resolveAgentId(
   store: Store,
   query: string,
   nowMs: number,
-): string | undefined {
-  const live = store.findByName(query, nowMs);
-  if (live) return agentKey(live.title, live.sessionId);
+): AgentResolution {
+  const live = resolveLiveName(store.liveSessions(nowMs), query);
+  if (live.ok)
+    return { ok: true, agentId: agentKey(live.value.title, live.value.sessionId) };
+  if (live.kind === "ambiguous") return live;
   const lower = query.toLowerCase();
-  return store.work
+  const historical = store.work
     .items({ includeClosed: true })
-    .find((item) => item.agentName.toLowerCase() === lower)?.agentId;
+    .filter((item) => item.agentName.toLowerCase() === lower);
+  const byAgent = new Map(historical.map((item) => [item.agentId, item]));
+  if (byAgent.size === 1)
+    return { ok: true, agentId: byAgent.keys().next().value! };
+  if (byAgent.size === 0)
+    return { ok: false, kind: "not_found", candidates: [] };
+  return {
+    ok: false,
+    kind: "ambiguous",
+    candidates: [...byAgent.values()]
+      .map((item) => `${item.agentName} (${item.agentId.slice(-6)})`)
+      .sort((a, b) => a.localeCompare(b)),
+  };
 }
 
 function printHistory(
@@ -102,14 +170,13 @@ function printHistory(
 export function createWorkCommands(context: CliContext): CommandMap {
   return {
     doing(args) {
-      let plan = "";
-      const planIndex = args.indexOf("--plan");
-      if (planIndex >= 0) {
-        plan = args[planIndex + 1] ?? "";
-        args.splice(planIndex, 2);
-      }
-      const planDoc = takeFlag(args, "--plan-doc");
-      const subject = args.join(" ").trim();
+      const input = commandArguments(context, "doing", args, {
+        valueFlags: ["--plan", "--plan-doc"],
+      });
+      if (!input) return;
+      const plan = stringFlag(input, "--plan") ?? "";
+      const planDoc = stringFlag(input, "--plan-doc") ?? "";
+      const subject = input.positionals.join(" ").trim();
       if (!subject) {
         failUsage(context, "doing");
         return;
@@ -119,9 +186,8 @@ export function createWorkCommands(context: CliContext): CommandMap {
         if (!me) return notAnAgent(context, "`doing`");
         const now = context.now();
         const steps = parsePlan(plan);
-        store.work.closeAuto(me.agentId, now);
         const linkPath = normalisePlanPath(planDoc);
-        const workId = store.work.open(
+        const workId = store.work.replaceAutoWithWork(
           me.agentId,
           me.agentName,
           subject,
@@ -148,12 +214,19 @@ export function createWorkCommands(context: CliContext): CommandMap {
     },
 
     did(args) {
-      const stepNumber = Number(args.shift());
-      const match = takeFlag(args, "--item");
-      if (!Number.isInteger(stepNumber) || stepNumber < 1) {
-        failUsage(context, "did");
-        return;
-      }
+      const input = commandArguments(context, "did", args, {
+        valueFlags: ["--item"],
+      });
+      if (!input) return;
+      const parsedStep = requireSafeInteger(input.positionals[0], "step", {
+        min: 1,
+        max: Number.MAX_SAFE_INTEGER,
+      });
+      if (!parsedStep.ok)
+        return failCommand(context, `did: ${parsedStep.error}`);
+      const stepNumber = parsedStep.value;
+      const match = stringFlag(input, "--item") ?? "";
+      const note = input.positionals.slice(1).join(" ").trim();
       withStore(context.dbPath, (store) => {
         const now = context.now();
         const me = callerIdentity(context, store);
@@ -161,7 +234,7 @@ export function createWorkCommands(context: CliContext): CommandMap {
         const item = store.work.target(me.agentId, match);
         if (!item) return noOpenItem(context, match);
         if (
-          !store.work.tick(item.workId, stepNumber, args.join(" ").trim(), now)
+          !store.work.tick(item.workId, stepNumber, note, now)
         ) {
           const steps = store.work.steps(item.workId);
           context.error(`${bold(item.subject)} has no step ${stepNumber}.`);
@@ -177,10 +250,20 @@ export function createWorkCommands(context: CliContext): CommandMap {
     },
 
     step(args) {
-      const stepNumber = Number(args.shift());
-      const match = takeFlag(args, "--item");
-      const status = args.join(" ").trim();
-      if (!Number.isInteger(stepNumber) || stepNumber < 1 || !status) {
+      const input = commandArguments(context, "step", args, {
+        valueFlags: ["--item"],
+      });
+      if (!input) return;
+      const parsedStep = requireSafeInteger(input.positionals[0], "step", {
+        min: 1,
+        max: Number.MAX_SAFE_INTEGER,
+      });
+      if (!parsedStep.ok)
+        return failCommand(context, `step: ${parsedStep.error}`);
+      const stepNumber = parsedStep.value;
+      const match = stringFlag(input, "--item") ?? "";
+      const status = input.positionals.slice(1).join(" ").trim();
+      if (!status) {
         failUsage(context, "step");
         return;
       }
@@ -198,8 +281,12 @@ export function createWorkCommands(context: CliContext): CommandMap {
     },
 
     add(args) {
-      const match = takeFlag(args, "--item");
-      const text = args.join(" ").trim();
+      const input = commandArguments(context, "add", args, {
+        valueFlags: ["--item"],
+      });
+      if (!input) return;
+      const match = stringFlag(input, "--item") ?? "";
+      const text = input.positionals.join(" ").trim();
       if (!text) {
         failUsage(context, "add");
         return;
@@ -218,11 +305,14 @@ export function createWorkCommands(context: CliContext): CommandMap {
     },
 
     done(args) {
-      const abandonedIndex = args.indexOf("--abandoned");
-      const abandoned = abandonedIndex >= 0;
-      if (abandoned) args.splice(abandonedIndex, 1);
-      const body = takeFlag(args, "--note");
-      const match = args.join(" ").trim();
+      const input = commandArguments(context, "done", args, {
+        valueFlags: ["--note"],
+        booleanFlags: ["--abandoned"],
+      });
+      if (!input) return;
+      const abandoned = booleanFlag(input, "--abandoned");
+      const body = stringFlag(input, "--note") ?? "";
+      const match = input.positionals.join(" ").trim();
       withStore(context.dbPath, (store) => {
         const now = context.now();
         const me = callerIdentity(context, store);
@@ -251,8 +341,12 @@ export function createWorkCommands(context: CliContext): CommandMap {
     },
 
     link(args) {
-      const match = takeFlag(args, "--item");
-      const planDoc = args.join(" ").trim();
+      const input = commandArguments(context, "link", args, {
+        valueFlags: ["--item"],
+      });
+      if (!input) return;
+      const match = stringFlag(input, "--item") ?? "";
+      const planDoc = input.positionals.join(" ").trim();
       if (!planDoc) {
         failUsage(context, "link");
         return;
@@ -278,7 +372,11 @@ export function createWorkCommands(context: CliContext): CommandMap {
       });
     },
 
-    plans() {
+    plans(args) {
+      const input = commandArguments(context, "plans", args, {
+        maxPositionals: 0,
+      });
+      if (!input) return;
       withStore(context.dbPath, (store) => {
         const rollups = store.work.planRollups();
         if (rollups.length === 0) {
@@ -321,56 +419,54 @@ export function createWorkCommands(context: CliContext): CommandMap {
       });
     },
 
-    mine() {
-      withStore(context.dbPath, (store) => {
-        const me = callerIdentity(context, store);
-        if (!me) return notAnAgent(context, "`mine`");
-        const now = context.now();
-        const items = store.work.openItems(me.agentId);
-        if (items.length === 0) {
-          context.log(dim("No open work items."));
-          context.log(
-            dim('  `cli.ts doing "<subject>" --plan "a; b; c"` opens one.'),
-          );
-          return;
-        }
-        for (const item of items) {
-          const steps = store.work.steps(item.workId);
-          const fold = foldEvents(store.work.events(item.workId));
-          for (const line of itemLines(
-            item,
-            steps,
-            fold,
-            now,
-            terminalWidth(),
-            BOARD_PAINT,
-          ))
-            context.log(line);
-        }
+    mine(args) {
+      const input = commandArguments(context, "mine", args, {
+        maxPositionals: 0,
       });
+      if (!input) return;
+      const now = context.now();
+      const width = terminalWidth();
+      const views = withStore(context.dbPath, (store): WorkItemView[] | null => {
+        const me = callerIdentity(context, store);
+        if (!me) {
+          notAnAgent(context, "`mine`");
+          return null;
+        }
+        const items = store.work.openItems(me.agentId);
+        return items.map((item) => ({
+          item,
+          steps: store.work.steps(item.workId),
+          events: store.work.events(item.workId),
+        }));
+      });
+      if (views) renderMine(context, views, now, width);
     },
 
     board(args) {
-      const historyIndex = args.indexOf("--history");
-      const history = historyIndex >= 0;
-      if (history) args.splice(historyIndex, 1);
-      const allIndex = args.indexOf("--all");
-      const all = allIndex >= 0;
-      if (all) args.splice(allIndex, 1);
-      const rawIndex = args.indexOf("--raw");
-      const raw = rawIndex >= 0;
-      if (raw) args.splice(rawIndex, 1);
-      const who = args.join(" ").trim();
+      const input = commandArguments(context, "board", args, {
+        booleanFlags: ["--history", "--all", "--raw"],
+      });
+      if (!input) return;
+      const history = booleanFlag(input, "--history");
+      const all = booleanFlag(input, "--all");
+      const raw = booleanFlag(input, "--raw");
+      const who = input.positionals.join(" ").trim();
       withStore(context.dbPath, (store) => {
         const now = context.now();
         store.work.pruneWork(now);
         const showName = operatorNames(store.liveSessions(now));
-        const target = who !== "" ? resolveAgentId(store, who, now) : undefined;
-        if (who !== "" && target === undefined) {
-          context.error(`no work records for ${bold(who)}.`);
+        const resolution =
+          who !== "" ? resolveAgentId(store, who, now) : undefined;
+        if (resolution && !resolution.ok) {
+          context.error(
+            resolution.kind === "ambiguous"
+              ? `ambiguous agent ${bold(who)}: ${resolution.candidates.join(", ")}`
+              : `no work records for ${bold(who)}.`,
+          );
           context.fail();
           return;
         }
+        const target = resolution?.agentId;
         const items = store.work.items({
           ...(target !== undefined ? { agentId: target } : {}),
           includeClosed: all || history,
@@ -453,8 +549,12 @@ function flag(
   kind: "breaks" | "needs",
   args: string[],
 ): void {
-  const match = takeFlag(args, "--item");
-  const text = args.join(" ").trim();
+  const input = commandArguments(context, kind, args, {
+    valueFlags: ["--item"],
+  });
+  if (!input) return;
+  const match = stringFlag(input, "--item") ?? "";
+  const text = input.positionals.join(" ").trim();
   if (!text) {
     context.error(`usage: cli.ts ${kind} "<what>" [--item <subject match>]`);
     context.error(
@@ -491,7 +591,7 @@ function flag(
       );
       return;
     }
-    const since = now - 24 * 60 * 60 * 1000;
+    const since = now - BREAK_NOTIFICATION_WINDOW_MS;
     const ownPaths = new Set(
       store.editsBy(context.sessionId, since).map((edit) => edit.path),
     );

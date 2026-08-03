@@ -5,7 +5,9 @@ import { fit, terminalWidth } from "../core/layout.ts";
 import { withPersonal } from "../core/personal.ts";
 import { displayName, withStore } from "../core/store.ts";
 import { sizeText, spanText, usageFlag } from "../core/stats.ts";
-import { takeFlag } from "./args.ts";
+import { parseArguments, parseSafeInteger, stringFlag } from "./args.ts";
+import { failCommand } from "./command.ts";
+import { resolveTrustedPath } from "./paths.ts";
 import type { CliContext, CommandMap } from "./types.ts";
 
 function databaseBytes(path: string): number {
@@ -18,8 +20,15 @@ function databaseBytes(path: string): number {
 export function createDiagnosticCommands(context: CliContext): CommandMap {
   return {
     files(args) {
-      const hours = Number(takeFlag(args, "--hours")) || 24;
-      const target = args.join(" ").trim();
+      const parsed = parseArguments(args, { valueFlags: ["--hours"] });
+      if (!parsed.ok) return failCommand(context, `files: ${parsed.error}`);
+      const parsedHours = parseSafeInteger(stringFlag(parsed.value, "--hours"), "hours", {
+        min: 1,
+        max: 24 * 365,
+      });
+      if (!parsedHours.ok) return failCommand(context, `files: ${parsedHours.error}`);
+      const hours = parsedHours.value ?? 24;
+      const target = parsed.value.positionals.join(" ").trim();
       if (!target) {
         context.error("usage: cli.ts files <agent> [--hours n]");
         context.fail();
@@ -85,17 +94,19 @@ export function createDiagnosticCommands(context: CliContext): CommandMap {
       });
     },
     blame(args) {
-      const path = args.join(" ").trim();
+      const parsed = parseArguments(args, {});
+      if (!parsed.ok) return failCommand(context, `blame: ${parsed.error}`);
+      const path = parsed.value.positionals.join(" ").trim();
       if (!path) {
         context.error("usage: cli.ts blame <path>");
         context.fail();
         return;
       }
+      const resolved = resolveTrustedPath(path, context.projectRoot);
+      if (!resolved.ok) return failCommand(context, resolved.error);
       withStore(context.dbPath, (store) => {
         const now = context.now();
-        const relative = path
-          .replace(/\\/g, "/")
-          .replace(`${context.projectRoot}/`, "");
+        const relative = resolved.value.relative;
         const rows = store.editsOf(relative);
         if (rows.length === 0) {
           context.log(dim(`No recorded edits to ${relative}.`));
@@ -119,7 +130,9 @@ export function createDiagnosticCommands(context: CliContext): CommandMap {
         }
       });
     },
-    stats() {
+    stats(args) {
+      const parsed = parseArguments(args, { maxPositionals: 0 });
+      if (!parsed.ok) return failCommand(context, `stats: ${parsed.error}`);
       let memories = 0;
       try {
         memories = withPersonal((personal) => personal.count());

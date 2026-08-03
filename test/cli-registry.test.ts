@@ -21,4 +21,17 @@ describe("CLI command registry", () => {
       new CommandRegistry().add({ who: () => {} }).add({ who: () => {} }),
     ).toThrow("duplicate CLI command: who");
   });
+
+  test("rejects handlers without canonical help metadata", () => {
+    expect(() =>
+      new CommandRegistry().add({ undocumented: () => {} }),
+    ).toThrow("CLI command has no metadata: undocumented");
+  });
+
+  test("dispatch exposes the same metadata that drives help", () => {
+    const registry = new CommandRegistry().add({ who: () => {} });
+    expect(registry.command("who")?.metadata.blurb).toBe(
+      "the roster: who is live, on what, where",
+    );
+  });
 });

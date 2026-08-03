@@ -1,7 +1,50 @@
 import { bold, dim } from "../core/colour.ts";
-import { displayName, type Store } from "../core/store.ts";
+import { displayName, type Session, type Store } from "../core/store.ts";
 import { agentKey } from "../core/work.ts";
 import type { CliContext } from "./types.ts";
+
+export type LiveNameResolution =
+  | { readonly ok: true; readonly value: Session }
+  | {
+      readonly ok: false;
+      readonly kind: "not_found" | "ambiguous";
+      readonly query: string;
+      readonly candidates: readonly string[];
+    };
+
+/** Exact visible names win; prefixes are accepted only when uniquely identifying. */
+export function resolveLiveName(
+  live: readonly Session[],
+  query: string,
+): LiveNameResolution {
+  const wanted = query.trim().toLowerCase();
+  const exactAlias = live.filter(
+    (session) => session.alias.toLowerCase() === wanted,
+  );
+  const exact =
+    exactAlias.length > 0
+      ? exactAlias
+      : live.filter(
+          (session) =>
+            session.name.toLowerCase() === wanted ||
+            session.handle.toLowerCase() === wanted,
+        );
+  const matches =
+    exact.length > 0
+      ? exact
+      : live.filter((session) =>
+          [session.alias, session.name, session.handle].some((name) =>
+            name.toLowerCase().startsWith(wanted),
+          ),
+        );
+  if (matches.length === 1) return { ok: true, value: matches[0]! };
+  return {
+    ok: false,
+    kind: matches.length === 0 ? "not_found" : "ambiguous",
+    query,
+    candidates: matches.map(displayName).sort((a, b) => a.localeCompare(b)),
+  };
+}
 
 export function resolveSelf(
   context: CliContext,

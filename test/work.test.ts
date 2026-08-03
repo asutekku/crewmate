@@ -593,8 +593,13 @@ describe("auto-filled rows", () => {
     fresh((store) => {
       const w = store.work;
       w.autoOpen(AGENT, "hopper", "a guess at the subject", 1000);
-      w.closeAuto(AGENT, 2000);
-      w.open(AGENT, "hopper", "what I am actually doing", ["one"], 2000);
+      w.replaceAutoWithWork(
+        AGENT,
+        "hopper",
+        "what I am actually doing",
+        ["one"],
+        2000,
+      );
       // Two rows for one piece of work is worse than none.
       expect(w.openItems(AGENT).map((i) => i.subject)).toEqual(["what I am actually doing"]);
       // Closed, not deleted — the events under it are a real record of when

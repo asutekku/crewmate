@@ -6,7 +6,7 @@ import {
   buildObligationEvent,
   parseVersion,
 } from "../cli/obligation-events.ts";
-import { parseStructuredFile } from "../cli/obligations.ts";
+import { decodeStructuredFile } from "../cli/structured-json.ts";
 
 const assigned: ObligationSnapshot = {
   obligationId: "obligation-1",
@@ -59,17 +59,17 @@ describe("obligation CLI domain construction", () => {
 
 describe("structured JSON boundary", () => {
   test("validates every consumed top-level field", () => {
-    expect(parseStructuredFile(null).ok).toBeFalse();
-    expect(parseStructuredFile({ acts: {} }).ok).toBeFalse();
-    expect(parseStructuredFile({ acts: [], dependencies: {} }).ok).toBeFalse();
+    expect(decodeStructuredFile(null).ok).toBeFalse();
+    expect(decodeStructuredFile({ acts: {} }).ok).toBeFalse();
+    expect(decodeStructuredFile({ acts: [], dependencies: {} }).ok).toBeFalse();
     expect(
-      parseStructuredFile({ acts: [], idempotencyKey: 42 }).ok,
+      decodeStructuredFile({ acts: [], idempotencyKey: 42 }).ok,
     ).toBeFalse();
   });
 
   test("returns typed input only after top-level validation", () => {
     expect(
-      parseStructuredFile({
+      decodeStructuredFile({
         acts: [{ key: "request", type: "request", text: "review" }],
         dependencies: [],
         idempotencyKey: "batch-1",
@@ -82,5 +82,75 @@ describe("structured JSON boundary", () => {
         idempotencyKey: "batch-1",
       },
     });
+  });
+
+  test("validates nested acts, dependencies, conditions, and canonical enums", () => {
+    expect(
+      decodeStructuredFile({
+        acts: [
+          {
+            key: "promise",
+            type: "promise",
+            text: "ship it",
+            mode: "perform",
+            priority: "urgent",
+            condition: {
+              text: "after step two",
+              handling: "automatic",
+              trigger: {
+                kind: "work_step_completed",
+                workId: "work-1",
+                step: 2,
+              },
+            },
+          },
+          {
+            key: "request",
+            type: "request",
+            text: "review it",
+          },
+        ],
+        dependencies: [
+          {
+            sourceKey: "promise",
+            targetKey: "request",
+            effect: "activate",
+          },
+        ],
+      }).ok,
+    ).toBeTrue();
+  });
+
+  test.each([
+    {
+      acts: [{ key: "x", type: "promise", text: "x", mode: "perhaps" }],
+    },
+    {
+      acts: [{ key: "x", type: "handoff", text: "x", subject: 12 }],
+    },
+    {
+      acts: [
+        {
+          key: "x",
+          type: "promise",
+          text: "x",
+          mode: "perform",
+          condition: {
+            text: "after step",
+            handling: "automatic",
+            trigger: { kind: "work_step_completed", workId: "w", step: 1.5 },
+          },
+        },
+      ],
+    },
+    {
+      acts: [{ key: "x", type: "question", text: "x", surprise: true }],
+    },
+    {
+      acts: [{ key: "x", type: "question", text: "x" }],
+      dependencies: [{ sourceKey: "x", targetKey: "y", effect: "eventually" }],
+    },
+  ])("rejects malformed complete structures %#", (value) => {
+    expect(decodeStructuredFile(value).ok).toBeFalse();
   });
 });

@@ -362,8 +362,41 @@ export interface TopicSummary {
   readonly lastMs: number;
 }
 
+export type WriteAndFixResult =
+  | { readonly ok: true; readonly entryId: number; readonly fixed: DiaryEntry }
+  | {
+      readonly ok: false;
+      readonly reason: "missing" | "not-error" | "already-fixed";
+      readonly target?: DiaryEntry;
+    };
+
 export class DiaryStore {
   constructor(private readonly db: Database) {}
+
+  /** Validates the referenced error before atomically writing and linking its fix. */
+  writeAndFix(
+    sessionId: string,
+    agent: string,
+    note: Required<NoteInput>,
+    targetId: number,
+    nowMs: number,
+  ): WriteAndFixResult {
+    const run = this.db.transaction((): WriteAndFixResult => {
+      const target = this.get(targetId);
+      if (!target) return { ok: false, reason: "missing" };
+      if (target.kind !== "error")
+        return { ok: false, reason: "not-error", target };
+      if (target.fixedMs > 0)
+        return { ok: false, reason: "already-fixed", target };
+      const entryId = this.write(sessionId, agent, note, nowMs);
+      const changed = this.db
+        .query(`UPDATE diary SET fixed_by = ?, fixed_ms = ? WHERE id = ? AND fixed_ms = 0`)
+        .run(entryId, nowMs, targetId).changes;
+      if (changed !== 1) throw new Error("diary fix target changed during transaction");
+      return { ok: true, entryId, fixed: target };
+    });
+    return run.immediate();
+  }
 
   write(sessionId: string, agent: string, note: Required<NoteInput>, nowMs: number): number {
     const run = this.db.transaction((): number => {

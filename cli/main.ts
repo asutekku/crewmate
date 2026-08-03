@@ -4,7 +4,7 @@ import { featureForVerb, helpFeatures } from "../core/features.ts";
 import { resolveProject } from "../core/repo.ts";
 import { withStore } from "../core/store.ts";
 import { terminalWidth } from "../core/layout.ts";
-import { usage } from "../core/verbs.ts";
+import { allVerbSpellings, findVerb, usage } from "../core/verbs.ts";
 import { createAdminCommands } from "./admin.ts";
 import { createDiagnosticCommands } from "./diagnostics.ts";
 import { createDiaryCommands } from "./diary.ts";
@@ -17,18 +17,6 @@ import { CommandRegistry } from "./registry.ts";
 import { createRosterCommands } from "./roster.ts";
 import type { CliContext, CommandFactory } from "./types.ts";
 import { createWorkCommands } from "./work.ts";
-
-const STRUCTURED_VERBS = new Set([
-  "ask",
-  "request",
-  "promise",
-  "handoff",
-  "grant",
-  "correct",
-  "hazard",
-  "act",
-]);
-const HELP_VERBS = new Set(["help", "--help", "-h"]);
 
 const COMMAND_FAMILIES: readonly CommandFactory[] = [
   createObligationCommands,
@@ -61,7 +49,8 @@ export function buildCommandRegistry(context: CliContext): CommandRegistry {
 }
 
 export function commandNames(context: CliContext): string[] {
-  return [...buildCommandRegistry(context).names(), ...HELP_VERBS];
+  buildCommandRegistry(context);
+  return [...allVerbSpellings()];
 }
 
 export function runCli(argv: readonly string[], options: CliRunOptions): void {
@@ -96,7 +85,8 @@ export function runCli(argv: readonly string[], options: CliRunOptions): void {
   const command = rawCommand ?? "who";
   const args = [...rawArgs];
 
-  if (HELP_VERBS.has(command)) {
+  const metadata = findVerb(command);
+  if (metadata?.verb === "help") {
     if (context.sessionId) {
       withStore(context.dbPath, (store) => {
         const now = context.now();
@@ -117,16 +107,16 @@ export function runCli(argv: readonly string[], options: CliRunOptions): void {
     return;
   }
 
-  const handler = registry.handler(command);
-  if (!handler) {
+  const registered = registry.command(command);
+  if (!registered) {
     context.error(`unknown command: ${command}\n`);
     context.error(usage(terminalWidth()));
     context.fail();
     return;
   }
-  handler(args);
+  registered.handler(args);
 
-  if (!failed && context.sessionId && !STRUCTURED_VERBS.has(command)) {
+  if (!failed && context.sessionId && registered.metadata.trackUse !== false) {
     const feature = featureForVerb(command);
     if (feature) {
       withStore(context.dbPath, (store) => {

@@ -3,12 +3,30 @@ import { shortAge, terminalWidth, wrap } from "../core/layout.ts";
 import { discipleName } from "../core/names.ts";
 import { checkMemory, lineageKey, withPersonal } from "../core/personal.ts";
 import { displayName, withStore, type Session } from "../core/store.ts";
-import { takeFlag } from "./args.ts";
+import {
+  booleanFlag,
+  parseArguments,
+  requireSafeInteger,
+  stringFlag,
+  type ParsedArguments,
+} from "./args.ts";
 import { failUsage } from "./command.ts";
 import { failCommand } from "./command.ts";
 import { notAnAgent } from "./identity.ts";
 import { failure, success } from "./result.ts";
 import type { CliContext, CommandMap } from "./types.ts";
+
+function personalArguments(
+  context: CliContext,
+  command: string,
+  args: readonly string[],
+  schema: Parameters<typeof parseArguments>[1],
+): ParsedArguments | undefined {
+  const parsed = parseArguments(args, schema);
+  if (parsed.ok) return parsed.value;
+  failCommand(context, `${command}: ${parsed.error}`);
+  return undefined;
+}
 
 function lineageOf(session: Session): string {
   return session.lineageFrom !== ""
@@ -19,13 +37,16 @@ function lineageOf(session: Session): string {
 export function createPersonalCommands(context: CliContext): CommandMap {
   return {
     remember(args) {
-      const body = takeFlag(args, "--body");
-      const tagList = takeFlag(args, "--tags");
-      const globalIndex = args.indexOf("--global");
-      const isGlobal = globalIndex >= 0;
-      if (isGlobal) args.splice(globalIndex, 1);
+      const input = personalArguments(context, "remember", args, {
+        valueFlags: ["--body", "--tags"],
+        booleanFlags: ["--global"],
+      });
+      if (!input) return;
+      const body = stringFlag(input, "--body") ?? "";
+      const tagList = stringFlag(input, "--tags") ?? "";
+      const isGlobal = booleanFlag(input, "--global");
       const check = checkMemory(
-        args.join(" ").trim(),
+        input.positionals.join(" ").trim(),
         body,
         tagList.split(",").filter((tag) => tag.trim() !== ""),
       );
@@ -65,8 +86,14 @@ export function createPersonalCommands(context: CliContext): CommandMap {
     },
 
     "about-me"(args) {
-      const target = takeFlag(args, "--agent");
-      const allProjects = args.includes("--all-projects");
+      const input = personalArguments(context, "about-me", args, {
+        valueFlags: ["--agent"],
+        booleanFlags: ["--all-projects"],
+        maxPositionals: 0,
+      });
+      if (!input) return;
+      const target = stringFlag(input, "--agent") ?? "";
+      const allProjects = booleanFlag(input, "--all-projects");
       const now = context.now();
       const resolved = withStore(context.dbPath, (store) => {
         if (target) {
@@ -116,7 +143,6 @@ export function createPersonalCommands(context: CliContext): CommandMap {
             context.log(dim("  `--all-projects` looks in every repo."));
           return;
         }
-        const now = context.now();
         const width = terminalWidth();
         context.log(
           bold(`what ${resolved.name || "this agent"} remembers about you`),
@@ -149,7 +175,9 @@ export function createPersonalCommands(context: CliContext): CommandMap {
     },
 
     inherit(args) {
-      const target = args.join(" ").trim();
+      const input = personalArguments(context, "inherit", args, {});
+      if (!input) return;
+      const target = input.positionals.join(" ").trim();
       if (!target) {
         withPersonal((personal) => {
           const held = personal
@@ -221,11 +249,14 @@ export function createPersonalCommands(context: CliContext): CommandMap {
     },
 
     forget(args) {
-      const id = Number(args[0]);
-      if (!Number.isFinite(id) || id <= 0) {
-        failUsage(context, "forget");
-        return;
-      }
+      const input = personalArguments(context, "forget", args, { maxPositionals: 1 });
+      if (!input) return;
+      const parsedId = requireSafeInteger(input.positionals[0], "memory id", {
+        min: 1,
+        max: Number.MAX_SAFE_INTEGER,
+      });
+      if (!parsedId.ok) return failUsage(context, "forget");
+      const id = parsedId.value;
       withPersonal((personal) => {
         const memory = personal.get(id);
         if (!memory || !personal.forget(id)) {

@@ -158,7 +158,9 @@ The roster command now follows the same extraction standard:
 
 ## Hard CLI refactoring requirements
 
-The following rules are acceptance criteria for every file under `cli/`.
+The following rules are acceptance criteria for every file under `cli/`. The revision of
+2026-08-03 adds the path-safety, observability, and cognitive-load clauses below; where an
+older rule could be read more broadly, the revised wording controls.
 
 ### Architecture and responsibility
 
@@ -249,18 +251,96 @@ The following rules are acceptance criteria for every file under `cli/`.
   responsibility, never solely to satisfy a line-count target. Comments explain contracts
   and surprising policies rather than syntax.
 
+### Revised path and filesystem requirements
+
+- User paths resolve against an explicit trusted root and are rejected if the normalized
+  result escapes it. Project roots and file paths are different types/concepts.
+- Project prefixes are never removed with unrestricted string replacement. Separators are
+  normalized at system boundaries and tracked paths have one canonical stored/query form.
+- Sensitive targets never depend on unresolved globs or environment variables. Missing
+  sidecars and transient filesystem states have explicit outcomes.
+- Symlink policy is documented; operations for which logical-root containment is
+  insufficient use a realpath containment check.
+
+### Revised error and observability requirements
+
+- Optional subsystem failure is distinguishable from a legitimate empty result and leaves
+  a diagnostic path. Graceful fallback exposes degraded status in verbose/diagnostic output.
+- Ambiguity errors list safe candidate choices. User input errors, environmental failures,
+  conflicts, and internal defects remain distinct.
+- Error-and-fail behavior is consistent across commands. Partial commits are never described
+  as complete success.
+
+### Revised parser and rendering requirements
+
+- Central parsers include durations and paths. Duration policy explicitly permits or rejects
+  fractions, preventing `now - Infinity`, negative windows, and equivalent invalid math.
+- Exact identity matching is preferred; prefix matching requires uniqueness.
+- Plain sanitized text is measured and truncated before colour. Calculated widths are
+  clamped. Pluralization and column alignment use shared policies.
+- The chosen meaning of every reported “length” is named: bytes, UTF-16 units, code points,
+  graphemes, visible columns, tokens, or records.
+
+### Revised maintainability constraints
+
+- A refactor must lower total cognitive load rather than distribute it across more symbols.
+  Cohesive sequential rendering may remain together; file length alone is not a defect.
+- A one-use extraction must hide meaningful complexity, establish an architectural boundary,
+  or enable focused testing. Prefer roughly three to seven substantial helpers over many
+  forwarding functions.
+- Shared concerns live in shared modules, while code that changes and is understood together
+  retains locality. Defensive checks match real trust boundaries and established lower-layer
+  contracts.
+- Before/after review records line count, substantial symbol count, nesting/navigation burden,
+  and justification for any replacement materially larger than its source.
+- Tests additionally cover path containment (relative, absolute, sibling, traversal,
+  separator, and symlink cases), narrow/wide layouts, historical prefix cardinality, optional
+  subsystem failure versus zero results, and every multi-mutation failure boundary.
+
 ### Current compliance audit
 
-| Module | Status | Principal remaining work |
-| --- | --- | --- |
-| `main.ts`, `registry.ts`, `types.ts` | Partial | command metadata must become the single source for usage and documentation |
-| `args.ts`, `structured.ts` | Non-compliant | replace mutation-based parsing with typed, duplicate-aware decoders |
-| `obligations.ts` | Partial | complete nested JSON decoding and ambiguous selector/name handling |
-| `work.ts` | Non-compliant | extract typed parsers, atomic domain operations, view models, and report sections |
-| `diary.ts` | Non-compliant | canonical enum decoding, safe limits/IDs, indexed similarity, and report view models |
-| `personal.ts` | Partial | typed selectors/flags, ambiguity policy, and renderer extraction |
-| `messaging.ts`, `questions.ts` | Partial | typed inputs, safe IDs/limits, and named handlers |
-| `admin.ts` | Partial | typed selectors and explicit identity/ownership policies |
-| `diagnostics.ts`, `injection.ts` | Non-compliant | typed selectors, external-probe separation, and terminal report abstraction |
-| `roster*.ts` | Mostly compliant | terminal sanitization and colour-free renderer snapshots |
-| `result.ts`, `command.ts`, `obligation-events.ts` | Compliant foundation | extend use across every command family |
+| Module                 | Status               | Principal remaining work                                                           |
+| ---------------------- | -------------------- | ---------------------------------------------------------------------------------- |
+| `main.ts`              | Compliant            | dispatch, help aliases, and feature-use policy resolve through canonical metadata  |
+| `registry.ts`          | Compliant            | registered handlers carry canonical metadata and reject undocumented commands      |
+| `types.ts`             | Partial              | expose stable command input/metadata contracts and terminal sink                   |
+| `args.ts`              | Compliant            | single-pass typed parsing; legacy mutation helper removed and prohibited by test    |
+| `command.ts`           | Compliant foundation | extend shared failure policy to all handlers                                       |
+| `result.ts`            | Compliant foundation | use for every expected operational failure                                         |
+| `terminal.ts`          | Compliant foundation | migrate every complex report and untrusted output boundary                         |
+| `paths.ts`             | Compliant foundation | adopt at every user-controlled filesystem boundary                                 |
+| `identity.ts`          | Mostly compliant     | migrate remaining callers to explicit ambiguity results                            |
+| `structured.ts`        | Compliant            | pure non-mutating parser driven by one canonical shortcut list                     |
+| `structured-json.ts`   | Compliant boundary   | complete nested decoder; keep aligned with canonical domain lists                  |
+| `obligation-events.ts` | Mostly compliant     | derive event names from one canonical exported list and enforce exhaustiveness     |
+| `obligations.ts`       | Partial              | centralize ID ownership; reject ambiguous live-agent matches; isolate snapshots    |
+| `work.ts`              | Partial              | finish board snapshot/section rendering and move break notification policy down    |
+| `diary.ts`             | Non-compliant        | canonical enum decoding, safe limits/IDs, indexed similarity, report view models   |
+| `personal.ts`          | Partial              | typed selectors/flags, explicit lineage policy, renderer extraction                |
+| `messaging.ts`         | Mostly compliant     | move fallback registration-plus-post into one domain operation                     |
+| `questions.ts`         | Mostly compliant     | add colour-disabled renderer snapshots and degraded-config coverage                |
+| `admin.ts`             | Partial              | typed selectors and explicit identity/ownership policies                           |
+| `diagnostics.ts`       | Non-compliant        | typed limits, probe/view separation, deterministic report sections                 |
+| `injection.ts`         | Migrating            | terminal report introduced; still needs typed selectors and probe/store separation |
+| `roster.ts`            | Mostly compliant     | move summary refresh outside the store lifetime and finish output sanitization     |
+| `roster-model.ts`      | Mostly compliant     | add deterministic grouping policy tests and stable probe interfaces                |
+| `roster-renderers.ts`  | Partial              | sanitize every dynamic value and add colour-disabled snapshots                     |
+
+### Structural metrics checkpoint
+
+Metrics use UTF-8 LF-delimited physical lines and count named top-level functions/classes;
+they are navigation indicators, not quality scores.
+
+| Area                    |                        Before |                                              Current | Assessment                                                                                                                                                                                                                                                                                     |
+| ----------------------- | ----------------------------: | ---------------------------------------------------: | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CLI implementation      | 2,456 lines in one executable |                        4,390 lines across 24 modules | The increase now includes a 579-line complete structured-JSON decoder plus reusable argument, path, terminal, and ambiguity boundaries. Those are concrete safety capabilities; compatibility parsing and duplicated boundaries remain review targets rather than a net-negative-line mandate. |
+| Roster implementation   |      272 lines in `roster.ts` | 556 lines across orchestration, model, and renderers | The increase bought tested indexes, per-tree probe caching, deterministic view data, and pure renderers, but still needs a locality review and renderer snapshots.                                                                                                                             |
+| Roster command workflow |      About 250 embedded lines |                               43 orchestration lines | Navigation from the command to meaningful pipeline stages is materially clearer.                                                                                                                                                                                                               |
+| CLI executable          |                   2,456 lines |                                             11 lines | Process startup is isolated from importable application code.                                                                                                                                                                                                                                  |
+
+The completion gate is not “more files” or “fewer total lines.” Useful shared validation,
+containment checks, view models, and tests can legitimately add code. Remaining work must
+still delete the temporary mutation parser, consolidate command metadata, and avoid turning a
+cohesive 250-line unit into a 1,000-line abstraction maze. Any substantial growth must name
+the reusable capability, safety property, or testable boundary it purchases and compare the
+resulting navigation burden.

@@ -104,13 +104,19 @@ describe("structured CLI shortcuts", () => {
       ]),
     ).toEqual({
       matched: true,
-      result: { ok: false, error: "invalid shortcut arguments" },
+      result: {
+        ok: false,
+        error: "--refrain requires --until <condition>",
+      },
     });
     expect(
       parseStructuredShortcut("correct", ["ada", "guess", "something"]),
     ).toEqual({
       matched: true,
-      result: { ok: false, error: "invalid shortcut arguments" },
+      result: {
+        ok: false,
+        error: "correct requires target, correction kind, and text",
+      },
     });
   });
 

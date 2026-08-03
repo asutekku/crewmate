@@ -44,6 +44,8 @@ export interface Verb {
    * to prevent.
    */
   readonly hidden?: boolean;
+  /** False when the command records its own richer feature-use event. */
+  readonly trackUse?: boolean;
 }
 
 export const VERB_GROUPS: ReadonlyArray<{ group: VerbGroup; title: string }> = [
@@ -64,16 +66,16 @@ export const VERBS: readonly Verb[] = [
   { verb: "stats", args: "", blurb: "what the store holds, over how large a sample", group: "presence" },
   { verb: "injection", args: "[--agent <name> | --session <id>]", blurb: "what session start puts in context, and what it left out", group: "presence" },
   { verb: "inbox", args: "[--agent <name> | --session <id>]", blurb: "items omitted from your context for length", group: "presence" },
-  { verb: "ask", args: '<name> "<question>"', blurb: "ask a peer something and record that a reply is owed", group: "presence" },
+  { verb: "ask", args: '<name> "<question>"', blurb: "ask a peer something and record that a reply is owed", group: "presence", trackUse: false },
   { verb: "answer", args: '<id> "<answer>"', blurb: "answer a question asked of you", group: "presence" },
   { verb: "asks", args: "", blurb: "questions waiting on you, and what you are waiting for", group: "presence" },
-  { verb: "request", args: '<name> "<text>"', blurb: "record a proposed obligation for a peer", group: "presence" },
-  { verb: "promise", args: '<name> "<text>" [--refrain --until <text>]', blurb: "bind yourself to perform or refrain", group: "presence" },
-  { verb: "handoff", args: '<name> "<subject>"', blurb: "propose moving responsibility to a peer", group: "presence" },
-  { verb: "grant", args: '<name> "<scope>"', blurb: "grant explicit clearance over opaque scope text", group: "presence" },
-  { verb: "correct", args: '<name> <self|peer|implementation> "<text>"', blurb: "record an explicit typed correction", group: "presence" },
-  { verb: "hazard", args: '<name> "<subject>" "<warning>"', blurb: "record a warning independently of obligations", group: "presence" },
-  { verb: "act", args: '<name> --json <file>', blurb: "atomically create a compound structured message", group: "presence" },
+  { verb: "request", args: '<name> "<text>"', blurb: "record a proposed obligation for a peer", group: "presence", trackUse: false },
+  { verb: "promise", args: '<name> "<text>" [--refrain --until <text>]', blurb: "bind yourself to perform or refrain", group: "presence", trackUse: false },
+  { verb: "handoff", args: '<name> "<subject>"', blurb: "propose moving responsibility to a peer", group: "presence", trackUse: false },
+  { verb: "grant", args: '<name> "<scope>"', blurb: "grant explicit clearance over opaque scope text", group: "presence", trackUse: false },
+  { verb: "correct", args: '<name> <self|peer|implementation> "<text>"', blurb: "record an explicit typed correction", group: "presence", trackUse: false },
+  { verb: "hazard", args: '<name> "<subject>" "<warning>"', blurb: "record a warning independently of obligations", group: "presence", trackUse: false },
+  { verb: "act", args: '<name> --json <file>', blurb: "atomically create a compound structured message", group: "presence", trackUse: false },
   { verb: "obligation", args: '<id> [event] [flags]', blurb: "inspect or append a versioned obligation event", group: "presence" },
   { verb: "clearance", args: '<id> [revoke|expire] [flags]', blurb: "inspect, revoke or expire a clearance", group: "presence" },
   { verb: "files", args: "<agent> [--hours 24]", blurb: "every file an agent has touched, and why", group: "presence" },

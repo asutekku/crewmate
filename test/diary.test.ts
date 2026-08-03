@@ -105,6 +105,49 @@ describe("validation", () => {
   });
 });
 
+describe("atomic note-and-fix", () => {
+  const fixNote = () => ok({ title: "the defect is fixed", topic: "water" });
+
+  test("validates the referenced record before writing the fix note", () => {
+    fresh((store) => {
+      const before = store.diary.recall({ all: true, limit: 100 }).length;
+      const result = store.diary.writeAndFix("s1", "a", fixNote(), 999, 2000);
+      expect(result).toEqual({ ok: false, reason: "missing" });
+      expect(store.diary.recall({ all: true, limit: 100 })).toHaveLength(before);
+    });
+  });
+
+  test("rejects a non-error without leaving an orphan fix note", () => {
+    fresh((store) => {
+      const finding = store.diary.write(
+        "s1",
+        "a",
+        ok({ title: "a finding", topic: "water" }),
+        1000,
+      );
+      const result = store.diary.writeAndFix("s1", "a", fixNote(), finding, 2000);
+      expect(result.ok).toBe(false);
+      expect(store.diary.recall({ all: true, limit: 100 })).toHaveLength(1);
+    });
+  });
+
+  test("writes and links the fix in one operation", () => {
+    fresh((store) => {
+      const error = store.diary.write(
+        "s1",
+        "a",
+        ok({ title: "a defect", topic: "water", kind: "error" }),
+        1000,
+      );
+      const result = store.diary.writeAndFix("s1", "a", fixNote(), error, 2000);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(store.diary.get(error)?.fixedBy).toBe(result.entryId);
+      expect(store.diary.get(result.entryId)?.title).toBe("the defect is fixed");
+    });
+  });
+});
+
 describe("scope", () => {
   test("a file path is reduced to its folder", () => {
     // An agent that just edited a file will pass the file; refusing that

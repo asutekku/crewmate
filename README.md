@@ -665,9 +665,11 @@ history has its own lifetime independent of live suppression state.
 | `main.ts`              | Builds the command registry, dispatches one command, and records CLI-use telemetry. |
 | `types.ts`             | Explicit command context and handler contracts.                                     |
 | `registry.ts`          | Duplicate-safe composition of independently owned command families.                 |
-| `args.ts`              | Shared flag extraction.                                                             |
+| `args.ts`              | Typed parsing for flags, selectors, enums, IDs, and limits.                         |
 | `command.ts`           | Centralized usage and command-failure presentation.                                 |
 | `result.ts`            | Explicit success/failure values and safe caught-error normalization.                |
+| `terminal.ts`          | Sanitized terminal text, visible-width policy, and structured reports.              |
+| `paths.ts`             | Trusted-root path resolution and canonical tracked-path conversion.                 |
 | `roster.ts`            | Short orchestration pipeline for the live roster command.                           |
 | `roster-model.ts`      | Store synchronization, snapshot indexing, contention analysis, and layout.          |
 | `roster-renderers.ts`  | Independent session, minion, claim, background-process, and warning renderers.      |
@@ -679,6 +681,7 @@ history has its own lifetime independent of live suppression state.
 | `obligations.ts`       | Structured acts and obligation/clearance lifecycle commands.                        |
 | `obligation-events.ts` | Pure version validation and obligation/clearance event construction.                |
 | `structured.ts`        | Pure parser for single-act structured-message shortcuts.                            |
+| `structured-json.ts`   | Complete unknown-to-domain decoder for structured JSON batches.                     |
 | `admin.ts`             | Naming, roles, project location, roster clearing, and deregistration.               |
 | `diagnostics.ts`       | Edit history and store statistics.                                                  |
 | `injection.ts`         | Session-start envelope and omission inspection.                                     |

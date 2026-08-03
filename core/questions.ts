@@ -120,15 +120,27 @@ export class QuestionStore {
         `INSERT INTO questions (asker_session, asker_name, target_session, target_name, text, asked_ms)
          VALUES (?, ?, ?, ?, ?, ?)`,
       )
-      .run(askerSession, askerName, targetSession, targetName, clampText(text, QUESTION_MAX), nowMs);
-    return Number((this.db.query(`SELECT last_insert_rowid() AS id`).get() as { id: number }).id);
+      .run(
+        askerSession,
+        askerName,
+        targetSession,
+        targetName,
+        clampText(text, QUESTION_MAX),
+        nowMs,
+      );
+    return Number(
+      (
+        this.db.query(`SELECT last_insert_rowid() AS id`).get() as {
+          id: number;
+        }
+      ).id,
+    );
   }
 
   get(id: number): Question | null {
-    const row = this.db.query(`SELECT * FROM questions WHERE id = ?`).get(id) as Record<
-      string,
-      string | number
-    > | null;
+    const row = this.db
+      .query(`SELECT * FROM questions WHERE id = ?`)
+      .get(id) as Record<string, string | number> | null;
     return row ? rowToQuestion(row) : null;
   }
 
@@ -145,11 +157,59 @@ export class QuestionStore {
       const q = this.get(id);
       if (!q || q.answeredMs > 0) return false;
       this.db
-        .query(`UPDATE questions SET answer = ?, answered_ms = ?, expired_ms = 0 WHERE id = ?`)
+        .query(
+          `UPDATE questions SET answer = ?, answered_ms = ?, expired_ms = 0 WHERE id = ?`,
+        )
         .run(clampText(text, ANSWER_MAX), nowMs, id);
       return true;
     });
     return run();
+  }
+
+  /** Authenticated answer transition: validation and mutation share one transaction. */
+  answerFor(
+    id: number,
+    targetSession: string,
+    text: string,
+    nowMs: number,
+  ):
+    | { readonly ok: true; readonly question: Question }
+    | {
+        readonly ok: false;
+        readonly kind: "not_found" | "wrong_target" | "already_answered";
+        readonly question?: Question;
+      } {
+    const run = this.db.transaction(() => {
+      const question = this.get(id);
+      if (!question) return { ok: false, kind: "not_found" } as const;
+      if (question.targetSession !== targetSession)
+        return { ok: false, kind: "wrong_target", question } as const;
+      if (question.answeredMs > 0)
+        return { ok: false, kind: "already_answered", question } as const;
+      this.db
+        .query(
+          `UPDATE questions SET answer = ?, answered_ms = ?, expired_ms = 0 WHERE id = ?`,
+        )
+        .run(clampText(text, ANSWER_MAX), nowMs, id);
+      return { ok: true, question } as const;
+    });
+    return run.immediate();
+  }
+
+  /** Expires stale rows, then returns both ordered open views for one session. */
+  openSnapshot(
+    sessionId: string,
+    nowMs: number,
+    staleMs: number,
+  ): {
+    readonly mine: readonly Question[];
+    readonly waiting: readonly Question[];
+  } {
+    this.expireStale(nowMs, staleMs);
+    return {
+      mine: this.openFor(sessionId),
+      waiting: this.pendingFrom(sessionId),
+    };
   }
 
   /** Open questions aimed at this session, oldest first. */
@@ -196,7 +256,9 @@ export class QuestionStore {
       const found = rows.map(rowToQuestion);
       if (found.length === 0) return [];
       this.db
-        .query(`UPDATE questions SET delivered_ms = ? WHERE id IN (${found.map(() => "?").join(",")})`)
+        .query(
+          `UPDATE questions SET delivered_ms = ? WHERE id IN (${found.map(() => "?").join(",")})`,
+        )
         .run(nowMs, ...found.map((q) => q.id));
       // Same correction as `expireStale`: the rows were read before the UPDATE,
       // so `deliveredMs` on them would otherwise read 0 -- "not yet delivered"
@@ -227,7 +289,9 @@ export class QuestionStore {
       const found = rows.map(rowToQuestion);
       if (found.length === 0) return [];
       this.db
-        .query(`UPDATE questions SET expired_ms = ? WHERE id IN (${found.map(() => "?").join(",")})`)
+        .query(
+          `UPDATE questions SET expired_ms = ? WHERE id IN (${found.map(() => "?").join(",")})`,
+        )
         .run(nowMs, ...found.map((q) => q.id));
       // Returned with the expiry APPLIED. The rows were read before the UPDATE,
       // so handing them back as-is would report every freshly expired question

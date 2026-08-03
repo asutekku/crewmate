@@ -12,7 +12,11 @@ import type {
 } from "../core/obligations.ts";
 import { bold, green } from "../core/colour.ts";
 import { displayName, type Store, withStore } from "../core/store.ts";
-import { takeFlag } from "./args.ts";
+import {
+  parseArguments,
+  stringFlag,
+  type ParsedArguments,
+} from "./args.ts";
 import { failCommand, failUsage } from "./command.ts";
 import {
   buildClearanceEvent,
@@ -20,18 +24,14 @@ import {
   parseVersion,
   type ObligationEventInput,
 } from "./obligation-events.ts";
+import { resolveTrustedPath } from "./paths.ts";
 import { attempt, failure, success, type Result } from "./result.ts";
 import {
   parseStructuredShortcut,
   type StructuredShortcut,
 } from "./structured.ts";
+import { decodeStructuredFile } from "./structured-json.ts";
 import type { CliContext, CommandMap } from "./types.ts";
-
-interface StructuredFile {
-  readonly acts: StructuredActInput[];
-  readonly dependencies?: StructuredDependencyInput[];
-  readonly idempotencyKey?: string;
-}
 
 interface ObligationCommandInput extends ObligationEventInput {
   readonly version: string;
@@ -236,34 +236,6 @@ function clearance(
   context.log(`  ${outcome.value.definition.scopeText}`);
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-export function parseStructuredFile(value: unknown): Result<StructuredFile> {
-  if (!isRecord(value)) return failure("JSON must contain an object");
-  if (!Array.isArray(value["acts"])) return failure("JSON requires acts[]");
-  if (
-    value["dependencies"] !== undefined &&
-    !Array.isArray(value["dependencies"])
-  )
-    return failure("JSON dependencies must be an array");
-  if (
-    value["idempotencyKey"] !== undefined &&
-    typeof value["idempotencyKey"] !== "string"
-  )
-    return failure("JSON idempotencyKey must be a string");
-  return success({
-    acts: value["acts"] as StructuredActInput[],
-    ...(value["dependencies"] === undefined
-      ? {}
-      : { dependencies: value["dependencies"] as StructuredDependencyInput[] }),
-    ...(value["idempotencyKey"] === undefined
-      ? {}
-      : { idempotencyKey: value["idempotencyKey"] }),
-  });
-}
-
 const SHORTCUT_COMMANDS = [
   "request",
   "promise",
@@ -272,6 +244,109 @@ const SHORTCUT_COMMANDS = [
   "correct",
   "hazard",
 ] as const;
+
+function parsedCommand(
+  context: CliContext,
+  command: string,
+  args: readonly string[],
+  schema: Parameters<typeof parseArguments>[1],
+): { readonly value: ParsedArguments } | undefined {
+  const parsed = parseArguments(args, schema);
+  if (!parsed.ok) {
+    failCommand(context, `${command}: ${parsed.error}`);
+    return undefined;
+  }
+  return parsed;
+}
+
+function handleAsk(context: CliContext, args: readonly string[]): void {
+  const parsed = parsedCommand(context, "ask", args, {});
+  if (!parsed) return;
+  const [target, ...words] = parsed.value.positionals;
+  const text = words.join(" ").trim();
+  if (!target || !text) return failUsage(context, "ask");
+  structured(context, target, [{ key: "question", type: "question", text }]);
+}
+
+function handleAct(context: CliContext, args: readonly string[]): void {
+  const parsed = parsedCommand(context, "act", args, {
+    valueFlags: ["--json"],
+    maxPositionals: 1,
+  });
+  if (!parsed) return;
+  const target = parsed.value.positionals[0];
+  const file = stringFlag(parsed.value, "--json");
+  if (!target || !file) return failUsage(context, "act");
+  const path = resolveTrustedPath(file, context.projectRoot, {
+    requireRealpath: true,
+  });
+  if (!path.ok) return failCommand(context, path.error);
+  const decoded = attempt(
+    () => JSON.parse(readFileSync(path.value.absolute, "utf8")) as unknown,
+  );
+  if (!decoded.ok) return failCommand(context, decoded.error);
+  const body = decodeStructuredFile(decoded.value);
+  if (!body.ok) return failCommand(context, body.error);
+  structured(
+    context,
+    target,
+    body.value.acts,
+    body.value.idempotencyKey ?? randomUUID(),
+    body.value.dependencies,
+  );
+}
+
+function handleObligation(context: CliContext, args: readonly string[]): void {
+  const parsed = parsedCommand(context, "obligation", args, {
+    valueFlags: [
+      "--version", "--reason", "--resolution", "--to",
+      "--replacement", "--episode", "--key",
+    ],
+    maxPositionals: 2,
+  });
+  if (!parsed) return;
+  const [id, eventName] = parsed.value.positionals;
+  if (!id) return failUsage(context, "obligation");
+  obligation(
+    context,
+    id,
+    eventName
+      ? {
+          id,
+          eventName,
+          version: stringFlag(parsed.value, "--version") ?? "",
+          reason: stringFlag(parsed.value, "--reason") ?? "",
+          resolution: stringFlag(parsed.value, "--resolution") ?? "",
+          target: stringFlag(parsed.value, "--to"),
+          replacement: stringFlag(parsed.value, "--replacement") ?? "",
+          episode: stringFlag(parsed.value, "--episode") ?? "",
+          idempotencyKey: stringFlag(parsed.value, "--key") ?? "",
+        }
+      : undefined,
+  );
+}
+
+function handleClearance(context: CliContext, args: readonly string[]): void {
+  const parsed = parsedCommand(context, "clearance", args, {
+    valueFlags: ["--version", "--reason", "--key"],
+    maxPositionals: 2,
+  });
+  if (!parsed) return;
+  const [id, eventName] = parsed.value.positionals;
+  if (!id) return failUsage(context, "clearance");
+  clearance(
+    context,
+    id,
+    eventName
+      ? {
+          eventName,
+          version: stringFlag(parsed.value, "--version") ?? "",
+          reason: stringFlag(parsed.value, "--reason") ?? "",
+          idempotencyKey: stringFlag(parsed.value, "--key") ?? "",
+        }
+      : undefined,
+  );
+}
 
 export function createObligationCommands(context: CliContext): CommandMap {
   const shortcuts = Object.fromEntries(
@@ -282,64 +357,9 @@ export function createObligationCommands(context: CliContext): CommandMap {
   );
   return {
     ...shortcuts,
-    ask: (args) => {
-      const target = args.shift();
-      const text = args.join(" ").trim();
-      if (!target || !text) return failUsage(context, "ask");
-      structured(context, target, [
-        { key: "question", type: "question", text },
-      ]);
-    },
-    act: (args) => {
-      const target = args.shift();
-      const file = takeFlag(args, "--json");
-      if (!target || !file) return failUsage(context, "act");
-      const decoded = attempt(
-        () => JSON.parse(readFileSync(file, "utf8")) as unknown,
-      );
-      if (!decoded.ok) return failCommand(context, decoded.error);
-      const body = parseStructuredFile(decoded.value);
-      if (!body.ok) return failCommand(context, body.error);
-      structured(
-        context,
-        target,
-        body.value.acts,
-        body.value.idempotencyKey ?? randomUUID(),
-        body.value.dependencies,
-      );
-    },
-    obligation: (args) => {
-      const id = args.shift();
-      const eventName = args.shift();
-      if (!id) return failUsage(context, "obligation");
-      const input = eventName
-        ? {
-            id,
-            eventName,
-            version: takeFlag(args, "--version"),
-            reason: takeFlag(args, "--reason"),
-            resolution: takeFlag(args, "--resolution"),
-            target: takeFlag(args, "--to") || undefined,
-            replacement: takeFlag(args, "--replacement"),
-            episode: takeFlag(args, "--episode"),
-            idempotencyKey: takeFlag(args, "--key"),
-          }
-        : undefined;
-      obligation(context, id, input);
-    },
-    clearance: (args) => {
-      const id = args.shift();
-      const eventName = args.shift();
-      if (!id) return failUsage(context, "clearance");
-      const input = eventName
-        ? {
-            eventName,
-            version: takeFlag(args, "--version"),
-            reason: takeFlag(args, "--reason"),
-            idempotencyKey: takeFlag(args, "--key"),
-          }
-        : undefined;
-      clearance(context, id, input);
-    },
+    ask: (args) => handleAsk(context, args),
+    act: (args) => handleAct(context, args),
+    obligation: (args) => handleObligation(context, args),
+    clearance: (args) => handleClearance(context, args),
   };
 }

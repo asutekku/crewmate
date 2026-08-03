@@ -14,12 +14,19 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, test } from "bun:test";
 
 import { withStore } from "../core/store.ts";
-import { ANSWER_MAX, clampText, QUESTION_MAX, questionState } from "../core/questions.ts";
+import {
+  ANSWER_MAX,
+  clampText,
+  QUESTION_MAX,
+  questionState,
+} from "../core/questions.ts";
 
 let n = 0;
 const paths: string[] = [];
 
-function fresh<T>(fn: (s: Parameters<Parameters<typeof withStore>[1]>[0]) => T): T {
+function fresh<T>(
+  fn: (s: Parameters<Parameters<typeof withStore>[1]>[0]) => T,
+): T {
   const path = `${tmpdir().replace(/\\/g, "/")}/presence-q-${process.pid}-${n++}.db`;
   paths.push(path);
   return withStore(path, fn);
@@ -41,8 +48,43 @@ const ASKER = "aaaa-1111";
 const TARGET = "bbbb-2222";
 const STALE = 90 * 60 * 1000;
 
+describe("authenticated answer transaction", () => {
+  test("validates ownership before mutation and distinguishes replay", () => {
+    fresh((store) => {
+      const id = store.questions.ask(
+        ASKER,
+        "asker",
+        TARGET,
+        "target",
+        "question",
+        1,
+      );
+      expect(
+        store.questions.answerFor(id, "wrong-session", "answer", 2),
+      ).toMatchObject({
+        ok: false,
+        kind: "wrong_target",
+      });
+      expect(store.questions.get(id)?.answeredMs).toBe(0);
+      expect(store.questions.answerFor(id, TARGET, "answer", 3)).toMatchObject({
+        ok: true,
+      });
+      expect(
+        store.questions.answerFor(id, TARGET, "different", 4),
+      ).toMatchObject({
+        ok: false,
+        kind: "already_answered",
+      });
+      expect(store.questions.get(id)?.answer).toBe("answer");
+    });
+  });
+});
+
 /** Registers both sides so `expireStale`'s join has real rows to read. */
-function bothLive(s: Parameters<Parameters<typeof withStore>[1]>[0], nowMs: number): void {
+function bothLive(
+  s: Parameters<Parameters<typeof withStore>[1]>[0],
+  nowMs: number,
+): void {
   s.handleForOrRegister(ASKER, "/repo", "", nowMs);
   s.handleForOrRegister(TARGET, "/repo", "", nowMs);
 }
@@ -51,7 +93,14 @@ describe("asking and answering", () => {
   test("a question reaches its target and nobody else", () => {
     fresh((s) => {
       bothLive(s, 1000);
-      s.questions.ask(ASKER, "hopper", TARGET, "ambrose", "done with roadSection?", 1000);
+      s.questions.ask(
+        ASKER,
+        "hopper",
+        TARGET,
+        "ambrose",
+        "done with roadSection?",
+        1000,
+      );
       expect(s.questions.openFor(TARGET)).toHaveLength(1);
       expect(s.questions.openFor(ASKER)).toHaveLength(0);
     });
@@ -68,7 +117,14 @@ describe("asking and answering", () => {
   test("answering closes it and the answer reaches the asker once", () => {
     fresh((s) => {
       bothLive(s, 1000);
-      const id = s.questions.ask(ASKER, "hopper", TARGET, "ambrose", "done?", 1000);
+      const id = s.questions.ask(
+        ASKER,
+        "hopper",
+        TARGET,
+        "ambrose",
+        "done?",
+        1000,
+      );
       expect(s.questions.answer(id, "yes, landed in 4eb260b", 2000)).toBe(true);
 
       const first = s.questions.drainResolved(ASKER, 3000);
@@ -83,7 +139,14 @@ describe("asking and answering", () => {
   test("a second answer is refused", () => {
     fresh((s) => {
       bothLive(s, 1000);
-      const id = s.questions.ask(ASKER, "hopper", TARGET, "ambrose", "done?", 1000);
+      const id = s.questions.ask(
+        ASKER,
+        "hopper",
+        TARGET,
+        "ambrose",
+        "done?",
+        1000,
+      );
       expect(s.questions.answer(id, "yes", 2000)).toBe(true);
       expect(s.questions.answer(id, "actually no", 3000)).toBe(false);
       expect(s.questions.get(id)?.answer).toBe("yes");
@@ -111,7 +174,14 @@ describe("expiry — the row nobody would otherwise close", () => {
     // The LEFT JOIN's null branch: a target whose row was reaped entirely.
     fresh((s) => {
       s.handleForOrRegister(ASKER, "/repo", "", 1000);
-      s.questions.ask(ASKER, "hopper", "ghost-9999", "ghost", "still there?", 1000);
+      s.questions.ask(
+        ASKER,
+        "hopper",
+        "ghost-9999",
+        "ghost",
+        "still there?",
+        1000,
+      );
       expect(s.questions.expireStale(2000, STALE)).toHaveLength(1);
     });
   });
@@ -147,7 +217,14 @@ describe("expiry — the row nobody would otherwise close", () => {
     // late reply throws away the very thing the asker wanted.
     fresh((s) => {
       bothLive(s, 1000);
-      const id = s.questions.ask(ASKER, "hopper", TARGET, "ambrose", "done?", 1000);
+      const id = s.questions.ask(
+        ASKER,
+        "hopper",
+        TARGET,
+        "ambrose",
+        "done?",
+        1000,
+      );
       s.questions.expireStale(1000 + STALE + 1, STALE);
       expect(s.questions.answer(id, "sorry — yes", 99_000)).toBe(true);
 
@@ -160,7 +237,14 @@ describe("expiry — the row nobody would otherwise close", () => {
   test("an answered question is never expired afterwards", () => {
     fresh((s) => {
       bothLive(s, 1000);
-      const id = s.questions.ask(ASKER, "hopper", TARGET, "ambrose", "done?", 1000);
+      const id = s.questions.ask(
+        ASKER,
+        "hopper",
+        TARGET,
+        "ambrose",
+        "done?",
+        1000,
+      );
       s.questions.answer(id, "yes", 1100);
       expect(s.questions.expireStale(1000 + STALE + 1, STALE)).toHaveLength(0);
       expect(questionState(s.questions.get(id)!)).toBe("answered");
@@ -181,17 +265,35 @@ describe("text handling", () => {
   test("a question is capped, not stored whole", () => {
     fresh((s) => {
       bothLive(s, 1000);
-      const id = s.questions.ask(ASKER, "hopper", TARGET, "ambrose", "x".repeat(5000), 1000);
-      expect((s.questions.get(id)?.text ?? "").length).toBeLessThanOrEqual(QUESTION_MAX);
+      const id = s.questions.ask(
+        ASKER,
+        "hopper",
+        TARGET,
+        "ambrose",
+        "x".repeat(5000),
+        1000,
+      );
+      expect((s.questions.get(id)?.text ?? "").length).toBeLessThanOrEqual(
+        QUESTION_MAX,
+      );
     });
   });
 
   test("an answer is capped too", () => {
     fresh((s) => {
       bothLive(s, 1000);
-      const id = s.questions.ask(ASKER, "hopper", TARGET, "ambrose", "done?", 1000);
+      const id = s.questions.ask(
+        ASKER,
+        "hopper",
+        TARGET,
+        "ambrose",
+        "done?",
+        1000,
+      );
       s.questions.answer(id, "y".repeat(9000), 2000);
-      expect((s.questions.get(id)?.answer ?? "").length).toBeLessThanOrEqual(ANSWER_MAX);
+      expect((s.questions.get(id)?.answer ?? "").length).toBeLessThanOrEqual(
+        ANSWER_MAX,
+      );
     });
   });
 
@@ -204,7 +306,14 @@ describe("text handling", () => {
     // string). Questions never reach MATCH, so this must simply round-trip.
     fresh((s) => {
       bothLive(s, 1000);
-      const id = s.questions.ask(ASKER, "hopper", TARGET, "ambrose", `a${String.fromCharCode(0)}b`, 1000);
+      const id = s.questions.ask(
+        ASKER,
+        "hopper",
+        TARGET,
+        "ambrose",
+        `a${String.fromCharCode(0)}b`,
+        1000,
+      );
       expect(s.questions.get(id)).not.toBeNull();
     });
   });
@@ -214,7 +323,14 @@ describe("pruning", () => {
   test("delivered and resolved questions age out; open ones never do", () => {
     fresh((s) => {
       bothLive(s, 1000);
-      const answered = s.questions.ask(ASKER, "hopper", TARGET, "ambrose", "old one", 1000);
+      const answered = s.questions.ask(
+        ASKER,
+        "hopper",
+        TARGET,
+        "ambrose",
+        "old one",
+        1000,
+      );
       s.questions.answer(answered, "yes", 1100);
       s.questions.drainResolved(ASKER, 1200);
       s.questions.ask(ASKER, "hopper", TARGET, "ambrose", "still open", 1000);
@@ -228,7 +344,14 @@ describe("pruning", () => {
   test("an undelivered answer is never pruned — the asker has not seen it", () => {
     fresh((s) => {
       bothLive(s, 1000);
-      const id = s.questions.ask(ASKER, "hopper", TARGET, "ambrose", "done?", 1000);
+      const id = s.questions.ask(
+        ASKER,
+        "hopper",
+        TARGET,
+        "ambrose",
+        "done?",
+        1000,
+      );
       s.questions.answer(id, "yes", 1100);
       const keep = 24 * 60 * 60 * 1000;
       expect(s.questions.prune(1100 + keep + 1, keep)).toBe(0);
