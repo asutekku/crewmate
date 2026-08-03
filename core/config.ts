@@ -77,6 +77,35 @@ export interface PresenceConfig {
    * day advertising items nobody is doing.
    */
   readonly workStaleMs: number;
+  /**
+   * What session-start CANDIDATES are allocated against, in characters.
+   *
+   * NOT a hard ceiling on the block. The mandatory header (identity, and the
+   * staleness warning that changes how everything below it reads) is subtracted
+   * before candidates are ranked and renders even when it alone exceeds this;
+   * the "N actionable items omitted" line sits outside it too. It is the figure
+   * discretionary content competes for, and nothing else.
+   *
+   * Measured 2026-08-02 against the live hook: 3,772 chars with a full roster
+   * (identity 338, roster 370, recent activity 892, the three standing
+   * instructions 1,459, trust note 300, diary 413) and 2,288 alone. 6,000 is
+   * roughly 1.6x the busiest real block — enough that nothing in the tool today
+   * is ever dropped, while a future feature that tries to add 3,000 chars of
+   * its own hits a wall instead of silently burying the identity text that
+   * measurably changes how a session answers "who are you".
+   */
+  readonly injectionTargetChars: number;
+  /**
+   * How long injection exposure and omission rows are kept.
+   *
+   * ITS OWN HORIZON, not `staleMs`. A session leaves the roster after 90
+   * minutes of silence but can be resumed hours or days later, and resume is
+   * the one lifecycle where suppression is correct — reusing the roster's TTL
+   * would silently make the feature useless on the only path it serves. A week
+   * covers a conversation picked up after a weekend and still bounds two tables
+   * that would otherwise grow forever.
+   */
+  readonly injectionKeepMs: number;
 }
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -92,6 +121,8 @@ export const DEFAULTS: PresenceConfig = {
   diaryKeepMs: 365 * DAY,
   diaryDeprecatedKeepMs: 90 * DAY,
   workStaleMs: 60 * 60 * 1000, // 1 h
+  injectionTargetChars: 6000, // ~1.6x the busiest measured block (3,772)
+  injectionKeepMs: 7 * DAY,
 };
 
 export function configPath(): string {
@@ -156,5 +187,7 @@ function readConfig(): PresenceConfig {
     diaryKeepMs: pick("diaryKeepMs"),
     diaryDeprecatedKeepMs: pick("diaryDeprecatedKeepMs"),
     workStaleMs: pick("workStaleMs"),
+    injectionTargetChars: pick("injectionTargetChars"),
+    injectionKeepMs: pick("injectionKeepMs"),
   };
 }

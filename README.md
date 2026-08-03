@@ -520,6 +520,8 @@ were invisible.
 | `msg <name> "<text>" [--from <name>]` | tell one agent something |
 | `where` | this session's repo, worktree, branch and drift from base |
 | `stats` | what the store holds, how large a sample that is, and which features have rows |
+| `injection [--agent <name>]` | what session start puts in this session's context, and what it left out |
+| `inbox [--agent <name>]` | the full text of anything omitted from that context for length |
 | `ask <name> "<question>"` | ask a peer something and record that a reply is owed |
 | `answer <id> "<answer>"` | answer a question asked of you |
 | `asks` | questions waiting on you, and what you are waiting for |
@@ -629,6 +631,8 @@ replaces `bin/` wholesale so a module that moves cannot leave a stale twin.
 | `dirty.ts`            | Uncommitted files, for the roster's "what is in flight" line.                       |
 | `config.ts`           | Tunables — staleness windows, how much of the board to show.                        |
 | `stats.ts`            | Aggregates over the whole store — row counts, concurrency, per-feature usage, and the sample window they are all relative to. |
+| `injection.ts`        | What reaches a session's context: identity as an un-evictable envelope, everything else ranked against a budget. |
+| `sessionBlock.ts`     | The session-start candidates themselves — roster, recent activity, diary, memories — built once for both the hook and `cli.ts injection`. |
 
 ### Top level
 

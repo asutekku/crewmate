@@ -48,7 +48,7 @@
  * times. It posts under a fixed handle so agents can tell it from a peer.
  */
 
-import type { Session } from "./core/store.ts";
+import type { Session, Store } from "./core/store.ts";
 import {
   agoText,
   claimName,
@@ -65,6 +65,11 @@ import {
   resolveProject,
   worktreeRoot,
 } from "./core/repo.ts";
+import { baseStalenessLines } from "./core/shared.ts";
+import { pack } from "./core/injection.ts";
+// One source with the hook: see core/sessionBlock.ts for why it is not in the
+// hook module itself. Rebuilding the list here would drift from what ships.
+import { sessionEnvelope } from "./core/sessionBlock.ts";
 import { listAgents } from "./core/agents.ts";
 import { refreshSummary, SUMMARY_TTL_MS } from "./core/summary.ts";
 import {
@@ -111,13 +116,9 @@ import {
 const HUMAN_HANDLE = "human";
 
 /**
- * The summary worker, resolved beside THIS file.
- *
- * `import.meta.dir` rather than a fixed path, so a CLI run from the source tree
- * spawns the source worker and the installed copy under `~/.claude/agent-
- * presence/bin/` spawns its own. Hardcoding the installed path would make every
- * source-tree test silently exercise the deployed build — the exact trap that
- * once had an edit look broken because `bin/` was stale.
+ * The summary worker resolved beside THIS file. `import.meta.dir` so the
+ * installed copy under `~/.claude/agent-presence/bin/` spawns its own, not
+ * the source tree's.
  */
 function summaryWorkerPath(): string {
   return `${import.meta.dir}/core/summarize-worker.ts`;
@@ -144,15 +145,9 @@ const PROJECT = resolveProject(process.cwd());
 
 /**
  * The roster, built for a terminal rather than for an agent's context.
- *
- * This does NOT colourise `formatRoster`'s output: the two audiences want
- * different text. An agent needs the framing spelled out in words; a human
- * scanning eight sessions wants density, and gets the same distinctions from
- * colour. Both read the same store, so they cannot disagree on the facts.
+ * Does NOT colourise `formatRoster`: the two audiences want different text.
  */
 function who(raw: boolean): void {
-  // Refreshed on every `who`: you are asking precisely because you want the
-  // current picture, and ~950 ms is fine for a command you typed.
   const agents = listAgents();
   withStore(PROJECT.dbPath, (store) => {
     const now = Date.now();
@@ -160,8 +155,6 @@ function who(raw: boolean): void {
     if (agents.length > 0) store.syncAgents(agents);
     const sessions = store.liveSessions(now);
     const claims = store.allClaims(now);
-    // Swept here as well as on SubagentStop: a parent that CRASHED never fires
-    // Stop, so its minions would read as running until someone else's did.
     store.pruneMinions(now);
     const minions = store.liveMinions(now);
     if (sessions.length === 0) {
@@ -169,36 +162,18 @@ function who(raw: boolean): void {
       return;
     }
 
-    // A path is only worth showing once trees actually differ.
     const trees = new Set(sessions.map((s) => s.worktree).filter((w) => w !== ""));
     const showTree = trees.size > 1;
-    // Any path two live agents both hold is a genuine collision worth flagging.
     const counts = new Map<string, number>();
     for (const c of claims) counts.set(c.path, (counts.get(c.path) ?? 0) + 1);
 
-    // Assigned across the roster so no two agents share a colour — hashing a
-    // name cannot promise that once names are arbitrary (`traffic-12`).
     const palette = rosterColours(sessions, (s) => displayName(s));
     const taskCounts = store.taskCounts();
-    // A session runs the scripts it loaded at start, so an install mid-flight
-    // leaves the roster mixing builds with nothing to tell them apart.
     const current = installedVersion();
     const versions = store.codeVersions();
-    // Kicked off HERE and never waited for. Each call is ~8 s of Haiku, so the
-    // roster below prints whatever summaries already exist and these land for
-    // the next `who`. Bounded by SUMMARY_TTL_MS per session, so typing `who`
-    // repeatedly costs nothing extra.
     for (const stale of store.staleSummarySessions(now, SUMMARY_TTL_MS)) {
       refreshSummary(summaryWorkerPath(), stale.sessionId, stale.path, PROJECT.dbPath);
     }
-    // Paths held by two agents at once — needed per-row below, so the whole
-    // contested set is computed once rather than re-scanned inside the loop.
-    // A COMMITTED FILE IS NOT CONTESTED. Red is the roster's only alarm colour
-    // and it is worth exactly what it is spent on: measured 2026-08-01, 38 of 42
-    // live claims were on files with no uncommitted changes, so most of what
-    // this marked had already been resolved by a commit. `git status` is ~40 ms
-    // per worktree, paid once here for a command the operator typed — and only
-    // for paths that two agents actually hold.
     const contestedPaths = new Set(
       [...counts]
         .filter(([, n]) => n > 1)
@@ -214,18 +189,7 @@ function who(raw: boolean): void {
         }),
     );
 
-    // MOST RECENTLY ACTIVE FIRST. Start order put whoever launched first at the
-    // top, which is never the one you are looking for; the agents doing
-    // something right now are.
     const ordered = [...sessions].sort((a, b) => b.lastSeenMs - a.lastSeenMs);
-    // Grouped by tree, main tree first, so a worktree is labelled ONCE in a
-    // heading instead of repeating "Traffic (master)" on every row. Only the
-    // exception needs naming — and the old all-or-nothing `showTree` printed the
-    // main tree on all six same-tree rows the moment a single worktree existed.
-    // The MAIN tree is the one the most agents are in, not the one this command
-    // happens to be run from: grouping against the caller's cwd would relabel
-    // every row depending on which terminal typed `who`, so the same roster
-    // would read differently from a worktree than from the checkout.
     const treeCounts = new Map<string, number>();
     for (const s of ordered) treeCounts.set(s.worktree, (treeCounts.get(s.worktree) ?? 0) + 1);
     const mainTree = [...treeCounts].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
@@ -240,30 +204,14 @@ function who(raw: boolean): void {
     const sortedGroups = [...groups].sort(([a], [b]) => (a === "" ? -1 : b === "" ? 1 : 0));
 
     const width = terminalWidth();
-    // One column wide enough for the longest name, capped so a single verbose
-    // name cannot squeeze the description column to nothing.
-    // Measured on the ROSTER name ("Luna — Tooling Master"), which is what this
-    // column prints — not on the bare name peers type. Cap raised to suit:
-    // "Keeper of Wet Things Luna" is 25, and truncating the role to fit would
-    // remove exactly the part that makes an agent recognisable at a glance.
-    // 34 fits the longest real roster name measured ("Adela — Road Network
-    // Retirement", 31) with room for the em-dash form to grow a little. The cap
-    // exists so one verbose name cannot squeeze the description column to
-    // nothing, not to force truncation on ordinary ones — and truncating here
-    // eats the ROLE, which is the half that says who somebody is.
     const nameW = Math.min(
       34,
       Math.max(...ordered.map((s) => [...(raw ? displayName(s) : rosterName(s))].length)),
     );
     const AGE_W = 4;
-    // Where the description starts, and where every continuation line aligns:
-    // "  " + mark + " " + name + " " + age + "  "
     const gutter = 2 + 1 + 1 + nameW + 1 + AGE_W + 2;
     const descW = Math.max(20, width - gutter - 1);
 
-    // ROSTER-WIDE FACTS GO IN THE HEADER. "⟲ old hooks" was printed on all seven
-    // rows, which is one fact stated seven times, and it is a property of the
-    // install rather than of any agent.
     const behind = ordered.filter((s) => {
       const ver = versions.get(s.sessionId) ?? "";
       return current !== "" && ver !== "" && ver !== current;
@@ -284,46 +232,23 @@ function who(raw: boolean): void {
       }
       for (const s of group) {
         const paint = palette.get(displayName(s)) ?? handleColour(s.handle);
-        // A filled dot for busy, hollow for idle: state reads as a SHAPE at the
-        // start of the line, so the eye finds the working agents without parsing
-        // a word out of the middle of each row.
         const mark = s.blocked !== "" ? red("●") : s.status === "busy" ? green("●") : dim("○");
         const seen = activityColour(now - s.lastSeenMs)(pad(shortAge(s.lastSeenMs, now), AGE_W));
         const t = taskCounts.get(s.sessionId);
         const prog = t && t.open + t.done > 0 ? dim(` [${t.done}/${t.open + t.done}]`) : "";
 
-        // BEST AVAILABLE SOURCE, not all of them. The title is a better
-        // description than `intent`, which is guessed from a single prompt and
-        // gets it wrong in ways a title cannot: a compaction summary took the
-        // slot on one live session, listing it as "<analysis> Let me
-        // chronologically work through this convers…".
         const headline = s.title !== "" ? s.title : s.intent;
         const desc =
           headline !== ""
             ? fit(headline, descW - [...prog].length)
             : dim(fit("(no stated task)", descW));
-        // `--raw` prints the name peers TYPE, which is what you want when you
-        // are about to `msg` someone or are debugging why a match failed.
         const shown = raw ? displayName(s) : rosterName(s);
         console.log(`  ${mark} ${paint(bold(pad(fit(shown, nameW), nameW)))} ${seen}  ${desc}${prog}`);
 
-        // A blocked session is the one that wants attention, so it gets its own
-        // line in red rather than a word buried in the row above.
         if (s.blocked !== "") console.log(`${" ".repeat(gutter)}${red(fit(s.blocked, descW))}`);
-        // What the session is doing NOW, which the title cannot say: a title is
-        // set from the opening subject and does not move as the work does.
         if (s.summary !== "") console.log(`${" ".repeat(gutter)}${cyan(fit(s.summary, descW))}`);
 
-        // MINIONS BEFORE FILES, because they are the reason the files are
-        // moving. A parent shows what it has running; the minion itself never
-        // gets a roster row, since it cannot be addressed and would only pad
-        // the count with something nobody can act on.
         const mySpawn = minions.get(s.sessionId) ?? [];
-        // Sized on the MINION labels, not on `nameW`: these are longer than an
-        // agent name ("Hopper's Minion #12" against "Hopper") and start two
-        // columns further in, so borrowing the roster's width truncated every
-        // one to `hoppe…` — a column that hides the number is worse than no
-        // column, since the number is the only part that differs between them.
         const labels = mySpawn.map((m) =>
           raw ? `${displayName(s)}#${m.seq}` : minionName(displayName(s), m.seq),
         );
@@ -339,24 +264,12 @@ function who(raw: boolean): void {
         if (mine.length === 0) continue;
         const pieces = summarizeFiles(mine, { contested: contestedPaths });
         if (pieces.length === 0) continue;
-        // Red marks ONLY a path two agents hold at once — the single entry here
-        // that needs a decision. Everything else is dim, so the line reads as
-        // context until something on it is actually contested.
         const line = renderFileLine(pieces, descW - 2, { contested: red, normal: dim });
         if (line === "") continue;
         console.log(`${" ".repeat(gutter)}${dim("✎")} ${line}`);
       }
     }
 
-    // ONE TREE OR TWO is the whole question. Two agents editing one path in one
-    // checkout are about to overwrite each other; two agents editing it in
-    // separate worktrees are editing different files that merge later, which is
-    // ordinary parallel work. Colouring both red made the warning meaningless —
-    // a master session and a worktree session on `waterTexture.ts` read exactly
-    // like an imminent clobber.
-    // Reads `contestedPaths`, not `counts` — the summary and the per-row marker
-    // must agree, and re-deriving from counts here would list a file as
-    // contested that the rows above had already ruled out as committed.
     const contested = [...contestedPaths].map((path) => {
       const holders = claims.filter((c) => c.path === path);
       const trees = new Set(holders.map((c) => c.worktree));
@@ -452,22 +365,13 @@ function log(limit: number, raw: boolean): void {
 }
 
 /**
- * Broadcast to every agent.
- *
- * An agent calling this speaks as ITSELF, not as you: `note` is the kind that
- * carries the operator's words and outranks peer text wherever it is rendered,
- * so letting a session post one would let it issue instructions in your voice.
+ * Broadcast to every agent. An agent calling this speaks as ITSELF, not as you:
+ * `note` carries the operator's words and outranks peer text, so a session
+ * posting one could issue instructions in your voice.
  */
 function say(text: string): void {
   const from = withStore(PROJECT.dbPath, (store) => {
     const now = Date.now();
-    // An agent whose row was reaped must NOT fall through to the operator's
-    // handle. `note` renders as "the user, to everyone" and outranks peer text
-    // wherever it appears, so that fallback turned a bookkeeping miss into a
-    // live agent broadcasting in the user's voice — the exact forgery the
-    // sender-identity work was meant to prevent, reachable with no malice at
-    // all. A session that identifies itself is an agent whether or not the
-    // roster still has a row for it.
     const self = ENV_SESSION !== "" ? store.findBySession(ENV_SESSION) : null;
     if (ENV_SESSION !== "" && !self) {
       const handle = store.handleForOrRegister(ENV_SESSION, PROJECT.root, "", now);
@@ -488,11 +392,7 @@ function say(text: string): void {
 
 /**
  * Sends to ONE agent. `--from <name>` lets a session send as itself; without it
- * the message is from you, the operator.
- *
- * Delivery is scoped, not secret: only the recipient is SHOWN the message, but
- * every agent can read the db file directly. Good for keeping contexts clean;
- * not a channel for anything you would not want all your sessions to see.
+ * the message is from you, the operator. Delivery is scoped, not secret.
  */
 function msg(target: string, text: string, from: string | undefined): void {
   const result = withStore(PROJECT.dbPath, (store) => {
@@ -500,9 +400,6 @@ function msg(target: string, text: string, from: string | undefined): void {
     const to = store.findByName(target, now);
     if (!to) return { ok: false as const, live: store.liveSessions(now) };
 
-    // Explicit `--from` wins (it is how you speak AS an agent); otherwise the
-    // environment identifies an agent caller, and only a genuine terminal —
-    // one with no Claude session around it — speaks as the operator.
     let handle = HUMAN_HANDLE;
     let fromLabel = "you";
     if (from !== undefined) {
@@ -511,8 +408,6 @@ function msg(target: string, text: string, from: string | undefined): void {
       handle = sender.handle;
       fromLabel = displayName(sender);
     } else if (ENV_SESSION !== "") {
-      // Same rule as `say`: a caller that identifies itself as a session is an
-      // agent, and never speaks as the operator even if its row was reaped.
       const self = store.findBySession(ENV_SESSION);
       handle = self ? self.handle : store.handleForOrRegister(ENV_SESSION, PROJECT.root, "", now);
       fromLabel = self ? displayName(self) : handle;
@@ -542,13 +437,12 @@ function clear(): void {
   console.log("Cleared sessions and claims. " + dim("(Message log is kept; it self-prunes.)"));
 }
 
-/** Which db this repo maps to — the first thing to check when a roster is empty. */
 /**
  * Where this session is, including how far its checkout has drifted.
  *
- * NO THRESHOLD HERE, unlike the session-start line. `where` was asked a direct
+ * NO THRESHOLD HERE, unlike the session-start line: `where` was asked a direct
  * question, and a verb that withholds a fact because it judged it small is one
- * that has to be double-checked. The threshold protects UNSOLICITED output.
+ * that has to be double-checked.
  */
 function where(): void {
   const note = PROJECT.isGit ? "" : dim("  (no git repo — keyed on directory)");
@@ -564,15 +458,9 @@ function where(): void {
   console.log(`${dim("tree:   ")} ${tree}${inWorktree ? "" : dim("  (main tree)")}`);
   const branch = currentBranch(cwd);
   if (branch !== "") console.log(`${dim("branch: ")} ${branch}`);
-  // The main tree sitting ON the base compares it against itself, and "up to
-  // date with master" under `branch: master` is a line that says nothing. A
-  // main tree on some OTHER branch still has a real answer, so gate on the
-  // comparison being trivial rather than on being in a worktree.
   const base = baseBranch(cwd);
   if (!inWorktree && branch === base) return;
   const distance = baseDistance(cwd, base);
-  // An unknown distance is SAID, not hidden. A missing line reads as "fine"
-  // here, and the whole point of the row is that "fine" must be earned.
   if (base === "" || distance === null) {
     console.log(`${dim("base:   ")} ${dim("unknown")}`);
     return;
@@ -581,6 +469,187 @@ function where(): void {
   const drift =
     distance.behind === 0 ? `up to date with ${base}` : `${distance.behind} behind ${base}`;
   console.log(`${dim("base:   ")} ${drift}, ${own}`);
+}
+
+
+/**
+ * Which session a report is ABOUT, stated rather than assumed.
+ * Calls the SAME builder the hook calls, so this reports the real envelope
+ * rather than a reimplementation that drifts from it.
+ */
+function resolveSubject(store: Store, nowMs: number, args: readonly string[]): Session {
+  const flag = (name: string): string => {
+    const i = args.indexOf(name);
+    return i >= 0 ? (args[i + 1] ?? "") : "";
+  };
+  const live = store.liveSessions(nowMs);
+
+  // EXPLICIT BEATS AMBIENT. The env var used to win, which meant an agent
+  // running inside a session could not inspect a peer at all: `--agent adela`
+  // was read, then silently discarded in favour of the caller's own id.
+  const wanted = flag("--session");
+  if (wanted !== "") {
+    // VALIDATED, not trusted. An unknown id produced a fully plausible report
+    // about nobody: `(unregistered)`, every session counted as a peer, no
+    // suppression state, and the caller's own worktree.
+    const hit = live.find((s) => s.sessionId === wanted);
+    if (hit) return hit;
+    console.log(red(`no live session with id ${wanted}`));
+    process.exit(1);
+  }
+
+  const named = flag("--agent").toLowerCase();
+  if (named !== "") {
+    const hit = live.find((s) => displayName(s).toLowerCase() === named || s.handle === named);
+    if (hit) return hit;
+    console.log(red(`no live session named ${named}`));
+    process.exit(1);
+  }
+
+  const fromEnv = process.env["CLAUDE_CODE_SESSION_ID"] ?? "";
+  if (fromEnv !== "") {
+    const hit = live.find((s) => s.sessionId === fromEnv);
+    if (hit) return hit;
+    console.log(red("this session is not on the roster") + dim(" — pass --agent <name>"));
+    process.exit(1);
+  }
+
+  // Unambiguous only when there is one candidate. Guessing among several would
+  // report on an arbitrary agent and look authoritative doing it.
+  if (live.length === 1 && live[0]) return live[0];
+  console.log(
+    red("cannot tell which session to report on") +
+      dim(` — pass --agent <name> or --session <id> (${live.length} live)`),
+  );
+  process.exit(1);
+}
+
+/**
+ * What did not fit in the session-start block. THE OTHER HALF OF A PROMISE THE
+ * BLOCK MAKES: nothing an agent is expected to act on can vanish silently.
+ */
+function inbox(args: readonly string[]): void {
+  withStore(PROJECT.dbPath, (store) => {
+    const owed = store.injectionOmissions(resolveSubject(store, Date.now(), args).sessionId);
+    if (owed.length === 0) {
+      console.log(dim("nothing was omitted from your session-start context"));
+      return;
+    }
+    console.log(bold(`${owed.length} item(s) omitted for length:\n`));
+    for (const o of owed) {
+      console.log(`${bold(o.key)} ${dim(`(${o.reason})`)}`);
+      console.log(`${o.text}\n`);
+    }
+  });
+}
+
+function injection(args: readonly string[]): void {
+  withStore(PROJECT.dbPath, (store) => {
+    const now = Date.now();
+    const self = resolveSubject(store, now, args);
+    const sessionId = self.sessionId;
+    const me = displayName(self);
+
+    // THE SUBJECT'S WORKTREE, NOT THE CALLER'S. These were read from
+    // `process.cwd()` before the subject was even resolved, so inspecting a
+    // peer in another checkout spliced that peer's identity and exposure onto
+    // this terminal's git state — a report of a block nobody received.
+    const subjectCwd = self.worktree !== "" ? self.worktree : process.cwd().replace(/\\/g, "/");
+    const tree = worktreeRoot(subjectCwd);
+    const inWorktree = PROJECT.isGit && tree !== PROJECT.root;
+    const base = inWorktree ? baseBranch(subjectCwd) : "";
+    const distance = inWorktree ? baseDistance(subjectCwd, base) : null;
+
+    const env = sessionEnvelope(store, {
+      me,
+      projectName: PROJECT.name,
+      sessionId,
+      tree,
+      now,
+      staleness: baseStalenessLines(distance, base, inWorktree),
+      lineageFrom: self.lineageFrom,
+    });
+    // The SAME suppression state the hook would read, or the report describes a
+    // block nobody would ever be sent.
+    const packed = pack(env, store.injectionExposures(sessionId));
+
+    // WHOSE block this is. Without it a report run by hand looks like it
+    // describes the reader, and the numbers quietly belong to someone else.
+    console.log(`${dim("recipient")} ${me} ${dim(sessionId.slice(0, 8))}`);
+    console.log(bold("\nmandatory"));
+    for (const line of env.mandatoryHeader.filter((l) => l !== "")) {
+      console.log(`  ${green("✓")} ${dim(clip(line))} ${dim(`${line.length}`)}`);
+    }
+    const framed = packed.selected.some((s) => s.candidate.requiresPeerFraming);
+    for (const line of env.peerFraming) {
+      const mark = framed ? green("✓") : dim("–");
+      const why = framed ? "" : dim(" (no peer text selected)");
+      console.log(`  ${mark} ${dim(clip(line))} ${dim(`${line.length}`)}${why}`);
+    }
+
+    console.log(bold("\nselected"));
+    if (packed.selected.length === 0) console.log(dim("  nothing"));
+    for (const s of packed.selected) {
+      const form = s.form === "compact" ? yellow(" compact") : "";
+      console.log(
+        `  ${green("✓")} ${s.candidate.key.padEnd(18)} ${dim(`p${s.candidate.priority}`)}` +
+          ` ${dim(`${s.text.length}`)}${form}`,
+      );
+    }
+
+    console.log(bold("\nomitted"));
+    if (packed.omitted.length === 0) console.log(dim("  nothing"));
+    for (const o of packed.omitted) {
+      console.log(
+        `  ${dim("–")} ${o.candidate.key.padEnd(18)} ${dim(`p${o.candidate.priority}`)}` +
+          ` ${red(o.reason)}`,
+      );
+    }
+
+    // WHAT WAS ACTUALLY DELIVERED, as opposed to everything above it — which is
+    // a block recomputed from current state, i.e. what this session WOULD get
+    // now. Debugging "why did that agent not know about X" needs the delivery,
+    // and state has usually moved by the time anybody asks.
+    const history = store.injectionHistory(sessionId, 40);
+    if (history.length > 0) {
+      // Grouped by DELIVERY, not timestamp: two hook runs inside one
+      // millisecond would otherwise merge into a block that never existed.
+      const last = history[0]?.deliveryId ?? 0;
+      const latest = history.filter((h) => h.deliveryId === last);
+      // The delivery's TIMESTAMP, not its id — grouping and age are different
+      // questions and an id read as a clock renders an absurd age.
+      console.log(bold(`\nlast delivered ${dim(briefAgo(latest[0]?.tsMs ?? now, now))}`));
+      for (const h of latest) {
+        const mark = h.outcome === "selected" ? green("✓") : dim("–");
+        const tail =
+          h.outcome === "selected"
+            ? `${h.form === "compact" ? yellow(" compact") : ""} ${dim(`${h.chars}`)}`
+            : ` ${red(h.reason)}`;
+        console.log(`  ${mark} ${h.key.padEnd(18)} ${dim(`p${h.priority}`)}${tail}`);
+      }
+      const deliveries = new Set(history.map((h) => h.deliveryId)).size;
+      if (deliveries > 1) console.log(dim(`  (${deliveries} deliveries in history)`));
+    }
+
+    console.log(bold("\nbudget"));
+    console.log(`  ${dim("target  ")} ${env.targetChars}`);
+    console.log(`  ${dim("rendered")} ${packed.renderedChars}`);
+    console.log(`  ${dim("reserved")} ${packed.reservedChars} ${dim("(header + framing)")}`);
+    // Stated rather than implied: `targetChars` is what CANDIDATES compete for,
+    // and the header is allowed to exceed it. A reader comparing the two
+    // numbers deserves to be told that is by design.
+    if (packed.mandatoryOverflow) {
+      console.log(
+        `  ${red("mandatory overflow")} — the header alone exceeds the target and renders anyway`,
+      );
+    }
+  });
+}
+
+/** One line's worth, so a 700-char paragraph does not own the report. */
+function clip(text: string, max = 52): string {
+  const flat = text.replace(/\s+/g, " ");
+  return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
 }
 
 /**
@@ -2311,6 +2380,12 @@ switch (cmd) {
     break;
   case "where":
     where();
+    break;
+  case "injection":
+    injection(rest);
+    break;
+  case "inbox":
+    inbox(rest);
     break;
   case "stats":
     stats();

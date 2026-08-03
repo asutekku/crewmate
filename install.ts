@@ -30,16 +30,11 @@ const SETTINGS = `${HOME}/.claude/settings.json`;
 const HERE = `${dirname(fileURLToPath(import.meta.url)).replace(/\\/g, "/")}/`;
 
 /**
- * Every module to deploy, as a path RELATIVE to this directory — so `core/…`
- * and `hooks/…` keep their folders in `bin/` and the relative imports that ship
- * resolve exactly as they do in source.
+ * Every module to deploy, as a path RELATIVE to this directory.
  *
  * DISCOVERED, NOT LISTED: a hardcoded list silently drops a newly added module,
  * and the failure lands at hook-run time as "Cannot find module" rather than at
- * install time — which is exactly how `colour.ts` shipped broken once.
- *
- * `test/` is skipped wholesale: tests are not hooks, and copying them would put
- * `bun:test` imports in the deployed tree.
+ * install time. `test/` is skipped wholesale.
  */
 async function scriptNames(): Promise<string[]> {
   const { readdirSync } = await import("node:fs");
@@ -55,15 +50,7 @@ async function scriptNames(): Promise<string[]> {
 
 /**
  * A fingerprint of the installed code, so a session can report which version it
- * is running.
- *
- * Sessions load these scripts when they start and keep that copy until they are
- * restarted, so after an install the roster mixes old and new behaviour with no
- * way to tell which is which. The user had to infer it from the SHAPE of the
- * output ("some agents are running on older hooks i believe"); this makes it a
- * fact the roster states.
- *
- * Content-hashed rather than a hand-bumped constant: a version number someone
+ * is running. Content-hashed rather than hand-bumped: a version number someone
  * must remember to raise is a version number that lies.
  */
 async function codeVersion(names: readonly string[]): Promise<string> {
@@ -72,23 +59,89 @@ async function codeVersion(names: readonly string[]): Promise<string> {
   return h.digest("hex").slice(0, 8);
 }
 
+/**
+ * What is installed, beside the code that is installed.
+ *
+ * `featureSet` is listed explicitly rather than derived from the file list: a
+ * script can exist and its verb be unregistered. The list is what the build
+ * CLAIMS to provide, and it is a claim someone must edit deliberately.
+ */
+function manifest(version: string, scripts: readonly string[]): Record<string, unknown> {
+  return {
+    installedAt: Date.now(),
+    // The REPOSITORY revision, so an installed copy traces back to source. The
+    // content hash answered a different question ("are these bytes the ones I
+    // shipped?") and was labelled as if it answered this one -- fine until
+    // somebody tries to find the commit a build came from. Empty outside a git
+    // checkout, which is a real case: install.ts runs from wherever the source
+    // happens to be.
+    sourceRevision: headRevision(),
+    // The BYTES, kept under its own name now that sourceRevision means what it
+    // says. Still the value a session reports, still content-hashed.
+    contentHash: version,
+    schemaVersion: SCHEMA_VERSION,
+    // Bumped when the MEANING of a feature name changes, so a consumer can tell
+    // "this build lists injection-suppression" from "this build lists it and
+    // means what you think". A list alone cannot express that.
+    featureSetVersion: FEATURE_SET_VERSION,
+    featureSet: FEATURE_SET,
+    scripts: [...scripts],
+  };
+}
+
+/** The commit this was installed from; empty outside a checkout. */
+function headRevision(): string {
+  try {
+    const out = Bun.spawnSync(["git", "-C", HERE, "rev-parse", "HEAD"]);
+    return out.success ? new TextDecoder().decode(out.stdout).trim() : "";
+  } catch {
+    return "";
+  }
+}
+
+/** Raised when a name in FEATURE_SET starts meaning something different. */
+const FEATURE_SET_VERSION = 1;
+
+/**
+ * Bumped by hand when the store's shape changes in a way a reader must know
+ * about. Deliberately NOT content-hashed: this answers "can an older session
+ * still read this db", which is a judgement, not a diff.
+ */
+const SCHEMA_VERSION = 1;
+
+/**
+ * Capabilities this build claims to provide, for exposure telemetry to compare
+ * against. A feature absent here is one no session can be said to have been
+ * given, however much of its code shipped.
+ */
+const FEATURE_SET = [
+  "roster",
+  "messages",
+  "work",
+  "diary",
+  "questions",
+  "memories",
+  "lineage",
+  "stats",
+  // Split, because a partially migrated build must not claim the same thing a
+  // complete one does: the allocator can ship without the store tables behind
+  // it, and exposure telemetry asking "did this session have suppression?"
+  // needs an answer the word "injection" alone cannot give.
+  "injection",
+  "injection-suppression",
+  "injection-inbox",
+] as const;
+
 interface HookEntry {
   readonly matcher?: string;
   readonly hooks: ReadonlyArray<{ readonly command?: string }>;
 }
 
 /**
- * `bun` from PATH rather than an absolute binary: the same settings file has to
- * work on Linux and macOS, where a Windows `bun.exe` path does not exist.
- *
- * EXEC FORM (`args` present), not a shell string. HOOKS.MD: with `args` set,
- * "each element is one argument exactly as written" and "no shell tokenization
- * happens on any platform". The shell form `bun ${BIN}/x.ts` is unquoted, so a
- * home directory containing a space — `C:/Users/John Doe/…` — tokenizes into
- * two arguments and EVERY hook fails on EVERY firing. Because the hooks fail
- * open, such a user sees nothing at all and believes the tool is installed.
- * `bun` resolves to a real executable on all three platforms, which is what
- * exec form requires on Windows.
+ * EXEC FORM (`args` present), not a shell string. The shell form `bun ${BIN}/x.ts`
+ * is unquoted, so a home directory with spaces tokenizes into two arguments and
+ * EVERY hook fails on EVERY firing. `bun` resolves to a real executable on all
+ * three platforms, which is what exec form requires on Windows.
  */
 function entry(script: string, extra: Record<string, unknown> = {}): unknown {
   return {
@@ -135,13 +188,9 @@ const REGISTRATIONS: ReadonlyArray<readonly [string, unknown]> = [
 ];
 
 /**
- * Identifies OUR hook entries, so removal never touches anyone else's: ours iff
- * the path points into our bin, wherever in the entry it appears.
- *
- * Under EXEC FORM the path lives in `args` and `command` is just `bun`, so
- * checking `command` alone stopped recognising our own registrations the moment
- * exec form shipped — leaving `--remove` unable to clean up and re-registration
- * duplicating entries. Both fields are checked so either form is matched.
+ * Identifies OUR hook entries by checking both `args` and `command`: under
+ * EXEC FORM the path lives in `args`, not `command`. Both fields must be checked
+ * so either form is matched.
  */
 function isOurs(e: unknown): boolean {
   const hooks = (e as HookEntry | null)?.hooks;
@@ -172,22 +221,14 @@ async function writeSettings(s: Record<string, unknown>, backup: string | null):
 
 async function copyScripts(): Promise<void> {
   const scripts = await scriptNames();
-  // Replaced, not merged: a module that moved or was deleted would otherwise
-  // linger in `bin/` forever. After the source was split into core/ and hooks/,
-  // the previous flat copies sat beside the new ones — same names, older code,
-  // and nothing to say which a reader was looking at.
   rmSync(BIN, { recursive: true, force: true });
   mkdirSync(BIN, { recursive: true });
   for (const s of scripts) {
     await Bun.write(`${BIN}/${s}`, Bun.file(`${HERE}${s}`));
   }
-  // Stamped beside the scripts, so a running session can report which build it
-  // loaded. Sessions read these files at start and keep that copy until they
-  // restart, so after an install the roster silently mixes versions.
   const version = await codeVersion(scripts);
   await Bun.write(`${BIN}/VERSION`, version);
-  // Named, not just counted: a missing module is invisible in a bare number and
-  // only surfaces when a hook fails to import it.
+  await Bun.write(`${BIN}/manifest.json`, JSON.stringify(manifest(version, scripts), null, 1));
   console.log(`Copied ${scripts.length} scripts to ${BIN} (build ${version})`);
   console.log(`  ${scripts.join(", ")}`);
 }
@@ -198,19 +239,6 @@ async function install(force: boolean): Promise<void> {
   const raw = JSON.stringify(settings);
   const hooks = (settings["hooks"] ?? {}) as Record<string, unknown[]>;
 
-  // Compared as an EVENT SET, not as "is the string present anywhere". Any
-  // registration at all used to satisfy the check, so an update that ADDED an
-  // event copied the new script and never registered it — while `VERSION`
-  // advanced, so the roster reported this machine as current. The documented
-  // update command was the broken path.
-  // Compared per SCRIPT, not per event. An event can hold several of our
-  // registrations, so "does PreToolUse have one of ours" answers yes while a
-  // newly added PreToolUse(Bash) guard is still absent -- the same class of
-  // false-positive as the event-set bug above, one level down.
-  // The SCRIPT PATH, which lives in `args` -- `command` is the interpreter and
-  // is `"bun"` for every one of ours, so comparing on it makes all fifteen
-  // registrations look identical and any newly added hook look installed.
-  // (Written that way first; it silently registered nothing.)
   const script = (reg: unknown): string => {
     const h = (reg as { hooks?: Array<{ command?: string; args?: string[] }> }).hooks?.[0];
     return (h?.args?.[0] ?? h?.command ?? "").trim();
@@ -230,12 +258,6 @@ async function install(force: boolean): Promise<void> {
   if (missing.length > 0 && !force) {
     console.log(`Registering ${missing.length} new event(s): ${missing.join(", ")}`);
   }
-  // ACCUMULATE PER EVENT, never assign. One event can carry SEVERAL of our
-  // registrations under different matchers -- `PreToolUse` has both the
-  // Edit|Write guard and the Bash one -- and assigning inside the loop made the
-  // last entry for an event silently discard every earlier one. Clearing our
-  // own entries once, before the loop, keeps the reinstall idempotent without
-  // dropping siblings.
   const cleared = new Set<string>();
   for (const [event, reg] of REGISTRATIONS) {
     if (!cleared.has(event)) {
@@ -261,8 +283,6 @@ async function remove(): Promise<void> {
       removed++;
       return false;
     });
-    // Drop the event entirely when it held only our entries, rather than
-    // leaving an empty array behind.
     if (kept.length > 0) hooks[event] = kept;
     else delete hooks[event];
   }

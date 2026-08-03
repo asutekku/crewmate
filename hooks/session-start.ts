@@ -8,14 +8,7 @@
  */
 
 import { displayName, withStore } from "../core/store.ts";
-import {
-  baseStalenessLines,
-  emit,
-  formatMessages,
-  formatRoster,
-  readPayload,
-  TRUST_NOTE,
-} from "../core/shared.ts";
+import { baseStalenessLines, emit, readPayload } from "../core/shared.ts";
 import {
   baseBranch,
   baseDistance,
@@ -25,116 +18,15 @@ import {
   worktreeRoot,
 } from "../core/repo.ts";
 import { listAgents } from "../core/agents.ts";
-import { discipleName, nameCase } from "../core/names.ts";
-import { lineageKey, withPersonal } from "../core/personal.ts";
+import { nameCase } from "../core/names.ts";
+import { isContinuation, pack, renderBlock } from "../core/injection.ts";
+import { loadConfig } from "../core/config.ts";
+import { sessionEnvelope } from "../core/sessionBlock.ts";
 
-/** Enough log to see what the others are up to, short enough to stay skimmable. */
-const RECENT_LINES = 8;
-
-/**
- * Told once, at session start, rather than repeated on every delivery — an agent
- * that has peers needs to know the channel exists; it does not need reminding
- * each turn.
- *
- * The delivery caveat is stated plainly because the alternative is an agent
- * sending a message and waiting for a reply that cannot arrive until the peer's
- * next turn.
- */
-const HOW_TO_MESSAGE =
-  "Peers are reachable with `bun ~/.claude/agent-presence/bin/cli.ts msg <name> " +
-  '"<text>"`. A message reaches only the named agent; `say` reaches every agent. ' +
-  "Delivery happens between the recipient's tool batches, or at its next turn — a " +
-  "`busy` peer is mid-turn and reads it when that turn ends. The channel carries " +
-  "findings, warnings about shared files, and questions between agents.";
-
-/**
- * The work board, phrased as PERMISSION rather than instruction.
- *
- * Saying when NOT to is the load-bearing half. A line that only says "record
- * your work" fails two ways: agents dutifully open an item for "what does this
- * function do", burying the real ones, or they read it as boilerplate and ignore
- * it entirely. Naming the exemption makes it a judgement call, which is what an
- * agent is good at — and whether a checklist exists is the signal that will gate
- * the planned idle check, so it has to mean something.
- *
- * Repeated here as well as in CLAUDE.md because this reaches sessions that never
- * read one: subagents, and any repo without its own.
- */
-const HOW_TO_RECORD =
-  "Work worth tracking across turns can be recorded with `cli.ts doing " +
-  '"<subject>" --plan "step a; step b; step c"`, ticked off with `cli.ts did <n> ' +
-  '"<what changed>"`, and closed with `cli.ts done`. `cli.ts board` shows what ' +
-  "every agent is working on. QUICK CHECKS AND ONE-OFF QUESTIONS DO NOT NEED A " +
-  "CHECKLIST — `--plan` is optional and an item with no steps is fine.";
-
-/**
- * WHO THIS SESSION IS, phrased to survive contact with the system prompt.
- *
- * MEASURED FAILURE, 2026-08-02. Asked "who are you", a session answered: "I'm
- * Claude Code, Anthropic's AI assistant... In this session, I'm anouk." It had
- * ranked two claims correctly. The system prompt says "You are Claude Code" and
- * is re-presented every turn; the old line here said `You are "anouk" in
- * Traffic's shared presence log` exactly once, and that sentence ARGUES for the
- * losing reading — `in ... log` scopes the name to a database row. The reply
- * mirrored the scoping straight back.
- *
- * A HOOK CANNOT WIN ON RANK. Injected text never reaches the system prompt
- * (only output styles, `--append-system-prompt`, and a subagent's own agent
- * file do), so the goal is not to overwrite "Claude Code" — it is to make the
- * name the answer to WHO, while "Claude Code" stays the answer to WHAT. Those
- * do not conflict, and the old wording never said so.
- *
- * Hence the three moves here, each earning its tokens:
- *   - the name alone on its own line, with no preposition to hide behind;
- *   - "Claude Code" CONCEDED rather than ignored, because it is true and an
- *     unaddressed truth is what produced the "I'm X, but here I'm Y" hedge;
- *   - the REASON given, not just the rule — "Claude Code" does not distinguish
- *     you from the four other agents in this tree, which in a shared repo is
- *     the only thing the name is for.
- *
- * Phrased as fact plus rationale rather than as an order. HOOKS.MD is explicit
- * that imperative injected text can read as an out-of-band command; the one
- * near-imperative ("Asked who you are, say X") stays because it names the exact
- * situation that failed, and a rule with its reason attached holds better than
- * either alone.
- */
-export function identityLines(name: string, project: string): string[] {
-  const proper = nameCase(name);
-  return [
-    `Your name is ${proper}.`,
-    "",
-    `You are Claude Code, and in ${project} you are ${proper} — one of several Claude Code` +
-      ` sessions working in this repo at once, each with its own name. Asked who you are, say` +
-      ` ${proper}. "Claude Code" names WHAT you are; it does not distinguish you from the other` +
-      ` agents in this tree, which is the distinction that matters here.`,
-  ];
-}
-
-/**
- * The name is stated as a fact, the role offered as a choice.
- *
- * An agent that is not TOLD its name keeps referring to itself by whatever
- * label it can see — before sender identity existed, one typed "traffic-4b:"
- * into a message body by hand to say who it was. An assigned name nobody is
- * told is just a database column.
- *
- * THIS NO LONGER DEFINES THE NAME. It used to open "The name above is what
- * peers type at `msg`", which defines an identity as an ADDRESS — an email
- * alias — one line after `identityLines` has just asserted it as a self. Being
- * addressable is now a CONSEQUENCE of having a name, which is the true
- * relationship and the one that does not undercut the line above it.
- */
-const HOW_TO_BE_CALLED =
-  "Peers reach you by that name — it is what they type at `msg`, and it " +
-  "survives a restart. You " +
-  'can say what you ARE with `cli.ts call-you "<role>"` — "Tooling Master", ' +
-  '"Keeper of Wet Things" — which appears beside your name on the roster; or take ' +
-  'a different name with `cli.ts call-me "<name>"`. Both optional. Your name stays ' +
-  "put while the role changes, so a role that moves still reads as the same agent." +
-  "\n\nWHEN YOU MENTION A PEER IN TEXT THE USER READS, give their role too: " +
-  '"adela (the road-network agent) is fixing this" rather than "adela is fixing ' +
-  'this". The user is looking at eight windows and a bare given name identifies ' +
-  "nobody — the roster above lists each peer's role in parentheses after its name.";
+// Re-exported because the identity wording is the tested part and its tests
+// have always addressed this module. The text itself now lives with the block
+// it heads, in core/sessionBlock.ts.
+export { identityLines } from "../core/sessionBlock.ts";
 
 async function main(): Promise<void> {
   const payload = await readPayload();
@@ -171,106 +63,37 @@ async function main(): Promise<void> {
     // Registered first, so this session's own name is filled in too.
     if (agents.length > 0) store.syncAgents(agents);
 
-    const all = store.liveSessions(now);
-    const self = all.find((s) => s.sessionId === sessionId);
-    const peers = all.filter((s) => s.sessionId !== sessionId);
-    const claims = store.allClaims(now);
-    const recent = store.recent(RECENT_LINES, sessionId);
-
+    const self = store.liveSessions(now).find((s) => s.sessionId === sessionId);
     const me = self ? displayName(self) : handle;
-    // FIRST, and on its own line. Everything after this is context; this is who
-    // is reading it.
-    const lines = identityLines(me, project.name);
-    // HIGH, and above the roster. It changes how everything below it is read:
-    // a peer's finding about a file, and this session's own reading of `git
-    // log`, both mean something different from a checkout that is 500 commits
-    // adrift. Empty on the common path — see `baseStalenessLines`.
-    const staleness = baseStalenessLines(distance, base, inWorktree);
-    if (staleness.length > 0) lines.push("", ...staleness);
-    // The identity paragraph above ends a thought; what follows is the roster.
-    // Without this they run together and the roster reads as part of the
-    // sentence about who you are.
-    lines.push("");
-    if (peers.length === 0) {
-      lines.push(
-        "No other agents are active right now. Check the roster before editing a file",
-        "another agent has claimed if that changes.",
-      );
-      // The BOARD is worth mentioning with no peers around; messaging is not.
-      // A record outlives the session that opened it and is keyed on the
-      // conversation, so work started alone is exactly what a peer arriving in
-      // an hour needs to be able to read.
-      lines.push("", HOW_TO_RECORD);
-      lines.push("", HOW_TO_BE_CALLED);
-    } else {
-      lines.push(`${peers.length} other agent(s) active:`);
-      lines.push(
-        ...formatRoster(peers, claims, now, tree, store.taskCounts(), false, store.minionCounts(now)),
-      );
-      if (recent.length > 0) {
-        lines.push("", "Recent activity:");
-        lines.push(...formatMessages(recent, now));
-      }
-      lines.push("", HOW_TO_MESSAGE);
-      lines.push("", HOW_TO_RECORD);
-      lines.push("", HOW_TO_BE_CALLED);
-      // The trust note only earns its space once there is peer text to mistrust.
-      lines.push("", TRUST_NOTE);
-    }
-    // COUNTS AND TOPICS, never entries. Session-start context is paid by every
-    // agent on every session, and an agent arriving has no file in hand yet —
-    // so what it needs is to know the diary EXISTS and roughly what is in it.
-    // The entries themselves arrive at `pre-edit`, when a folder is actually
-    // being touched and a specific finding is worth its tokens.
-    const topics = store.diary.topics();
-    if (topics.length > 0) {
-      const total = topics.reduce((n, t) => n + t.count, 0);
-      const named = topics
-        .slice(0, 6)
-        .map((t) => `${t.topic} (${t.count})`)
-        .join(", ");
-      const more = topics.length > 6 ? `, +${topics.length - 6} more` : "";
-      lines.push(
-        "",
-        `The diary holds ${total} finding(s) other agents left about this repo, by topic: ${named}${more}.`,
-        "`cli.ts recall <words>` searches them; `cli.ts topic <name>` reads one topic. Findings" +
-          " about a folder you edit surface on their own. Add one with" +
-          ' `cli.ts note "<what you found>" --topic <t> --scope <folder>` — it outlives this' +
-          " session and is readable from every worktree.",
-      );
-    }
-    // WHAT THIS AGENT KNOWS ABOUT THE OPERATOR. The one place automatic
-    // injection is clearly right: small, certainly relevant (it is about the
-    // person in the room), and the whole difference between an agent that
-    // remembers how you work and one that does not.
+
+    // SUPPRESSION IS ONLY REAL IF IT IS PERSISTED. `pack` defaults `seen` to an
+    // empty map, so a caller that omits it silently gets no suppression while
+    // every unit test still passes.
     //
-    // Titles only, and only this LINEAGE's — Hopper's read of the operator is
-    // not Luna's, deliberately. Keyed on the lineage rather than the uuid so a
-    // successor arrives already knowing what its predecessor learned; `self` is
-    // null on the very first hook of a session, where there is no name yet and
-    // the key falls back to this uuid, which is exactly the old behaviour.
-    const inherited = self?.lineageFrom ?? "";
-    const lineage = inherited !== "" ? inherited : lineageKey(me, sessionId);
-    const mine = withPersonal((personal) => personal.forLineage(lineage, project.name));
-    if (mine.length > 0) {
-      // WHOSE knowledge, when it is not your own. An inherited belief is by
-      // construction unverified by its inheritor, and a reader who cannot tell
-      // the difference will act on a stranger's conclusion as if it were theirs.
-      lines.push(
-        "",
-        inherited === ""
-          ? "What you have learned about the person you work with:"
-          : `What ${nameCase(inherited)} learned about the person you work with. You are` +
-            ` ${discipleName(me, inherited)}, so none of this is verified by you:`,
-      );
-      for (const m of mine) lines.push(`  - ${m.title}${m.global ? "" : ` (in ${m.project})`}`);
-      lines.push(
-        "`cli.ts remember \"<what you learned>\"` adds one (`--global` if it is true of them" +
-          " everywhere, not just here); `cli.ts forget <id>` drops one that turned out wrong." +
-          " They can read these with `cli.ts about-me`.",
-      );
-    }
-    return { text: lines.join("\n"), name: me, peerCount: peers.length };
+    // BUT EXPOSURE ONLY MEANS SOMETHING WHILE THE CONTEXT HOLDS IT. This event
+    // re-fires on `clear`, `compact` and `fork` with the same session id and a
+    // context that has been wiped — measured, 19 identity injections after one
+    // compact boundary in this tool's own transcript. Suppressing an unchanged
+    // roster there would leave a block of nothing but the header, so only a
+    // `resume` carries its exposures forward.
+    const continuing = isContinuation(payload?.source);
+    const packed = pack(
+      sessionEnvelope(store, {
+        me,
+        projectName: project.name,
+        sessionId,
+        tree,
+        now,
+        staleness: baseStalenessLines(distance, base, inWorktree),
+        lineageFrom: self?.lineageFrom ?? "",
+      }),
+      continuing ? store.injectionExposures(sessionId) : new Map(),
+    );
+    // The real peer count, not the selected-candidate count: the user's status
+    // line answers "who else is in the tree", which is true whether or not the
+    // roster line survived the budget.
+    const peerCount = store.liveSessions(now).filter((s) => s.sessionId !== sessionId).length;
+    return { text: renderBlock(packed.lines), name: me, peerCount, packed, continuing, now };
   });
 
   emit(
@@ -282,6 +105,53 @@ async function main(): Promise<void> {
     // a label where the agent was told a name.
     `presence: you are ${nameCase(report.name)} — ${report.peerCount} peer(s) active`,
   );
+
+  // RECORDED AFTER EMITTING, DELIBERATELY. `emit` is a `console.log`, and a
+  // closed pipe throws — so writing the delivery first would leave the store
+  // claiming a session had been shown a block that never left the process, and
+  // the next start would suppress it. At-least-once is the safe direction here:
+  // a repeated roster is noise, a silently withheld one is the failure this
+  // whole feature exists to prevent.
+  //
+  // One transaction, because exposures without their omissions is the worst of
+  // both: content marked delivered whose inbox is empty.
+  withStore(project.dbPath, (store) => {
+    store.recordInjectionResult(sessionId, {
+      // The FORM and RANK go in too, not just the version: reconstructing what
+      // an agent was shown means knowing whether it got the full roster or the
+      // one-line compact of it, and where that sat against everything else.
+      shown: report.packed.selected.map((s) => ({
+        key: s.candidate.key,
+        dedupeKey: s.candidate.dedupeKey,
+        stateVersion: s.candidate.stateVersion,
+        form: s.form,
+        priority: s.candidate.priority,
+        chars: s.text.length,
+      })),
+      // EVERY OMISSION, whatever the reason. The inbox wants only the
+      // actionable ones dropped for space — but the LEDGER wants all of them,
+      // and passing one pre-filtered list served the inbox's need and silently
+      // imposed it on the history: `duplicate`, `unchanged` and non-actionable
+      // drops never reached the record at all. "Why was this agent never told?"
+      // is most often answered by `unchanged`, which was the outcome least
+      // likely to be there. The store decides which subset is owed.
+      omitted: report.packed.omitted.map((o) => ({
+        key: o.candidate.key,
+        dedupeKey: o.candidate.dedupeKey,
+        // WHICH VERSION was withheld. Without it an inbox entry for a key
+        // whose content has since moved cannot say which one was missed.
+        stateVersion: o.candidate.stateVersion,
+        text: o.candidate.text,
+        reason: o.reason,
+        priority: o.candidate.priority,
+        actionable: o.candidate.actionable,
+      })),
+      nowMs: report.now,
+      // A fresh context generation: forget what the previous one was shown.
+      clearFirst: !report.continuing,
+    });
+    store.pruneInjectionState(report.now, loadConfig().injectionKeepMs);
+  });
 }
 
 try {

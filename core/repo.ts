@@ -249,6 +249,90 @@ export function installedVersion(): string {
   }
 }
 
+/** What a build says it installed. Every field absent on a pre-manifest build. */
+export interface InstallManifest {
+  readonly installedAt: number;
+  /** The commit installed from. EMPTY outside a git checkout, which is valid. */
+  readonly sourceRevision: string;
+  /** Content hash of the installed scripts — what a session reports as its build. */
+  readonly contentHash: string;
+  readonly schemaVersion: number;
+  /** Raised when a name in featureSet starts meaning something different. */
+  readonly featureSetVersion: number;
+  readonly featureSet: readonly string[];
+}
+
+/**
+ * What the installed build CLAIMS to provide, for asking whether a session
+ * could have had a feature at all.
+ *
+ * Separate from `installedVersion` because a hash answers "which build" and not
+ * "which capabilities" — and the second is the one exposure telemetry needs,
+ * since `bin/` is a copy and a session keeps whatever it loaded at start.
+ *
+ * Null when absent or malformed, never a throw: this is read on hook paths, and
+ * a missing manifest is the normal state of every build before this one.
+ */
+export function installManifest(): InstallManifest | null {
+  try {
+    const raw = JSON.parse(readFileSync(`${BASE_DIR}/bin/manifest.json`, "utf8")) as unknown;
+    return parseManifest(raw);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * VALIDATES rather than coerces.
+ *
+ * An earlier version ran every field through `Number()`/`String()`, which turns
+ * `"yesterday"` into `NaN`, `{}` into `NaN`, and `[false, 42]` into
+ * `["false", "42"]` — all returned as a valid manifest. That is worse than
+ * returning null: a caller asking "did this build have obligations?" would get
+ * a confident wrong answer from a corrupt file. Anything that is not the
+ * declared shape is not a manifest.
+ */
+export function parseManifest(raw: unknown): InstallManifest | null {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
+  const o = raw as Record<string, unknown>;
+
+  const installedAt = o["installedAt"];
+  const sourceRevision = o["sourceRevision"];
+  const contentHash = o["contentHash"];
+  const schemaVersion = o["schemaVersion"];
+  const featureSetVersion = o["featureSetVersion"];
+  const featureSet = o["featureSet"];
+
+  if (typeof installedAt !== "number" || !Number.isFinite(installedAt) || installedAt < 0) {
+    return null;
+  }
+  // Empty is VALID here and nowhere else: install.ts can legitimately run
+  // outside a git checkout, and a build with no traceable commit is a fact to
+  // record rather than a corrupt manifest to reject.
+  if (typeof sourceRevision !== "string") return null;
+  if (typeof contentHash !== "string" || contentHash === "") return null;
+  if (typeof schemaVersion !== "number" || !Number.isInteger(schemaVersion) || schemaVersion < 0) {
+    return null;
+  }
+  if (
+    typeof featureSetVersion !== "number" ||
+    !Number.isInteger(featureSetVersion) ||
+    featureSetVersion < 0
+  ) {
+    return null;
+  }
+  if (!Array.isArray(featureSet) || featureSet.some((f) => typeof f !== "string")) return null;
+
+  return {
+    installedAt,
+    sourceRevision,
+    contentHash,
+    schemaVersion,
+    featureSetVersion,
+    featureSet: featureSet as string[],
+  };
+}
+
 /** Empty outside a repo; the roster simply omits the branch then. */
 export function currentBranch(cwd: string): string {
   return git(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]) ?? "";

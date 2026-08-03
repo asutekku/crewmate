@@ -283,6 +283,51 @@ export interface Message {
   readonly body: string;
 }
 
+/** One candidate that made it into a block, as the ledger records it. */
+export interface InjectionShown {
+  readonly key: string;
+  readonly dedupeKey: string;
+  readonly stateVersion: string;
+  readonly form: "full" | "compact";
+  readonly priority: number;
+  readonly chars: number;
+}
+
+/** One candidate that did not fit, with the version that was withheld. */
+/**
+ * One candidate that did not make the block, for ANY reason.
+ *
+ * Every omission is recorded; only the actionable ones dropped for space are
+ * OWED to the inbox. The caller passes them all and the store narrows, because
+ * a caller filtering first serves the inbox and silently starves the ledger.
+ */
+export interface InjectionOmitted {
+  readonly key: string;
+  readonly dedupeKey: string;
+  readonly stateVersion: string;
+  readonly text: string;
+  /** `duplicate` | `unchanged` | `no room`. */
+  readonly reason: string;
+  readonly priority: number;
+  /** Whether the agent was expected to act on it — the inbox's filter. */
+  readonly actionable: boolean;
+}
+
+/** A row of delivery history. `form` is empty for an omission, `reason` for a selection. */
+export interface InjectionLedgerRow {
+  /** Shared by every row from one packed block. */
+  readonly deliveryId: number;
+  readonly tsMs: number;
+  readonly key: string;
+  readonly dedupeKey: string;
+  readonly stateVersion: string;
+  readonly outcome: string;
+  readonly form: string;
+  readonly reason: string;
+  readonly priority: number;
+  readonly chars: number;
+}
+
 export interface Claim {
   /** Who holds it — needed to ADDRESS an overlap notice to them, not just name them. */
   readonly sessionId: string;
@@ -443,6 +488,76 @@ function openDb(dbPath: string): Database {
       ts_ms      INTEGER NOT NULL,
       PRIMARY KEY (path, session_id)
     );
+    -- WHAT THIS SESSION HAS ALREADY BEEN SHOWN, so the same unchanged block is
+    -- not injected again at the next SessionStart (resume, /clear, compact).
+    -- Keyed on the CONTENT fingerprint rather than a timestamp: "has this
+    -- changed since you last saw it" is a content question, and the clock
+    -- answers a different one -- which is how a claim re-announced on every
+    -- edit put six identical lines in one log view.
+    CREATE TABLE IF NOT EXISTS injection_exposures (
+      session_id  TEXT NOT NULL,
+      dedupe_key  TEXT NOT NULL,
+      state_ver   TEXT NOT NULL,
+      ts_ms       INTEGER NOT NULL,
+      PRIMARY KEY (session_id, dedupe_key)
+    );
+    -- THE LEDGER: what each block actually contained, kept per delivery.
+    --
+    -- Distinct from injection_exposures, which is live SUPPRESSION STATE --
+    -- one latest-version row per key, replaced on every pack and dropped when
+    -- the context is wiped. That answers "should I say this again?" and cannot
+    -- answer "what was this agent shown an hour ago?", because the row that
+    -- would have said so is gone. Conflating the two is why the injection
+    -- command could only ever recompute a hypothetical block from current state.
+    --
+    -- CANDIDATE METADATA, NOT THE BLOCK ITSELF. It records which candidates a
+    -- delivery contained, at what version, in which form, at what rank, and why
+    -- each omission was dropped. It does NOT store the selected text, the
+    -- mandatory header, the framing or the budget figures — so it answers "was
+    -- this agent told about the roster, and in full or compacted?" and cannot
+    -- reproduce the literal string that was injected. Storing the prose would
+    -- duplicate most of the block on every SessionStart for a question nobody
+    -- has yet needed to ask.
+    --
+    -- APPEND-ONLY, bounded by pruneInjectionState like the rest.
+    CREATE TABLE IF NOT EXISTS injection_ledger (
+      session_id  TEXT NOT NULL,
+      -- One packed block, one id. Grouping by timestamp alone merges two hook
+      -- runs that land in the same millisecond into a delivery that never
+      -- happened.
+      delivery_id INTEGER NOT NULL DEFAULT 0,
+      ts_ms       INTEGER NOT NULL,
+      key         TEXT NOT NULL,
+      dedupe_key  TEXT NOT NULL,
+      state_ver   TEXT NOT NULL,
+      outcome     TEXT NOT NULL,   -- 'selected' | 'omitted'
+      form        TEXT NOT NULL,   -- 'full' | 'compact' | '' when omitted
+      reason      TEXT NOT NULL,   -- omission reason; '' when selected
+      priority    INTEGER NOT NULL,
+      chars       INTEGER NOT NULL
+    );
+    -- Its index is created with the MIGRATIONS, not here: delivery_id was
+    -- added to this table after it shipped, so on an existing db the CREATE
+    -- above is a no-op and an index over that column cannot be built until
+    -- addColumnIfMissing has run.
+    -- WHAT DID NOT FIT, so the inbox command can hand it over on request.
+    -- The block promises "N actionable item(s) omitted", and a promise pointing
+    -- at nothing is worse than no promise: the agent is told work exists and
+    -- then cannot reach it. The full text is stored rather than a reference,
+    -- because the candidate that produced it is gone by then.
+    CREATE TABLE IF NOT EXISTS injection_omissions (
+      session_id  TEXT NOT NULL,
+      key         TEXT NOT NULL,
+      text        TEXT NOT NULL,
+      reason      TEXT NOT NULL,
+      -- WHICH VERSION was withheld. Without it, a key whose content moves
+      -- between packs leaves an inbox entry that cannot say which one the agent
+      -- never saw -- and the whole point of the row is to hand back the thing
+      -- that was missed, not a thing with the same name.
+      state_ver   TEXT NOT NULL DEFAULT '',
+      ts_ms       INTEGER NOT NULL,
+      PRIMARY KEY (session_id, key)
+    );
     -- APPEND-ONLY history of who touched what. Distinct from the claims table,
     -- which is live state and is DELETED with its session: 95 commits landed in
     -- this repo in one day, every one authored by the same person, so git can
@@ -536,6 +651,21 @@ function openDb(dbPath: string): Database {
   // `displayName` for why a successor never simply reads as the master.
   addColumnIfMissing(db, "sessions", "lineage_from", "TEXT NOT NULL DEFAULT ''");
   addColumnIfMissing(db, "aliases", "ts_ms", "INTEGER NOT NULL DEFAULT 0");
+  // A `DEFAULT ''` in the CREATE reaches fresh dbs only; the live ones that
+  // already have this table need the column added. Empty means "recorded before
+  // versions were kept", which a reader must be able to tell from a real one.
+  addColumnIfMissing(db, "injection_omissions", "state_ver", "TEXT NOT NULL DEFAULT ''");
+  addColumnIfMissing(db, "injection_ledger", "delivery_id", "INTEGER NOT NULL DEFAULT 0");
+  // AFTER the column it indexes, and deliberately not up with the CREATEs.
+  // `CREATE TABLE IF NOT EXISTS` is a no-op on a db that already has this
+  // table, so an index over a migration-added column placed with the schema
+  // throws `no such column` — and it throws BEFORE the migration that would
+  // have added it, so the db can never open again. Reproduced against an
+  // old-shape db 2026-08-02; `test/store-migrate.test.ts` pins it.
+  db.query(
+    `CREATE INDEX IF NOT EXISTS injection_ledger_session
+       ON injection_ledger (session_id, delivery_id DESC)`,
+  ).run();
   // Live dbs predate this; without it every existing board read fails on a
   // column the queries now select.
   addColumnIfMissing(db, "work", "auto", "INTEGER NOT NULL DEFAULT 0");
@@ -1709,6 +1839,188 @@ export class Store {
   }
 
   /** Every live claim, for the roster. */
+  /**
+   * What this session has already been shown, as `dedupeKey -> stateVersion`.
+   *
+   * Feeds `pack`'s suppression: a key absent is new, a key whose fingerprint
+   * differs has changed and is shown again, a key matching exactly is dropped.
+   * Empty for a session that has never been packed, which is the correct
+   * "everything is news" answer for a first SessionStart.
+   */
+  injectionExposures(sessionId: string): Map<string, string> {
+    const rows = this.db
+      .query(`SELECT dedupe_key AS k, state_ver AS v FROM injection_exposures WHERE session_id = ?`)
+      .all(sessionId) as Array<{ k: string; v: string }>;
+    return new Map(rows.map((r) => [r.k, r.v]));
+  }
+
+  /**
+   * Records what was actually put in front of this session.
+   *
+   * ONLY THE SELECTED. An omitted candidate was not shown, so marking it
+   * exposed would suppress it next time on the strength of a delivery that
+   * never happened — the failure mode being guarded against here is silence,
+   * and that would manufacture it.
+   *
+   * `REPLACE` because the row is a latest-known-state, not a log: an item
+   * re-shown with a new fingerprint should leave one row saying what the
+   * session last saw, not two rows disagreeing.
+   */
+
+  /**
+   * Everything one packed block implies, committed together.
+   *
+   * TWO CALLS WERE TWO TRANSACTIONS, and the failure between them is silent:
+   * exposures land, omissions do not, and the session is now marked as having
+   * been shown content whose inbox is empty or stale. The next start suppresses
+   * that content, so the agent neither sees it nor can retrieve it — which is
+   * precisely the disappearance this feature exists to prevent.
+   *
+   * `clearFirst` is the `/clear`-and-compact path: SessionStart re-fires with
+   * the same session id and a wiped context, so the record of what that context
+   * once held has to go with it.
+   */
+  recordInjectionResult(
+    sessionId: string,
+    result: {
+      readonly shown: ReadonlyArray<InjectionShown>;
+      readonly omitted: ReadonlyArray<InjectionOmitted>;
+      readonly nowMs: number;
+      readonly clearFirst?: boolean;
+    },
+  ): void {
+    // ONE PACKED BLOCK, ONE ID. Grouping the ledger by `(session_id, ts_ms)`
+    // reads two hook runs inside the same millisecond as a single delivery —
+    // rare, but the failure is a reconstruction that silently merges two blocks
+    // and shows a candidate list that was never injected together.
+    //
+    // Allocated INSIDE the transaction below: several agents write this db at
+    // once, and a MAX+1 read outside it is the classic race that hands two
+    // concurrent deliveries the same id.
+    const nextDeliveryId = this.db.query(
+      `SELECT COALESCE(MAX(delivery_id), 0) + 1 AS id FROM injection_ledger`,
+    );
+    const expose = this.db.query(
+      `INSERT OR REPLACE INTO injection_exposures (session_id, dedupe_key, state_ver, ts_ms)
+       VALUES (?, ?, ?, ?)`,
+    );
+    const dropExposures = this.db.query(`DELETE FROM injection_exposures WHERE session_id = ?`);
+    const dropOmissions = this.db.query(`DELETE FROM injection_omissions WHERE session_id = ?`);
+    const owe = this.db.query(
+      `INSERT OR REPLACE INTO injection_omissions
+         (session_id, key, text, reason, state_ver, ts_ms)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    );
+    const log = this.db.query(
+      `INSERT INTO injection_ledger
+         (session_id, delivery_id, ts_ms, key, dedupe_key, state_ver,
+          outcome, form, reason, priority, chars)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    this.db.transaction(() => {
+      const delivery = (nextDeliveryId.get() as { id: number }).id;
+      // SUPPRESSION STATE is replaced; the LEDGER is appended. A wiped context
+      // means "say it all again", not "it was never said" — so `clearFirst`
+      // drops the exposure rows and leaves the history of what was delivered.
+      if (result.clearFirst === true) dropExposures.run(sessionId);
+      for (const s of result.shown) {
+        expose.run(sessionId, s.dedupeKey, s.stateVersion, result.nowMs);
+        log.run(
+          sessionId, delivery, result.nowMs, s.key, s.dedupeKey, s.stateVersion,
+          "selected", s.form, "", s.priority, s.chars,
+        );
+      }
+      // Replaced wholesale: what a session is missing is a current fact, and an
+      // item that fitted this time is no longer owed.
+      dropOmissions.run(sessionId);
+      for (const o of result.omitted) {
+        // EVERY omission is history. `duplicate` and `unchanged` are the
+        // outcomes that answer "why was this agent never told?", and they were
+        // the ones missing.
+        log.run(
+          sessionId, delivery, result.nowMs, o.key, o.dedupeKey, o.stateVersion,
+          "omitted", "", o.reason, o.priority, o.text.length,
+        );
+        // Only what is OWED. A suppressed candidate was dropped because the
+        // session already has it, and a non-actionable one is not work — the
+        // block's "N actionable item(s) omitted" line counts exactly this set.
+        if (o.reason === "no room" && o.actionable) {
+          owe.run(sessionId, o.key, o.text, o.reason, o.stateVersion, result.nowMs);
+        }
+      }
+    })();
+  }
+
+  /**
+   * Which candidates each delivery contained, newest first.
+   *
+   * THE QUESTION `cli.ts injection` COULD NOT ANSWER. That command recomputes a
+   * block from current state, which is a hypothesis about what a session would
+   * get now — useful, and not the same as what it got. Debugging "why did this
+   * agent not know about X" needs the delivery, not a re-derivation from state
+   * that has since moved.
+   */
+  injectionHistory(sessionId: string, limit = 50): InjectionLedgerRow[] {
+    return this.db
+      .query(
+        `SELECT delivery_id AS deliveryId, ts_ms AS tsMs, key, dedupe_key AS dedupeKey,
+                state_ver AS stateVersion, outcome, form, reason, priority, chars
+           FROM injection_ledger WHERE session_id = ?
+          ORDER BY delivery_id DESC, priority DESC, key ASC LIMIT ?`,
+      )
+      .all(sessionId, limit) as InjectionLedgerRow[];
+  }
+
+  /**
+   * Forgets what a session was shown, because its context no longer holds it.
+   *
+   * Called when SessionStart reports `clear`, `compact` or `fork`: the row
+   * survives, the conversation does not. Measured 2026-08-02 — 19 identity
+   * injections after one compact boundary under an unchanged session id.
+   */
+  clearInjectionExposures(sessionId: string): void {
+    this.db.query(`DELETE FROM injection_exposures WHERE session_id = ?`).run(sessionId);
+  }
+
+  /**
+   * Drops injection state for sessions nobody will resume.
+   *
+   * Its own horizon rather than `STALE_MS`: a session goes off the roster after
+   * 90 minutes of silence but can still be resumed hours later, and resume is
+   * the one case where suppression is correct. Borrowing the roster's TTL would
+   * quietly make suppression useless for exactly that path.
+   */
+  pruneInjectionState(nowMs: number, keepMs: number): void {
+    const cutoff = nowMs - keepMs;
+    this.db.query(`DELETE FROM injection_exposures WHERE ts_ms < ?`).run(cutoff);
+    this.db.query(`DELETE FROM injection_omissions WHERE ts_ms < ?`).run(cutoff);
+    this.db.query(`DELETE FROM injection_ledger WHERE ts_ms < ?`).run(cutoff);
+  }
+
+  /**
+   * What was dropped for length, and is therefore owed to `inbox`.
+   *
+   * Replaced wholesale per session rather than appended: the block a session
+   * was just shown is the current truth about what it is missing, and a
+   * candidate that fitted this time is no longer owed.
+   */
+  /** Everything `inbox` should hand back, oldest first. */
+  injectionOmissions(
+    sessionId: string,
+  ): Array<{ key: string; text: string; reason: string; stateVersion: string }> {
+    return this.db
+      .query(
+        `SELECT key, text, reason, state_ver AS stateVersion FROM injection_omissions
+          WHERE session_id = ? ORDER BY ts_ms ASC, key ASC`,
+      )
+      .all(sessionId) as Array<{
+      key: string;
+      text: string;
+      reason: string;
+      stateVersion: string;
+    }>;
+  }
+
   allClaims(nowMs: number): Claim[] {
     const rows = this.db
       .query(
