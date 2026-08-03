@@ -11,7 +11,6 @@ import {
 } from "../core/colour.ts";
 import { fit, terminalWidth } from "../core/layout.ts";
 import {
-  displayName,
   operatorNames,
   rosterName,
   withStore,
@@ -38,6 +37,7 @@ import {
 } from "./args.ts";
 import { failCommand, failUsage } from "./command.ts";
 import { callerIdentity, notAnAgent, resolveLiveName } from "./identity.ts";
+import { sanitizeTerminalText } from "./terminal.ts";
 import type { CliContext, CommandMap } from "./types.ts";
 
 const BOARD_PAINT: BoardPaint = { bold, dim, green, red, cyan, name: cyan };
@@ -90,6 +90,51 @@ interface WorkItemView {
   readonly steps: readonly WorkStep[];
   readonly events: readonly WorkEvent[];
 }
+
+function workItemView(
+  store: Store,
+  item: WorkItem,
+): WorkItemView {
+  return {
+    item: {
+      ...item,
+      agentName: sanitizeTerminalText(item.agentName),
+      subject: sanitizeTerminalText(item.subject),
+      planDoc: sanitizeTerminalText(item.planDoc),
+    },
+    steps: store.work.steps(item.workId).map((step) => ({
+      ...step,
+      text: sanitizeTerminalText(step.text),
+      note: sanitizeTerminalText(step.note),
+    })),
+    events: store.work.events(item.workId).map((event) => ({
+      ...event,
+      body: sanitizeTerminalText(event.body),
+      ref: sanitizeTerminalText(event.ref),
+    })),
+  };
+}
+
+interface BoardAgentView {
+  readonly name: string;
+  readonly tally: string;
+  readonly items: readonly WorkItemView[];
+  readonly hidden: number;
+}
+
+interface BoardView {
+  readonly agents: readonly BoardAgentView[];
+  readonly history: readonly WorkItemView[];
+  readonly closedHidden: number;
+}
+
+type BoardSnapshotResult =
+  | { readonly ok: true; readonly view: BoardView }
+  | {
+      readonly ok: false;
+      readonly kind: "not_found" | "ambiguous";
+      readonly candidates: readonly string[];
+    };
 
 function renderMine(
   context: CliContext,
@@ -144,19 +189,18 @@ function resolveAgentId(
   };
 }
 
-function printHistory(
+function renderHistory(
   context: CliContext,
-  store: Store,
-  items: readonly { workId: number; subject: string; startedMs: number }[],
+  views: readonly WorkItemView[],
   nowMs: number,
   width: number,
 ): void {
-  for (const item of items) {
+  for (const { item, events } of views) {
     context.log("");
     context.log(
       `  ${bold(item.subject)} ${dim(`started ${briefAgo(item.startedMs, nowMs)}`)}`,
     );
-    for (const event of store.work.events(item.workId)) {
+    for (const event of events) {
       const when = dim(briefAge(event.tsMs, nowMs).padStart(6));
       const ref = event.ref !== "" ? ` ${cyan(event.ref)}` : "";
       context.log(
@@ -165,6 +209,101 @@ function printHistory(
     }
   }
   context.log("");
+}
+
+function collectBoardView(
+  store: Store,
+  who: string,
+  nowMs: number,
+  options: { readonly all: boolean; readonly history: boolean; readonly raw: boolean },
+): BoardSnapshotResult {
+  const liveSessions = store.liveSessions(nowMs);
+  const showName = operatorNames(liveSessions);
+  const liveBySession = new Map(liveSessions.map((session) => [session.sessionId, session]));
+  const resolution = who !== "" ? resolveAgentId(store, who, nowMs) : undefined;
+  if (resolution && !resolution.ok) return resolution;
+  const target = resolution?.agentId;
+  const allItems = store.work.items({
+    ...(target !== undefined ? { agentId: target } : {}),
+    includeClosed: true,
+  });
+  const visibleItems =
+    options.all || options.history
+      ? allItems
+      : allItems.filter((item) => item.closedMs === 0);
+  const views = visibleItems.map((item) => workItemView(store, item));
+  const groups = new Map<
+    string,
+    { name: string; open: number; closed: number; items: WorkItemView[] }
+  >();
+  for (const view of views) {
+    const { item } = view;
+    let group = groups.get(item.agentId);
+    if (!group) {
+      const stored = item.agentName !== "" ? item.agentName : item.agentId;
+      const sessionId = item.agentId.startsWith("session:")
+        ? item.agentId.slice("session:".length)
+        : "";
+      const live = sessionId !== "" ? liveBySession.get(sessionId) : undefined;
+      group = {
+        name: sanitizeTerminalText(
+          options.raw ? stored : live ? rosterName(live) : showName(stored),
+        ),
+        open: 0,
+        closed: 0,
+        items: [],
+      };
+      groups.set(item.agentId, group);
+    }
+    if (item.closedMs === 0) group.open += 1;
+    else group.closed += 1;
+    group.items.push(view);
+  }
+  return {
+    ok: true,
+    view: {
+      history: views,
+      closedHidden: options.all || options.history ? 0 : allItems.length - views.length,
+      agents: [...groups.values()].map((group) => {
+        const shown = group.items.slice(0, BOARD_OPEN_SHOWN + group.closed);
+        return {
+          name: group.name,
+          tally: agentTally(group.open, options.all || options.history ? group.closed : 0),
+          items: shown,
+          hidden: group.items.length - shown.length,
+        };
+      }),
+    },
+  };
+}
+
+function renderBoard(
+  context: CliContext,
+  view: BoardView,
+  nowMs: number,
+  width: number,
+): void {
+  if (view.agents.length === 0) {
+    context.log(dim(`No work records in ${context.projectName}.`));
+    context.log(dim('  Agents open one with `cli.ts doing "<subject>"`.'));
+    return;
+  }
+  for (const agent of view.agents) {
+    const gap = Math.max(1, width - 2 - [...agent.name].length - agent.tally.length);
+    context.log("");
+    context.log(
+      `  ${bold(handleColour(agent.name)(agent.name))}${" ".repeat(gap)}${dim(agent.tally)}`,
+    );
+    for (const item of agent.items) {
+      const fold = foldEvents(item.events);
+      for (const line of itemLines(item.item, item.steps, fold, nowMs, width, BOARD_PAINT))
+        context.log(line);
+    }
+    if (agent.hidden > 0) context.log(dim(`    +${agent.hidden} more`));
+  }
+  context.log("");
+  if (view.closedHidden > 0)
+    context.log(dim(`  ${view.closedHidden} closed — \`board --all\` to include them`));
 }
 
 export function createWorkCommands(context: CliContext): CommandMap {
@@ -433,11 +572,7 @@ export function createWorkCommands(context: CliContext): CommandMap {
           return null;
         }
         const items = store.work.openItems(me.agentId);
-        return items.map((item) => ({
-          item,
-          steps: store.work.steps(item.workId),
-          events: store.work.events(item.workId),
-        }));
+        return items.map((item) => workItemView(store, item));
       });
       if (views) renderMine(context, views, now, width);
     },
@@ -451,92 +586,23 @@ export function createWorkCommands(context: CliContext): CommandMap {
       const all = booleanFlag(input, "--all");
       const raw = booleanFlag(input, "--raw");
       const who = input.positionals.join(" ").trim();
-      withStore(context.dbPath, (store) => {
-        const now = context.now();
-        store.work.pruneWork(now);
-        const showName = operatorNames(store.liveSessions(now));
-        const resolution =
-          who !== "" ? resolveAgentId(store, who, now) : undefined;
-        if (resolution && !resolution.ok) {
-          context.error(
-            resolution.kind === "ambiguous"
-              ? `ambiguous agent ${bold(who)}: ${resolution.candidates.join(", ")}`
-              : `no work records for ${bold(who)}.`,
-          );
-          context.fail();
-          return;
-        }
-        const target = resolution?.agentId;
-        const items = store.work.items({
-          ...(target !== undefined ? { agentId: target } : {}),
-          includeClosed: all || history,
-        });
-        if (items.length === 0) {
-          context.log(dim(`No work records in ${context.projectName}.`));
-          context.log(
-            dim('  Agents open one with `cli.ts doing "<subject>"`.'),
-          );
-          return;
-        }
-        const width = terminalWidth();
-        if (history) return printHistory(context, store, items, now, width);
-        const byAgent = new Map<string, typeof items>();
-        for (const item of items) {
-          const group = byAgent.get(item.agentId);
-          if (group) group.push(item);
-          else byAgent.set(item.agentId, [item]);
-        }
-        for (const [agentId, group] of byAgent) {
-          const first = group[0];
-          if (!first) continue;
-          const open = group.filter((item) => item.closedMs === 0);
-          const closed = group.length - open.length;
-          const tally = agentTally(open.length, all || history ? closed : 0);
-          const stored =
-            first.agentName !== "" ? first.agentName : first.agentId;
-          const live = agentId.startsWith("session:")
-            ? store.findBySession(agentId.slice("session:".length))
-            : null;
-          const name = raw
-            ? stored
-            : live
-              ? rosterName(live)
-              : showName(stored);
-          const gap = Math.max(1, width - 2 - [...name].length - tally.length);
-          context.log("");
-          context.log(
-            `  ${bold(handleColour(name)(name))}${" ".repeat(gap)}${dim(tally)}`,
-          );
-          const shown = group.slice(0, BOARD_OPEN_SHOWN + closed);
-          for (const item of shown) {
-            const steps = store.work.steps(item.workId);
-            const fold = foldEvents(store.work.events(item.workId));
-            for (const line of itemLines(
-              item,
-              steps,
-              fold,
-              now,
-              width,
-              BOARD_PAINT,
-            ))
-              context.log(line);
-          }
-          const hidden = group.length - shown.length;
-          if (hidden > 0) context.log(dim(`    +${hidden} more`));
-        }
-        context.log("");
-        if (!all) {
-          const withClosed = store.work.items({
-            ...(target !== undefined ? { agentId: target } : {}),
-            includeClosed: true,
-          });
-          const closed = withClosed.length - items.length;
-          if (closed > 0)
-            context.log(
-              dim(`  ${closed} closed — \`board --all\` to include them`),
-            );
-        }
-      });
+      const now = context.now();
+      const width = terminalWidth();
+      withStore(context.dbPath, (store) => store.work.pruneWork(now));
+      const snapshot = withStore(context.dbPath, (store) =>
+        collectBoardView(store, who, now, { all, history, raw }),
+      );
+      if (!snapshot.ok) {
+        failCommand(
+          context,
+          snapshot.kind === "ambiguous"
+            ? `ambiguous agent ${who}: ${snapshot.candidates.join(", ")}`
+            : `no work records for ${who}`,
+        );
+        return;
+      }
+      if (history) renderHistory(context, snapshot.view.history, now, width);
+      else renderBoard(context, snapshot.view, now, width);
     },
 
     breaks: (args) => flag(context, "breaks", args),
@@ -547,7 +613,7 @@ export function createWorkCommands(context: CliContext): CommandMap {
 function flag(
   context: CliContext,
   kind: "breaks" | "needs",
-  args: string[],
+  args: readonly string[],
 ): void {
   const input = commandArguments(context, kind, args, {
     valueFlags: ["--item"],
@@ -578,7 +644,16 @@ function flag(
       context.fail();
       return;
     }
-    store.work.record(item.workId, kind, text, now);
+    const reached = store.recordWorkFlag({
+      workId: item.workId,
+      kind,
+      text,
+      subject: item.subject,
+      senderSessionId: context.sessionId,
+      senderName: me.agentName,
+      sinceMs: now - BREAK_NOTIFICATION_WINDOW_MS,
+      nowMs: now,
+    });
     context.log(
       `${kind === "breaks" ? red("⚠") : yellow("•")} ${bold(item.subject)} ${dim(`— ${kind}`)}`,
     );
@@ -590,28 +665,6 @@ function flag(
         ),
       );
       return;
-    }
-    const since = now - BREAK_NOTIFICATION_WINDOW_MS;
-    const ownPaths = new Set(
-      store.editsBy(context.sessionId, since).map((edit) => edit.path),
-    );
-    const reached: string[] = [];
-    for (const peer of store.liveSessions(now)) {
-      if (peer.sessionId === context.sessionId) continue;
-      if (
-        !store
-          .editsBy(peer.sessionId, since)
-          .some((edit) => ownPaths.has(edit.path))
-      )
-        continue;
-      store.post(
-        me.agentName,
-        "breaks",
-        `${text} (in "${item.subject}")`,
-        now,
-        { sessionId: peer.sessionId, name: displayName(peer) },
-      );
-      reached.push(displayName(peer));
     }
     context.log(
       reached.length > 0

@@ -2,7 +2,7 @@ import { bold, cyan, dim, green, red } from "../core/colour.ts";
 import { shortAge, terminalWidth, wrap } from "../core/layout.ts";
 import { discipleName } from "../core/names.ts";
 import { checkMemory, lineageKey, withPersonal } from "../core/personal.ts";
-import { displayName, withStore, type Session } from "../core/store.ts";
+import { displayName, withStore, type Session, type Store } from "../core/store.ts";
 import {
   booleanFlag,
   parseArguments,
@@ -12,7 +12,7 @@ import {
 } from "./args.ts";
 import { failUsage } from "./command.ts";
 import { failCommand } from "./command.ts";
-import { notAnAgent } from "./identity.ts";
+import { notAnAgent, resolveLiveName } from "./identity.ts";
 import { failure, success } from "./result.ts";
 import type { CliContext, CommandMap } from "./types.ts";
 
@@ -32,6 +32,24 @@ function lineageOf(session: Session): string {
   return session.lineageFrom !== ""
     ? session.lineageFrom
     : lineageKey(displayName(session), session.sessionId);
+}
+
+function memorySubjectPolicy(
+  store: Store,
+  target: string,
+  nowMs: number,
+): ReturnType<typeof success<{ lineage: string; name: string }>> | ReturnType<typeof failure> {
+  const resolution = resolveLiveName(store.liveSessions(nowMs), target);
+  if (resolution.ok)
+    return success({ lineage: lineageOf(resolution.value), name: displayName(resolution.value) });
+  if (resolution.kind === "ambiguous")
+    return failure(`ambiguous agent ${target}: ${resolution.candidates.join(", ")}`);
+  // An exact departed lineage is a supported historical selector, not an
+  // authority fallback: it grants no ability to act as that agent.
+  const lineage = target.trim().toLowerCase();
+  return lineage === ""
+    ? failure("agent or lineage is required")
+    : success({ lineage, name: target.trim() });
 }
 
 export function createPersonalCommands(context: CliContext): CommandMap {
@@ -95,21 +113,20 @@ export function createPersonalCommands(context: CliContext): CommandMap {
       const target = stringFlag(input, "--agent") ?? "";
       const allProjects = booleanFlag(input, "--all-projects");
       const now = context.now();
-      const resolved = withStore(context.dbPath, (store) => {
+      const subject = withStore(context.dbPath, (store) => {
         if (target) {
-          const session = store.findByName(target, now);
-          return session
-            ? { lineage: lineageOf(session), name: displayName(session) }
-            : { lineage: target.trim().toLowerCase(), name: target.trim() };
+          return memorySubjectPolicy(store, target, now);
         }
-        if (!context.sessionId) return null;
+        if (!context.sessionId) return success(null);
         const self = store.findBySession(context.sessionId);
         const name = self ? displayName(self) : "";
-        return {
+        return success({
           lineage: self ? lineageOf(self) : lineageKey(name, context.sessionId),
           name,
-        };
+        });
       });
+      if (!subject.ok) return failCommand(context, subject.error);
+      const resolved = subject.value;
       withPersonal((personal) => {
         if (!resolved) {
           const held = personal.lineages();

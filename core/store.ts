@@ -812,6 +812,57 @@ export class Store {
   }
 
   /**
+   * Records a work consequence and, for breaking changes, atomically notifies
+   * live peers who edited at least one of the same paths during the window.
+   */
+  recordWorkFlag(input: {
+    readonly workId: number;
+    readonly kind: "breaks" | "needs";
+    readonly text: string;
+    readonly subject: string;
+    readonly senderSessionId: string;
+    readonly senderName: string;
+    readonly sinceMs: number;
+    readonly nowMs: number;
+  }): readonly string[] {
+    const run = this.db.transaction((): readonly string[] => {
+      this.work.record(input.workId, input.kind, input.text, input.nowMs);
+      if (input.kind !== "breaks") return [];
+      const edits = this.db
+        .query(`SELECT DISTINCT session_id, path FROM edits WHERE ts_ms > ?`)
+        .all(input.sinceMs) as Array<{ session_id: string; path: string }>;
+      const ownPaths = new Set(
+        edits
+          .filter((edit) => edit.session_id === input.senderSessionId)
+          .map((edit) => edit.path),
+      );
+      const affected = new Set(
+        edits
+          .filter(
+            (edit) =>
+              edit.session_id !== input.senderSessionId && ownPaths.has(edit.path),
+          )
+          .map((edit) => edit.session_id),
+      );
+      const reached: string[] = [];
+      for (const peer of this.liveSessions(input.nowMs)) {
+        if (!affected.has(peer.sessionId)) continue;
+        const name = displayName(peer);
+        this.post(
+          input.senderName,
+          "breaks",
+          `${input.text} (in "${input.subject}")`,
+          input.nowMs,
+          { sessionId: peer.sessionId, name },
+        );
+        reached.push(name);
+      }
+      return reached;
+    });
+    return run.immediate();
+  }
+
+  /**
    * Everything `cli.ts stats` reports, over this connection.
    *
    * A FUNCTION TAKING THE HANDLE, not more methods here, and not a class. The
@@ -1390,6 +1441,34 @@ export class Store {
         `DELETE FROM messages WHERE id <= (SELECT MAX(id) - ? FROM messages)`,
       )
       .run(MAX_MESSAGES);
+  }
+
+  /** Atomically establishes the caller identity when needed and posts as it. */
+  postFromCaller(input: {
+    readonly sessionId: string;
+    readonly projectRoot: string;
+    readonly kind: MessageKind;
+    readonly body: string;
+    readonly nowMs: number;
+    readonly to?: { readonly sessionId: string; readonly name: string };
+  }): { readonly handle: string; readonly label: string } {
+    const run = this.db.transaction(() => {
+      if (input.sessionId === "") {
+        this.post("human", input.kind, input.body, input.nowMs, input.to);
+        return { handle: "human", label: "you" };
+      }
+      const current = this.findBySession(input.sessionId);
+      const handle = current?.handle ?? this.handleForOrRegister(
+        input.sessionId,
+        input.projectRoot,
+        "",
+        input.nowMs,
+      );
+      const label = current ? displayName(current) : handle;
+      this.post(handle, input.kind, input.body, input.nowMs, input.to);
+      return { handle, label };
+    });
+    return run.immediate();
   }
 
   /**

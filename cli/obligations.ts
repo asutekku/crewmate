@@ -25,6 +25,7 @@ import {
   type ObligationEventInput,
 } from "./obligation-events.ts";
 import { resolveTrustedPath } from "./paths.ts";
+import { resolveLiveName } from "./identity.ts";
 import { attempt, failure, success, type Result } from "./result.ts";
 import {
   parseStructuredShortcut,
@@ -82,15 +83,20 @@ function structured(
     context.dbPath,
     (store): Result<ReturnType<Store["obligations"]["createBatch"]>> => {
       const self = store.findBySession(context.sessionId);
-      const recipient = store.findByName(target, now);
+      const recipient = resolveLiveName(store.liveSessions(now), target);
       if (!self) return failure("this session is not registered");
-      if (!recipient) return failure(`no live agent named ${target}`);
+      if (!recipient.ok)
+        return failure(
+          recipient.kind === "ambiguous"
+            ? `ambiguous live agent ${target}: ${recipient.candidates.join(", ")}`
+            : `no live agent named ${target}`,
+        );
       return attempt(() =>
         store.obligations.createBatch({
           senderSessionId: context.sessionId,
           senderName: displayName(self),
-          recipientSessionId: recipient.sessionId,
-          recipientName: displayName(recipient),
+          recipientSessionId: recipient.value.sessionId,
+          recipientName: displayName(recipient.value),
           acts,
           dependencies,
           idempotencyKey,
@@ -149,9 +155,14 @@ function obligation(
 
     let to: ActorRef | undefined;
     if (input.target) {
-      const session = store.findByName(input.target, now);
-      if (!session) return failure(`no live agent named ${input.target}`);
-      to = { kind: "agent", agentId: session.sessionId };
+      const session = resolveLiveName(store.liveSessions(now), input.target);
+      if (!session.ok)
+        return failure(
+          session.kind === "ambiguous"
+            ? `ambiguous live agent ${input.target}: ${session.candidates.join(", ")}`
+            : `no live agent named ${input.target}`,
+        );
+      to = { kind: "agent", agentId: session.value.sessionId };
     }
     const payload = buildObligationEvent(
       { ...input, to },
@@ -352,7 +363,7 @@ export function createObligationCommands(context: CliContext): CommandMap {
   const shortcuts = Object.fromEntries(
     SHORTCUT_COMMANDS.map((command) => [
       command,
-      (args: string[]) => shortcut(context, command, args),
+      (args: readonly string[]) => shortcut(context, command, args),
     ]),
   );
   return {

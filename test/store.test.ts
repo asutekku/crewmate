@@ -211,6 +211,20 @@ describe("delivery", () => {
 });
 
 describe("identity", () => {
+  test("posting from an unknown caller registers and writes in one operation", () => {
+    fresh((store) => {
+      const sender = store.postFromCaller({
+        sessionId: "new-caller",
+        projectRoot: "/project",
+        kind: "say",
+        body: "hello",
+        nowMs: 1000,
+      });
+      expect(store.findBySession("new-caller")?.handle).toBe(sender.handle);
+      expect(store.recent(1)[0]?.body).toBe("hello");
+    });
+  });
+
   test("a reaped but living session comes back rather than going dark", () => {
     // pruneStale is a heuristic for terminals closed without exiting. It
     // misfires on an idle session and on a long turn that runs no Edit/Write —

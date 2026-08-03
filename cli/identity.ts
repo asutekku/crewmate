@@ -53,15 +53,20 @@ export function resolveSelf(
   nowMs: number,
   verb: string,
 ): ReturnType<Store["findBySession"]> {
-  const self =
-    target !== ""
-      ? store.findByName(target, nowMs)
-      : context.sessionId !== ""
-        ? store.findBySession(context.sessionId)
-        : null;
+  const named = target !== "" ? resolveLiveName(store.liveSessions(nowMs), target) : undefined;
+  const self = named?.ok
+    ? named.value
+    : target === "" && context.sessionId !== ""
+      ? store.findBySession(context.sessionId)
+      : null;
   if (!self) {
-    if (target !== "")
-      context.error(`no agent named ${bold(target)} in ${context.projectName}`);
+    if (target !== "") {
+      context.error(
+        named && !named.ok && named.kind === "ambiguous"
+          ? `ambiguous agent ${bold(target)}: ${named.candidates.join(", ")}`
+          : `no agent named ${bold(target)} in ${context.projectName}`,
+      );
+    }
     else {
       context.error(`${verb} acts on the agent that runs it.`);
       context.error(dim("  From a plain terminal, pass `--agent <who>`."));

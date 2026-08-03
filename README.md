@@ -684,6 +684,7 @@ history has its own lifetime independent of live suppression state.
 | `structured-json.ts`   | Complete unknown-to-domain decoder for structured JSON batches.                     |
 | `admin.ts`             | Naming, roles, project location, roster clearing, and deregistration.               |
 | `diagnostics.ts`       | Edit history and store statistics.                                                  |
+| `diagnostics-renderers.ts` | Pure sanitized section renderers for diagnostic reports.                      |
 | `injection.ts`         | Session-start envelope and omission inspection.                                     |
 
 ### Top level

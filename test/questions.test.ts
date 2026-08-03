@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, test } from "bun:test";
 
 import { withStore } from "../core/store.ts";
+import { renderQuestionReport } from "../cli/questions.ts";
 import {
   ANSWER_MAX,
   clampText,
@@ -23,6 +24,28 @@ import {
 
 let n = 0;
 const paths: string[] = [];
+
+test("question report is deterministic and sanitizes terminal controls", () => {
+  const question = {
+    id: 7,
+    askerSession: "asker",
+    askerName: "peer\u001b]8;;https://evil.test\u0007",
+    targetSession: "target",
+    targetName: "target\nspoof",
+    text: "line one\nline two\u001b[31m",
+    answer: "",
+    askedMs: 100,
+    answeredMs: 0,
+    expiredMs: 0,
+    deliveredMs: 0,
+  };
+  const first = renderQuestionReport({ mine: [question], waiting: [], now: 200, width: 50 });
+  const second = renderQuestionReport({ mine: [question], waiting: [], now: 200, width: 50 });
+  expect(first).toEqual(second);
+  expect(first.join("\n")).not.toContain("https://evil.test");
+  expect(first.join("\n")).not.toContain("\u001b[31m");
+  expect(first.join("\n")).toContain("line one line two");
+});
 
 function fresh<T>(
   fn: (s: Parameters<Parameters<typeof withStore>[1]>[0]) => T,

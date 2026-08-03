@@ -5,7 +5,6 @@ import {
   operatorNames,
   type Message,
   type Session,
-  type Store,
   withStore,
 } from "../core/store.ts";
 import {
@@ -20,7 +19,6 @@ import { failure, success, type Result } from "./result.ts";
 import { sanitizeTerminalText } from "./terminal.ts";
 import type { CliContext, CommandMap } from "./types.ts";
 
-const HUMAN_HANDLE = "human";
 const DEFAULT_LOG_RECORD_LIMIT = 20;
 const MAX_LOG_RECORD_LIMIT = 2_000;
 
@@ -106,27 +104,16 @@ function handleSay(context: CliContext, argv: readonly string[]): void {
   const text = parseText(parsed.value.positionals);
   if (!text) return failUsage(context, "say");
   const now = context.now();
-  const from = withStore(context.dbPath, (store) => {
-    const self = context.sessionId
-      ? store.findBySession(context.sessionId)
-      : null;
-    if (context.sessionId && !self) {
-      const handle = store.handleForOrRegister(
-        context.sessionId,
-        context.projectRoot,
-        "",
-        now,
-      );
-      store.post(handle, "say", text, now);
-      return handle;
-    }
-    if (self) {
-      store.post(self.handle, "say", text, now);
-      return displayName(self);
-    }
-    store.post(HUMAN_HANDLE, "note", text, now);
-    return "you";
-  });
+  const sender = withStore(context.dbPath, (store) =>
+    store.postFromCaller({
+      sessionId: context.sessionId,
+      projectRoot: context.projectRoot,
+      kind: context.sessionId ? "say" : "note",
+      body: text,
+      nowMs: now,
+    }),
+  );
+  const from = sender.label;
   const safeFrom = sanitizeTerminalText(from);
   context.log(
     `${yellow("broadcast")} to ${bold(sanitizeTerminalText(context.projectName))} ${dim(`as ${safeFrom}`)}: ${sanitizeTerminalText(text)}`,
@@ -146,23 +133,6 @@ function resolutionFailure(
     : `no live ${role} "${query}"`;
 }
 
-function authenticatedSenderPolicy(
-  context: CliContext,
-  store: Store,
-  now: number,
-): { readonly handle: string; readonly label: string } {
-  if (!context.sessionId) return { handle: HUMAN_HANDLE, label: "you" };
-  const self = store.findBySession(context.sessionId);
-  if (self) return { handle: self.handle, label: displayName(self) };
-  const handle = store.handleForOrRegister(
-    context.sessionId,
-    context.projectRoot,
-    "",
-    now,
-  );
-  return { handle, label: handle };
-}
-
 function handleMessage(context: CliContext, argv: readonly string[]): void {
   const parsed = parseArguments(argv, { valueFlags: ["--from"] });
   if (!parsed.ok) return failCommand(context, parsed.error);
@@ -178,21 +148,29 @@ function handleMessage(context: CliContext, argv: readonly string[]): void {
       const recipient = resolveLiveName(live, target);
       if (!recipient.ok)
         return failure(resolutionFailure("agent", target, recipient));
-      let sender = authenticatedSenderPolicy(context, store, now);
       if (requestedSender !== undefined) {
         const resolved = resolveLiveName(live, requestedSender);
         if (!resolved.ok)
           return failure(
             resolutionFailure("sender", requestedSender, resolved),
           );
-        sender = {
-          handle: resolved.value.handle,
-          label: displayName(resolved.value),
-        };
+        const sender = { handle: resolved.value.handle, label: displayName(resolved.value) };
+        store.post(sender.handle, "say", text, now, {
+          sessionId: recipient.value.sessionId,
+          name: displayName(recipient.value),
+        });
+        return success({ to: recipient.value, fromLabel: sender.label });
       }
-      store.post(sender.handle, "say", text, now, {
+      const sender = store.postFromCaller({
+        sessionId: context.sessionId,
+        projectRoot: context.projectRoot,
+        kind: context.sessionId ? "say" : "note",
+        body: text,
+        nowMs: now,
+        to: {
         sessionId: recipient.value.sessionId,
         name: displayName(recipient.value),
+        },
       });
       return success({ to: recipient.value, fromLabel: sender.label });
     },

@@ -651,6 +651,44 @@ describe("commits landing on an item", () => {
 
 /** P4 — breaks and needs. */
 describe("breaks and needs", () => {
+  test("records and notifies affected peers through one domain operation", () => {
+    fresh((store) => {
+      const now = 10_000;
+      for (const session of ["me", "peer", "other"])
+        store.register(session, "/repo", "main", now);
+      store.setAlias("me", "sender", now);
+      store.setAlias("peer", "affected", now);
+      store.claim("me", "src/shared.ts", now, { tool: "Edit", worktree: "/repo" });
+      store.claim("peer", "src/shared.ts", now, { tool: "Edit", worktree: "/repo" });
+      store.claim("other", "src/other.ts", now, { tool: "Edit", worktree: "/repo" });
+      const workId = store.work.open(
+        agentKey("", "me"),
+        "sender",
+        "change shared API",
+        [],
+        now,
+      );
+
+      const reached = store.recordWorkFlag({
+        workId,
+        kind: "breaks",
+        text: "removed the old call",
+        subject: "change shared API",
+        senderSessionId: "me",
+        senderName: "sender",
+        sinceMs: 0,
+        nowMs: now + 1,
+      });
+
+      expect(reached).toEqual(["affected"]);
+      expect(store.work.events(workId).at(-1)?.kind).toBe("breaks");
+      expect(store.drainUnread("peer").map((message) => message.body)).toContain(
+        'removed the old call (in "change shared API")',
+      );
+      expect(store.drainUnread("other")).toEqual([]);
+    });
+  });
+
   test("both attach to the agent's current item as events", () => {
     fresh((store) => {
       const w = store.work;

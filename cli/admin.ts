@@ -20,7 +20,7 @@ import { resolveLiveName, resolveSelf } from "./identity.ts";
 import type { CliContext, CommandMap } from "./types.ts";
 
 export function createAdminCommands(context: CliContext): CommandMap {
-  const rename = (args: string[]): void => {
+  const rename = (args: readonly string[]): void => {
     const parsed = parseArguments(args, { valueFlags: ["--agent"] });
     if (!parsed.ok) return failCommand(context, `call-me: ${parsed.error}`);
     const target = stringFlag(parsed.value, "--agent") ?? "";
@@ -52,7 +52,7 @@ export function createAdminCommands(context: CliContext): CommandMap {
       );
     });
   };
-  const role = (args: string[]): void => {
+  const role = (args: readonly string[]): void => {
     const parsed = parseArguments(args, { valueFlags: ["--agent"] });
     if (!parsed.ok) return failCommand(context, `call-you: ${parsed.error}`);
     const target = stringFlag(parsed.value, "--agent") ?? "";

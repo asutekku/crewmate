@@ -5,6 +5,10 @@ import type {
   ObligationSnapshot,
   ResponsibleActorRef,
 } from "../core/obligations.ts";
+import {
+  CLEARANCE_COMMAND_EVENTS,
+  OBLIGATION_COMMAND_EVENTS,
+} from "../core/obligations.ts";
 import { failure, success, type Result } from "./result.ts";
 
 export interface ObligationEventInput {
@@ -39,7 +43,9 @@ export function buildObligationEvent(
   snapshot: ObligationSnapshot,
 ): Result<ObligationEvent> {
   const reason = input.reason || undefined;
-  switch (input.eventName) {
+  const eventName = OBLIGATION_COMMAND_EVENTS.find((name) => name === input.eventName);
+  if (!eventName) return failure(`unknown obligation event ${input.eventName}`);
+  switch (eventName) {
     case "accept":
       return success({ type: "accepted" });
     case "decline":
@@ -95,9 +101,9 @@ export function buildObligationEvent(
     case "return": {
       const to = responsible(input.to);
       if (snapshot.currentResponsible.kind !== "assigned" || !to) {
-        return failure(`${input.eventName} requires assigned owner and --to`);
+        return failure(`${eventName} requires assigned owner and --to`);
       }
-      return input.eventName === "return"
+      return eventName === "return"
         ? success({
             type: "returned",
             from: snapshot.currentResponsible.actor,
@@ -109,8 +115,6 @@ export function buildObligationEvent(
             to,
           });
     }
-    default:
-      return failure(`unknown obligation event ${input.eventName}`);
   }
 }
 
@@ -118,9 +122,12 @@ export function buildClearanceEvent(
   eventName: string,
   reason: string,
 ): Result<Exclude<ClearanceEvent, { type: "granted" }>> {
-  if (eventName === "revoke")
-    return success({ type: "revoked", reason: reason || undefined });
-  if (eventName === "expire")
-    return success({ type: "expired", reason: reason || "expired explicitly" });
-  return failure(`unknown clearance event ${eventName}`);
+  const parsed = CLEARANCE_COMMAND_EVENTS.find((name) => name === eventName);
+  if (!parsed) return failure(`unknown clearance event ${eventName}`);
+  switch (parsed) {
+    case "revoke":
+      return success({ type: "revoked", reason: reason || undefined });
+    case "expire":
+      return success({ type: "expired", reason: reason || "expired explicitly" });
+  }
 }

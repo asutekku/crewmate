@@ -45,7 +45,7 @@ function handleAnswer(context: CliContext, argv: readonly string[]): void {
   );
 }
 
-function renderQuestionReport(report: QuestionReport): string[] {
+export function renderQuestionReport(report: QuestionReport): string[] {
   if (report.mine.length === 0 && report.waiting.length === 0)
     return [dim("No open questions.")];
   const lines: string[] = [];

@@ -303,25 +303,26 @@ older rule could be read more broadly, the revised wording controls.
 | ---------------------- | -------------------- | ---------------------------------------------------------------------------------- |
 | `main.ts`              | Compliant            | dispatch, help aliases, and feature-use policy resolve through canonical metadata  |
 | `registry.ts`          | Compliant            | registered handlers carry canonical metadata and reject undocumented commands      |
-| `types.ts`             | Partial              | expose stable command input/metadata contracts and terminal sink                   |
+| `types.ts`             | Compliant            | stable readonly command, clock, terminal-sink, and CLI context contracts            |
 | `args.ts`              | Compliant            | single-pass typed parsing; legacy mutation helper removed and prohibited by test    |
 | `command.ts`           | Compliant foundation | extend shared failure policy to all handlers                                       |
 | `result.ts`            | Compliant foundation | use for every expected operational failure                                         |
 | `terminal.ts`          | Compliant foundation | migrate every complex report and untrusted output boundary                         |
 | `paths.ts`             | Compliant foundation | adopt at every user-controlled filesystem boundary                                 |
-| `identity.ts`          | Mostly compliant     | migrate remaining callers to explicit ambiguity results                            |
+| `identity.ts`          | Compliant            | canonical exact/unique-prefix resolution with explicit not-found and ambiguity data |
 | `structured.ts`        | Compliant            | pure non-mutating parser driven by one canonical shortcut list                     |
 | `structured-json.ts`   | Compliant boundary   | complete nested decoder; keep aligned with canonical domain lists                  |
-| `obligation-events.ts` | Mostly compliant     | derive event names from one canonical exported list and enforce exhaustiveness     |
+| `obligation-events.ts` | Compliant            | canonical domain event lists, pure construction, strict versions, exhaustive switch |
 | `obligations.ts`       | Partial              | centralize ID ownership; reject ambiguous live-agent matches; isolate snapshots    |
-| `work.ts`              | Partial              | finish board snapshot/section rendering and move break notification policy down    |
-| `diary.ts`             | Non-compliant        | canonical enum decoding, safe limits/IDs, indexed similarity, report view models   |
-| `personal.ts`          | Partial              | typed selectors/flags, explicit lineage policy, renderer extraction                |
-| `messaging.ts`         | Mostly compliant     | move fallback registration-plus-post into one domain operation                     |
-| `questions.ts`         | Mostly compliant     | add colour-disabled renderer snapshots and degraded-config coverage                |
-| `admin.ts`             | Partial              | typed selectors and explicit identity/ownership policies                           |
-| `diagnostics.ts`       | Non-compliant        | typed limits, probe/view separation, deterministic report sections                 |
-| `injection.ts`         | Migrating            | terminal report introduced; still needs typed selectors and probe/store separation |
+| `work.ts`              | Mostly compliant     | make registration delegate to named handlers; isolate the remaining small reports  |
+| `diary.ts`             | Partial              | build report view models and move near-topic matching behind a domain index         |
+| `personal.ts`          | Partial              | explicit lineage policy, snapshot collection, and renderer extraction              |
+| `messaging.ts`         | Compliant            | delegated handlers, typed inputs, ambiguity-safe routing, atomic sender registration |
+| `questions.ts`         | Compliant            | atomic domain operations, typed inputs, pure deterministic sanitized report renderer |
+| `admin.ts`             | Partial              | isolate external probes and make identity/ownership policies domain operations      |
+| `diagnostics.ts`       | Compliant            | typed inputs, isolated probes/snapshots, named deterministic sanitized renderers    |
+| `diagnostics-renderers.ts` | Compliant         | pure section renderers with display-only sanitization and degraded-state output     |
+| `injection.ts`         | Compliant            | delegated handlers, typed selectors, isolated probes/snapshots, sanitized renderer  |
 | `roster.ts`            | Mostly compliant     | move summary refresh outside the store lifetime and finish output sanitization     |
 | `roster-model.ts`      | Mostly compliant     | add deterministic grouping policy tests and stable probe interfaces                |
 | `roster-renderers.ts`  | Partial              | sanitize every dynamic value and add colour-disabled snapshots                     |

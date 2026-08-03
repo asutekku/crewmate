@@ -1,4 +1,13 @@
-export interface CliContext {
+export interface TerminalSink {
+  log(message: string): void;
+  error(message: string): void;
+}
+
+export interface Clock {
+  now(): number;
+}
+
+export interface CliContext extends TerminalSink, Clock {
   readonly dbPath: string;
   readonly projectName: string;
   readonly projectRoot: string;
@@ -7,12 +16,9 @@ export interface CliContext {
   readonly isGit: boolean;
   readonly cwd: string;
   readonly sessionId: string;
-  now(): number;
-  log(message: string): void;
-  error(message: string): void;
   fail(): void;
 }
 
-export type CommandHandler = (args: string[]) => void;
+export type CommandHandler = (args: readonly string[]) => void;
 export type CommandMap = Readonly<Record<string, CommandHandler>>;
 export type CommandFactory = (context: CliContext) => CommandMap;

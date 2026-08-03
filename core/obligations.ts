@@ -102,6 +102,12 @@ export type ObligationEvent =
   | { type: "expired"; episodeId: string }
   | { type: "fulfilled"; resolutionKey?: string; evidenceMessageId?: number }
   | { type: "violated"; evidenceMessageId?: number };
+
+export const OBLIGATION_COMMAND_EVENTS = [
+  "accept", "decline", "counter", "withdraw", "cancel", "fulfil", "violate",
+  "activate", "release", "expire", "relinquish", "assign", "reassign", "return",
+] as const;
+export type ObligationCommandEventName = typeof OBLIGATION_COMMAND_EVENTS[number];
 export interface ObligationEventRecord {
   id: string;
   obligationId: string;
@@ -138,6 +144,8 @@ export type ClearanceEvent =
   | { type: "granted" }
   | { type: "revoked"; reason?: string }
   | { type: "expired"; reason: string };
+export const CLEARANCE_COMMAND_EVENTS = ["revoke", "expire"] as const;
+export type ClearanceCommandEventName = typeof CLEARANCE_COMMAND_EVENTS[number];
 export interface ClearanceEventRecord {
   id: string;
   clearanceId: string;
