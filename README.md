@@ -525,6 +525,15 @@ were invisible.
 | `ask <name> "<question>"` | ask a peer something and record that a reply is owed |
 | `answer <id> "<answer>"` | answer a question asked of you |
 | `asks` | questions waiting on you, and what you are waiting for |
+| `request <name> "<text>"` | record a proposed obligation for a peer |
+| `promise <name> "<text>" [--refrain --until <text>]` | bind yourself to perform or refrain |
+| `handoff <name> "<subject>"` | propose moving responsibility to a peer |
+| `grant <name> "<scope>"` | grant clearance while preserving opaque scope text |
+| `correct <name> <self\|peer\|implementation> "<text>"` | record an explicit typed correction |
+| `hazard <name> "<subject>" "<warning>"` | record a warning independently of obligations |
+| `act <name> --json <file>` | atomically create a compound structured message |
+| `obligation <id> [event] [flags]` | inspect or append a versioned obligation event |
+| `clearance <id> [revoke\|expire] [flags]` | inspect, revoke or expire a clearance |
 | `files <agent> [--hours 24]` | every file an agent has touched, and why |
 | `blame <path>` | who has been in this file, newest first |
 | `quit <name>` | drop a dead session off the roster |
@@ -625,6 +634,7 @@ replaces `bin/` wholesale so a module that moves cannot leave a stale twin.
 | `board.ts`            | Rendering the board — takes a paint callback, so it is testable without a terminal. |
 | `diary.ts`            | Findings that outlive a session: topics, tags, scopes, FTS5 search.                 |
 | `questions.ts`        | Questions between agents — state, delivery, and expiry against a dead target.       |
+| `obligations.ts`      | Explicit acts, append-only folds, authorization, dependencies, and P0 candidates.  |
 | `personal.ts`         | Per-agent memories, in one db outside any project. `forget` deletes.                |
 | `verbs.ts`            | Every CLI verb in one table; `usage()` and per-verb argument errors render from it. |
 | `names.ts`            | The given-name pool, and the two casers (prose role vs typeable name).              |

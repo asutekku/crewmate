@@ -49,6 +49,9 @@
  */
 
 import type { Session, Store } from "./core/store.ts";
+import { readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import type { ActorRef, ObligationEvent, StructuredActInput } from "./core/obligations.ts";
 import {
   agoText,
   claimName,
@@ -1064,6 +1067,8 @@ function bugs(scope: string, limit: number): void {
 
 /** Asks a peer something, and records that an answer is owed. */
 function ask(target: string, text: string): void {
+  structured(target,[{key:"question",type:"question",text}]);
+  return;
   withStore(PROJECT.dbPath, (store) => {
     const now = Date.now();
     const me = callerIdentity(store);
@@ -2066,6 +2071,33 @@ function forget(idRaw: string): void {
   });
 }
 
+function structured(target:string,acts:StructuredActInput[],idempotencyKey=randomUUID(),dependencies?:any[]):void {
+  if(ENV_SESSION===""){notAnAgent("structured acts");return;}
+  const result=withStore(PROJECT.dbPath,store=>{
+    const now=Date.now();const self=store.findBySession(ENV_SESSION);const to=store.findByName(target,now);
+    if(!self)return {error:"this session is not registered"} as const;if(!to)return {error:`no live agent named ${target}`} as const;
+    try{return {value:store.obligations.createBatch({senderSessionId:ENV_SESSION,senderName:displayName(self),recipientSessionId:to.sessionId,recipientName:displayName(to),acts,dependencies,idempotencyKey,nowMs:now})} as const;}catch(e){return {error:e instanceof Error?e.message:String(e)} as const;}
+  });
+  if("error" in result){console.error(`${red("✗")} ${result.error}`);process.exitCode=1;return;}
+  console.log(`${green("✓")} structured message #${result.value.messageId}`);for(const [key,id] of Object.entries(result.value.obligationIds))console.log(`  ${key}: obligation ${id}`);for(const [key,id] of Object.entries(result.value.clearanceIds))console.log(`  ${key}: clearance ${id}`);
+}
+
+function obligationCommand(id:string,eventName:string|undefined,args:string[]):void {
+  const outcome=withStore(PROJECT.dbPath,store=>{
+    const definition=store.obligations.definition(id),snapshot=store.obligations.snapshot(id);if(!definition||!snapshot)return {error:`no obligation ${id}`} as const;
+    if(!eventName)return {definition,snapshot,events:store.obligations.events(id)} as const;
+    const self=ENV_SESSION?store.findBySession(ENV_SESSION):null;const actor:ActorRef=self?{kind:"agent",agentId:ENV_SESSION}:{kind:"operator"};const versionRaw=takeFlag(args,"--version");const expectedVersion=versionRaw===""?snapshot.version:Number(versionRaw);const reason=takeFlag(args,"--reason");const resolution=takeFlag(args,"--resolution");const target=takeFlag(args,"--to");let to:ActorRef|undefined;if(target){const session=store.findByName(target,Date.now());if(!session)return {error:`no live agent named ${target}`} as const;to={kind:"agent",agentId:session.sessionId};}
+    let payload:ObligationEvent;
+    switch(eventName){case"accept":payload={type:"accepted"};break;case"decline":payload={type:"declined",reason:reason||undefined};break;case"counter":{const replacement=takeFlag(args,"--replacement");if(!replacement)return {error:"counter requires --replacement <id>"} as const;payload={type:"countered",replacementId:replacement};break;}case"withdraw":payload={type:"withdrawn",reason:reason||undefined};break;case"cancel":payload={type:"cancelled",reason:reason||"cancelled explicitly"};break;case"fulfil":payload={type:"fulfilled",resolutionKey:resolution||undefined};break;case"violate":payload={type:"violated"};break;case"activate":payload={type:"activated",trigger:{kind:"obligation_resolved",obligationId:id}};break;case"release":payload={type:"released",why:reason||"released explicitly"};break;case"expire":payload={type:"expired",episodeId:takeFlag(args,"--episode")||"operator"};break;case"relinquish":if(snapshot.currentResponsible.kind!=="assigned")return {error:"obligation is unassigned"} as const;payload={type:"relinquished",from:snapshot.currentResponsible.actor,reason:reason||undefined};break;case"assign":if(!to||!((to.kind==="agent")||(to.kind==="operator")))return {error:"assign requires --to <agent>"} as const;payload={type:"assigned",to};break;case"reassign":case"return":if(snapshot.currentResponsible.kind!=="assigned"||!to||!((to.kind==="agent")||(to.kind==="operator")))return {error:`${eventName} requires assigned owner and --to`} as const;payload=eventName==="return"?{type:"returned",from:snapshot.currentResponsible.actor,to}:{type:"reassigned",from:snapshot.currentResponsible.actor,to};break;default:return {error:`unknown obligation event ${eventName}`} as const;}
+    try{return {definition,snapshot:store.obligations.append({id:randomUUID(),obligationId:id,actor,occurredAt:Date.now(),expectedVersion,idempotencyKey:takeFlag(args,"--key")||randomUUID(),payload}),events:store.obligations.events(id)} as const;}catch(e){return {error:e instanceof Error?e.message:String(e)} as const;}
+  });
+  if("error" in outcome){console.error(`${red("✗")} ${outcome.error}`);process.exitCode=1;return;}console.log(`${bold(id)}  ${outcome.snapshot.authority} / ${outcome.snapshot.activation}  v${outcome.snapshot.version}`);console.log(`  ${outcome.definition.text}`);
+}
+
+function clearanceCommand(id:string,eventName:string|undefined,args:string[]):void {
+  const outcome=withStore(PROJECT.dbPath,store=>{const definition=store.obligations.clearance(id),snapshot=store.obligations.clearanceSnapshot(id);if(!definition||!snapshot)return {error:`no clearance ${id}`} as const;if(!eventName)return {definition,snapshot} as const;const self=ENV_SESSION?store.findBySession(ENV_SESSION):null;const actor:ActorRef=self?{kind:"agent",agentId:ENV_SESSION}:{kind:"operator"};const version=Number(takeFlag(args,"--version")||snapshot.version);const reason=takeFlag(args,"--reason");const payload=eventName==="revoke"?{type:"revoked" as const,reason:reason||undefined}:eventName==="expire"?{type:"expired" as const,reason:reason||"expired explicitly"}:null;if(!payload)return {error:`unknown clearance event ${eventName}`} as const;try{return {definition,snapshot:store.obligations.appendClearance({id:randomUUID(),clearanceId:id,actor,occurredAt:Date.now(),expectedVersion:version,idempotencyKey:takeFlag(args,"--key")||randomUUID(),payload})} as const;}catch(e){return {error:e instanceof Error?e.message:String(e)} as const;}});if("error" in outcome){console.error(`${red("âœ—")} ${outcome.error}`);process.exitCode=1;return;}console.log(`${bold(id)}  ${outcome.snapshot.state}  v${outcome.snapshot.version}`);console.log(`  ${outcome.definition.scopeText}`);
+}
+
 const [cmd, ...rest] = Bun.argv.slice(2);
 switch (cmd) {
   case "who":
@@ -2104,6 +2136,15 @@ switch (cmd) {
     msg(target, text, from);
     break;
   }
+  case "request": {const target=rest.shift();const text=rest.join(" ").trim();if(!target||!text){console.error(usageFor("request"));process.exitCode=1;break;}structured(target,[{key:"request",type:"request",text}]);break;}
+  case "promise": {const args=[...rest];const target=args.shift();const refrain=args.includes("--refrain");if(refrain)args.splice(args.indexOf("--refrain"),1);const until=takeFlag(args,"--until");const text=args.join(" ").trim();if(!target||!text||(refrain&&!until)){console.error(usageFor("promise"));process.exitCode=1;break;}structured(target,[{key:"promise",type:"promise",text,mode:refrain?"refrain":"perform",...(until?{releaseBoundary:{text:until,handling:"manual" as const}}:{})}]);break;}
+  case "handoff": {const target=rest.shift();const subject=rest.join(" ").trim();if(!target||!subject){console.error(usageFor("handoff"));process.exitCode=1;break;}structured(target,[{key:"handoff",type:"handoff",text:`Responsibility for ${subject}`,subject}]);break;}
+  case "grant": {const target=rest.shift();const scope=rest.join(" ").trim();if(!target||!scope){console.error(usageFor("grant"));process.exitCode=1;break;}structured(target,[{key:"grant",type:"grant",text:`Go ahead on ${scope}`,scopeText:scope}]);break;}
+  case "correct": {const target=rest.shift(),kind=rest.shift();const text=rest.join(" ").trim();const correctionType=kind==="self"?"self_erratum":kind==="peer"?"peer_correction":kind==="implementation"?"implementation_correction":undefined;if(!target||!correctionType||!text){console.error(usageFor("correct"));process.exitCode=1;break;}structured(target,[{key:"correction",type:"correction",text,correctionType}]);break;}
+  case "hazard": {const target=rest.shift(),subject=rest.shift();const text=rest.join(" ").trim();if(!target||!subject||!text){console.error(usageFor("hazard"));process.exitCode=1;break;}structured(target,[{key:"hazard",type:"hazard",text,subject}]);break;}
+  case "act": {const args=[...rest];const target=args.shift();const file=takeFlag(args,"--json");if(!target||!file){console.error(usageFor("act"));process.exitCode=1;break;}try{const body=JSON.parse(readFileSync(file,"utf8"));if(!Array.isArray(body.acts))throw new Error("JSON requires acts[]");structured(target,body.acts,body.idempotencyKey??randomUUID(),body.dependencies);}catch(e){console.error(`${red("✗")} ${e instanceof Error?e.message:String(e)}`);process.exitCode=1;}break;}
+  case "obligation": {const id=rest.shift();const eventName=rest.shift();if(!id){console.error(usageFor("obligation"));process.exitCode=1;break;}obligationCommand(id,eventName,rest);break;}
+  case "clearance": {const id=rest.shift();const eventName=rest.shift();if(!id){console.error(usageFor("clearance"));process.exitCode=1;break;}clearanceCommand(id,eventName,rest);break;}
   case "quit": {
     const target = rest[0];
     if (!target) {

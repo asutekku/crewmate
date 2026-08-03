@@ -503,7 +503,7 @@ The corpus is not only design evidence — it becomes regression fixtures, CLI
 formatting examples, and evaluation data if intent suggestion is ever automated.
 That is why it is worth rerunning rather than patching.
 
-### P2 — Obligations + explicit message semantics [ ]
+### P2 — Obligations + explicit message semantics [x]
 
 One vertical slice. Structured acts create durable state, the obligation fold
 makes that state actionable, and P0's existing allocator and append-only
@@ -849,17 +849,17 @@ structured constraint or anchor extraction, so P2 keeps "stay inside
 packBand/fillRow" inside the grant's `scopeText`/act text rather than pretending
 it has a trustworthy general-purpose constraint object.
 
-- [ ] acts as their own records; a message may have none, one, or several
-- [ ] the **sender's explicit structured command is the declaration.** `msg` and
+- [x] acts as their own records; a message may have none, one, or several
+- [x] the **sender's explicit structured command is the declaration.** `msg` and
       `say` never create semantic records, even when their prose looks like a
       request. A compound intent is entered as several explicit acts in one
       transaction, so "not a request, but I promise to ping" can create only the
       promise. P2 contains no parser or suggestion surface
-- [ ] **inferred signals and reported acts are absent from P2.** P1 explicitly
+- [x] **inferred signals and reported acts are absent from P2.** P1 explicitly
       deferred provenance and confidence. Plain prose remains only prose; there
       is no weaker record, classifier output, or promotion path that a later
       query could confuse with authority
-- [ ] **binding is not activation** — two independent folds, not one state
+- [x] **binding is not activation** — two independent folds, not one state
       column. "Do I owe this?" and "is it actionable now?" are different
       questions, and collapsing them is what made an earlier draft say a
       self-promise *opens immediately* while the branching tests had the same
@@ -878,7 +878,7 @@ it has a trustworthy general-purpose constraint object.
       confirms they are editing `waterSim.ts`. Both states are real from the
       start; neither implies the other.
 
-- [ ] obligation state is a **fold over events**, not a mutable column — the
+- [x] obligation state is a **fold over events**, not a mutable column — the
       work-records tables already do this and it is the pattern that keeps
       `counter`, `return`, reassignment and inheritance from erasing history:
 
@@ -925,7 +925,7 @@ it has a trustworthy general-purpose constraint object.
       `currentResponsible` to `unassigned`; a following `returned` or
       `reassigned` names the next owner.
 
-- [ ] **the transition table, written before any of it is built.** An earlier
+- [x] **the transition table, written before any of it is built.** An earlier
       draft had `satisfied` in the state union and `fulfilled` in the events,
       plus `expired`, `withdrawn` and `countered` as events with no state to land
       in — a fold that cannot be written:
@@ -981,11 +981,11 @@ it has a trustworthy general-purpose constraint object.
       `returned`; calling the work off is `cancelled`. Message 295 exercises the
       latter ownership distinctions, not proposal withdrawal.
 
-- [ ] dispositions **typed against their targets** — `grant`/`revoke` apply to a
+- [x] dispositions **typed against their targets** — `grant`/`revoke` apply to a
       clearance, `accept`/`decline`/`counter` to a request or handoff, `return`
       to held responsibility. One untyped union permits nonsense like accepting a
       revocation
-- [ ] **automatic creation rule, stated once so it cannot drift:** an explicitly
+- [x] **automatic creation rule, stated once so it cannot drift:** an explicitly
       structured directed *question* and an explicitly structured *self-promise*
       become **binding** on creation — the first because the recipient is named,
       the second because the maker binds themselves and should not have to accept
@@ -1013,14 +1013,14 @@ it has a trustworthy general-purpose constraint object.
       proposed request may retain activation=`active` as a historical fact, but
       candidate production requires authority=`binding` (except the proposed
       recipient's accept/decline candidate).
-- [ ] `CommitmentMode: 'perform' | 'refrain'` — forbearance is not a negated
+- [x] `CommitmentMode: 'perform' | 'refrain'` — forbearance is not a negated
       action; fulfilment and violation are detected differently
-- [ ] **a refrain commitment requires a release boundary** — a release condition,
+- [x] **a refrain commitment requires a release boundary** — a release condition,
       an `untilRef`, or explicit clearance. "I will not touch `emit.ts`" almost
       always means *until you return it or this episode closes*; without a
       terminator it becomes a permanent stale prohibition nobody remembers to
       lift
-- [ ] **an `automatic` condition needs a typed trigger supplied by the structured
+- [x] **an `automatic` condition needs a typed trigger supplied by the structured
       command, never an anchor extracted from prose.** P1 validated condition
       handling and rejected generalized anchors. Consequently triggers name only
       identifiers already authoritative in this store or an explicit commit SHA;
@@ -1050,7 +1050,7 @@ it has a trustworthy general-purpose constraint object.
       obligation id; arbitrary paths/files remain in text. `obligation_resolved`
       is what gives test 36 a real path: fulfilling
       the answer obligation is what fires the move-file promise
-- [ ] **every event is written by somebody, and the payloads do not say who.**
+- [x] **every event is written by somebody, and the payloads do not say who.**
       `{ type: 'accepted' }` carries no actor, so nothing in the schema stops one
       agent accepting, fulfilling or cancelling another's obligation. The actor
       belongs on the record rather than in every variant:
@@ -1083,14 +1083,14 @@ it has a trustworthy general-purpose constraint object.
       actors are accepted only from an in-process component allowlist and only
       for event types the matrix grants them. Diary 40 and 41 are why
       `from_name` cannot be the source of an authorization decision
-- [ ] **append is transactional and version-checked.** Several agents and
+- [x] **append is transactional and version-checked.** Several agents and
       several lifecycle hooks write this store concurrently, so: read the fold
       and its version, validate actor and transition, append **only if
       `expectedVersion` still matches**, commit. `idempotencyKey` covers the
       other direction — a hook that fires twice must not produce two `accepted`
       or two exposure rows. Both are implementation requirements, recorded here
       so they are not rediscovered mid-build
-- [ ] **linked obligations need an edge.** The branching tests describe one act
+- [x] **linked obligations need an edge.** The branching tests describe one act
       activating or releasing another and nothing in the schema connected them:
 
       ```ts
@@ -1121,34 +1121,34 @@ it has a trustworthy general-purpose constraint object.
       exactly the parsing this design refuses to do elsewhere.** The question
       declares its valid resolution keys, so the CLI rejects a typo instead of
       silently never firing the dependency
-- [ ] responsibility as `{ kind: 'assigned'; actor: ResponsibleActorRef } |
+- [x] responsibility as `{ kind: 'assigned'; actor: ResponsibleActorRef } |
       { kind: 'unassigned' }` — **one owner**, since any-of versus all-of
       semantics are undesigned and nothing in the corpus needs them. An
       unassigned expected action is a **responsibility gap**; assignment or
       acceptance converts it into an obligation
-- [ ] **only a principal that can be held to something may own one.**
+- [x] **only a principal that can be held to something may own one.**
       `ResponsibleActorRef` narrows `ActorRef` to agent-or-operator, so an
       obligation owed by a `system` component or by "probably Hopper"
       (`legacy_uncertain`) is unrepresentable rather than merely discouraged
-- [ ] **`createdBy: ActorRef` is immutable; derived
+- [x] **`createdBy: ActorRef` is immutable; derived
       `ObligationSnapshot.currentResponsible` moves.** There is no mutable owner
       column. Reassignment and inheritance append events that change who the
       fold says owes it, never who made it — and `createdBy` keeps the wider type,
       because historical authorship is exactly where `legacy_uncertain` belongs
-- [ ] **new structured acts require trustworthy attribution.** Historical rows
+- [x] **new structured acts require trustworthy attribution.** Historical rows
       may stay `legacy_uncertain`, but an obligation authored off the defective
       `from_name` path would be a commitment attributed to the wrong agent —
       worse than no obligation. Diary 40 and 41 must be closed for new writes
       before this ships
-- [ ] correction carries the provisional `correctionType` and an optional
+- [x] correction carries the provisional `correctionType` and an optional
       `contradictsActId`. It is available only through `correct`; no prose
       inference or generalized evidence reference. Contradiction never implies
       supersession, which remains an explicit event
-- [ ] **no provenance representation in P2.** P1 found only two full-corpus
+- [x] **no provenance representation in P2.** P1 found only two full-corpus
       positives and unstable holdout prevalence. Do not ship a boolean, a
       confidence field, or a partial `ReportedAct`; reconsider only with a new
       corpus gate
-- [ ] obligation delivery reuses P0's append-only `injection_ledger`. The
+- [x] obligation delivery reuses P0's append-only `injection_ledger`. The
       obligation id is the candidate key, folded event version is
       `stateVersion`, and selected/omitted/suppressed outcomes are recorded by
       `recordInjectionResult`. No `feature_exposure` table is added
@@ -1157,15 +1157,15 @@ Acceptance tests, from the four lost obligations. Two of them **branch**, and
 the branches have different consequences — which is the clearest evidence that
 one message can produce *linked* obligations rather than one status:
 
-- [ ] **#36** — two linked obligations from one message. The question is
+- [x] **#36** — two linked obligations from one message. The question is
       `binding` + `active` on arrival; the sender's promise to move the file is
       `binding` + **`waiting`** from the same instant. Answering the question
       satisfies the first and emits `activated` on the second, which stays
       `active` until the move. **A test that only checks the question passes on
       half the message**
-- [ ] **#97** — condition text and typed trigger preserved; outcome may stay honestly
+- [x] **#97** — condition text and typed trigger preserved; outcome may stay honestly
       unassessable and is **never** falsely marked fulfilled
-- [ ] **#146** — recipient retained; the structured command links the condition
+- [x] **#146** — recipient retained; the structured command links the condition
       to an existing work/obligation id rather than extracting a file anchor.
       That related event produces a delivery. The refrain commitment is
       `binding` + `waiting`
@@ -1173,7 +1173,7 @@ one message can produce *linked* obligations rather than one status:
       emits `released` on the commitment; *"yes, I'm in there"* satisfies the
       question and emits `activated`, holding until cleared. **Same two events,
       opposite branches — the test must exercise both**
-- [ ] **#295** — stays visible despite an inactive recipient; reassignable,
+- [x] **#295** — stays visible despite an inactive recipient; reassignable,
       cancellable, inheritable. The current holder's step-back is
       `relinquished` (binding + unassigned); a later accepted hand-back is
       `returned`. It is never `withdrawn`, because required work did not cease
@@ -1182,42 +1182,42 @@ one message can produce *linked* obligations rather than one status:
 The four corpus cases are necessary but not sufficient. P2's test gate also
 requires:
 
-- [ ] migration tests from the current P0 database and from every historical
+- [x] migration tests from the current P0 database and from every historical
       schema fixture already supported; all new tables/columns/indexes are
       additive and a second migration is a no-op
-- [ ] table constraints and service validation reject dangling message/act/
+- [x] table constraints and service validation reject dangling message/act/
       obligation/dependency/clearance ids, empty actor ids, duplicate act ids,
       impossible initial states, unsupported correction subtypes, and any
       deferred field smuggled into typed input
-- [ ] property tests generate legal event sequences and prove fold determinism,
+- [x] property tests generate legal event sequences and prove fold determinism,
       immutable authorship, monotonic versioning, one current owner, separation
       of authority from activation, and terminal-state rejection; generated
       illegal transitions must fail without appending a row
-- [ ] authorization tests cover every event/actor cell in both directions,
+- [x] authorization tests cover every event/actor cell in both directions,
       including wrong session, stale display name, operator, system detector,
       legacy-uncertain author, inactive owner, and unassigned responsibility
-- [ ] concurrency tests race equal `expectedVersion` appends (exactly one wins),
+- [x] concurrency tests race equal `expectedVersion` appends (exactly one wins),
       repeat every idempotency key (exactly one row), and verify a failed batch
       leaves no message, act, event or dependency fragment
-- [ ] dependency tests cover activate/release, each resolution branch, a typoed
+- [x] dependency tests cover activate/release, each resolution branch, a typoed
       resolution key, cycles, self-edges, conflicting effects and duplicate
       delivery; injected failures at every write boundary must roll back both
       source and derived events
-- [ ] P0 integration tests force full, compact, unchanged, duplicate and
+- [x] P0 integration tests force full, compact, unchanged, duplicate and
       no-room outcomes; assert exact `obligation:<id>` keys/state versions in
       `injection_ledger`, actionable omissions in `inbox`, non-actionable waiting
       items absent from `inbox`, and reinjection after clear/compact/fork but
       suppression on resume
-- [ ] priority tests prove `110 > 105 > 100 > roster 90`, stable key tie-breaks,
+- [x] priority tests prove `110 > 105 > 100 > roster 90`, stable key tie-breaks,
       and no priority inversion when a larger urgent candidate fails to fit
-- [ ] CLI/API contract tests prove each convenience command and batch form emit
+- [x] CLI/API contract tests prove each convenience command and batch form emit
       the same canonical records/prose, reject partial or contradictory input,
       and never create semantics from `msg`/`say`
-- [ ] schema-shape tests assert that P2 contains no generalized constraints,
+- [x] schema-shape tests assert that P2 contains no generalized constraints,
       object anchors, confidence, inferred signals, provenance records, or
       parallel exposure table. These are negative requirements from P1, not
       merely untested features
-- [ ] restart/replay tests rebuild every fold solely from append-only events and
+- [x] restart/replay tests rebuild every fold solely from append-only events and
       reproduce the same candidates and `stateVersion` values without relying
       on cached current-state columns
 

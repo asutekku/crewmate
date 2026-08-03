@@ -27,6 +27,7 @@ import { ensureBaseDir } from "./repo.ts";
 import { createWorkTables, WorkStore } from "./work.ts";
 import { createDiaryTables, DiaryStore } from "./diary.ts";
 import { createQuestionTables, QuestionStore } from "./questions.ts";
+import { createObligationTables, ObligationStore } from "./obligations.ts";
 import { collectStats } from "./stats.ts";
 import type { Stats } from "./stats.ts";
 import { discipleName, fullName, GIVEN_NAMES, pickName } from "./names.ts";
@@ -627,6 +628,7 @@ function openDb(dbPath: string): Database {
   createWorkTables(db);
   createDiaryTables(db);
   createQuestionTables(db);
+  createObligationTables(db);
   // `CREATE TABLE IF NOT EXISTS` leaves an EXISTING table alone, so a column
   // added later never reaches a db that is already live — and this db is live
   // state that several running sessions are writing to, not a save file that
@@ -757,6 +759,11 @@ export class Store {
    */
   get work(): WorkStore {
     return new WorkStore(this.db);
+  }
+
+  /** Explicit acts and append-only obligation state (COURT_PLAN P2). */
+  get obligations(): ObligationStore {
+    return new ObligationStore(this.db);
   }
 
   /**

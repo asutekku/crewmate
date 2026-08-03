@@ -220,6 +220,10 @@ export function sessionEnvelope(store: Store, input: EnvelopeInputs): Envelope {
     candidates.push({ ...c, dedupeKey: c.dedupeKey ?? c.key });
   };
 
+  // P2 produces candidates; P0 remains the only allocator and exposure ledger.
+  // The conversation uuid is the durable agent principal across resume/restart.
+  for (const obligation of store.obligations.candidates(sessionId)) add(obligation);
+
   if (peers.length === 0) {
     add({
       key: "alone",
@@ -374,4 +378,3 @@ export function sessionEnvelope(store: Store, input: EnvelopeInputs): Envelope {
     targetChars: loadConfig().injectionTargetChars,
   };
 }
-

@@ -145,6 +145,21 @@ describe("a database from the previous build still opens", () => {
     });
   });
 
+  test("a pre-P2 database gains every P2 table additively and reopening is a no-op", () => {
+    const path = oldDbPath();
+    const old = new Database(path);
+    old.query(`CREATE TABLE legacy_marker (id INTEGER PRIMARY KEY, value TEXT NOT NULL)`).run();
+    old.query(`INSERT INTO legacy_marker VALUES (1, 'preserve me')`).run();
+    old.close();
+    const expected = ["message_acts","semantic_batches","obligations","obligation_events","obligation_dependencies","clearances","clearance_events","hazard_notices","message_deliveries"];
+    for (let pass = 0; pass < 2; pass++) withStore(path, () => {});
+    const migrated = new Database(path, { readonly: true });
+    const names = new Set((migrated.query(`SELECT name FROM sqlite_master WHERE type='table'`).all() as Array<{name:string}>).map(x=>x.name));
+    for (const name of expected) expect(names.has(name)).toBe(true);
+    expect((migrated.query(`SELECT value FROM legacy_marker WHERE id=1`).get() as {value:string}).value).toBe("preserve me");
+    migrated.close();
+  });
+
   test("opening TWICE is idempotent", () => {
     // Migrations run on every open, so a second pass must not throw on the
     // column it added the first time.

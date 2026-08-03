@@ -112,7 +112,6 @@ export function validateAnnotations(
     if (seen.has(id)) d.push({ path: `${p}.id`, message: "duplicate id" });
     seen.add(id);
     if (!source) { d.push({ path: `${p}.id`, message: "source message not found" }); continue; }
-    const body = source.body;
     for (const field of ["acts","hazards","provenance","declarations","responses","priorities","actOutcomes","sourceCaveats"]) {
       if (!Array.isArray(a[field])) d.push({ path: `${p}.${field}`, message: "required array" });
     }
@@ -121,8 +120,9 @@ export function validateAnnotations(
       if(typeof x.id!=="string"||x.id===""||recordIds.has(x.id)) d.push({path:`${path}.id`,message:"record id must be nonempty and unique"});
       else recordIds.add(x.id);
     };
-    for (let j = 0; j < (Array.isArray(a.acts) ? a.acts.length : 0); j++) {
-      const x = a.acts[j]; const q = `${p}.acts[${j}]`;
+    const acts=Array.isArray(a.acts)?a.acts:[];
+    for (let j = 0; j < acts.length; j++) {
+      const x = acts[j]; const q = `${p}.acts[${j}]`;
       if (!object(x)) { d.push({ path: q, message: "act must be an object" }); continue; }
       if (typeof x.id !== "string" || x.id === "" || recordIds.has(x.id)) d.push({ path: `${q}.id`, message: "act id must be nonempty and unique" });
       else recordIds.add(x.id);
@@ -170,8 +170,9 @@ export function validateAnnotations(
     }
     if(Array.isArray(a.sourceCaveats)&&a.sourceCaveats.some(x=>typeof x!=="string"||x===""))d.push({path:`${p}.sourceCaveats`,message:"source caveats must be nonempty strings"});
     const outcomeActs=new Set<string>();
-    for(let j=0;j<(Array.isArray(a.actOutcomes)?a.actOutcomes.length:0);j++){
-      const x=a.actOutcomes[j]; const q=`${p}.actOutcomes[${j}]`;
+    const actOutcomes=Array.isArray(a.actOutcomes)?a.actOutcomes:[];
+    for(let j=0;j<actOutcomes.length;j++){
+      const x=actOutcomes[j]; const q=`${p}.actOutcomes[${j}]`;
       if(!object(x)||typeof x.actId!=="string"||!recordIds.has(x.actId)||!oneOf(x.value,["fulfilled","violated","unresolved","unassessable"])) { d.push({path:q,message:"invalid act outcome or act reference"}); continue; }
       if(outcomeActs.has(x.actId)) d.push({path:`${q}.actId`,message:"an act may have only one outcome"});
       outcomeActs.add(x.actId); evidence(x.evidence,`${q}.evidence`,id,false);
