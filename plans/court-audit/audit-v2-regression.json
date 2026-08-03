@@ -1,0 +1,209 @@
+{
+  "rubricVersion": "2.3.0",
+  "regressionIds": [
+    36,
+    40,
+    97,
+    110,
+    112,
+    141,
+    146,
+    155,
+    161,
+    249,
+    262,
+    284,
+    289,
+    295,
+    399
+  ],
+  "checks": [
+    {
+      "name": "clearance-question-promise-separated",
+      "id": 36,
+      "passed": true
+    },
+    {
+      "name": "reported-third-party-is-provenance",
+      "id": 40,
+      "passed": true
+    },
+    {
+      "name": "forbearance-is-refrain",
+      "id": 97,
+      "passed": true
+    },
+    {
+      "name": "hazard-independent-of-acts",
+      "id": 110,
+      "passed": true
+    },
+    {
+      "name": "constraint-attached-to-clearance",
+      "id": 112,
+      "passed": true
+    },
+    {
+      "name": "response-not-borrowed-as-own-outcome",
+      "id": 141,
+      "passed": true
+    },
+    {
+      "name": "branched-question-and-refrain",
+      "id": 146,
+      "passed": true
+    },
+    {
+      "name": "transport-erratum",
+      "id": 155,
+      "passed": true
+    },
+    {
+      "name": "owned-and-orphaned-actions",
+      "id": 161,
+      "passed": true
+    },
+    {
+      "name": "sender-declaration-local-conflict",
+      "id": 249,
+      "passed": true
+    },
+    {
+      "name": "conditional-offer-decomposed",
+      "id": 262,
+      "passed": true
+    },
+    {
+      "name": "return-is-handoff",
+      "id": 284,
+      "passed": true
+    },
+    {
+      "name": "self-and-implementation-correction-separated",
+      "id": 289,
+      "passed": true
+    },
+    {
+      "name": "withdrawal-and-orphan-preserved",
+      "id": 295,
+      "passed": true
+    },
+    {
+      "name": "behaviour-correction-and-hazard-separated",
+      "id": 399,
+      "passed": true
+    }
+  ],
+  "passed": true,
+  "support": {
+    "messages": 45,
+    "acts": {
+      "correction": 15,
+      "grant": 8,
+      "handoff": 8,
+      "inform": 42,
+      "promise": 30,
+      "proposal": 19,
+      "question": 13,
+      "request": 32
+    },
+    "responsibility": {
+      "assigned": 82,
+      "unassigned": 2,
+      "none": 83
+    },
+    "commitmentMode": {
+      "perform": 16,
+      "refrain": 14
+    },
+    "condition": {
+      "automatic": 13,
+      "resurface_on_related_event": 8,
+      "manual": 13
+    },
+    "constrainedActs": 3,
+    "clearanceActs": 8,
+    "hazardMessages": 29,
+    "provenanceRecords": 2,
+    "declarationRecords": 2,
+    "responseRecords": 8,
+    "outcomeRecords": 86,
+    "priorities": {
+      "important": 23,
+      "normal": 11,
+      "urgent": 11
+    },
+    "dimensionSupport": {
+      "acts": {
+        "positive": 167,
+        "applicable": 45,
+        "missing": 0
+      },
+      "responsibility": {
+        "positive": 84,
+        "applicable": 167,
+        "missing": 0
+      },
+      "commitmentMode": {
+        "positive": 30,
+        "applicable": 30,
+        "missing": 0
+      },
+      "condition": {
+        "positive": 34,
+        "applicable": 167,
+        "missing": 0
+      },
+      "constraints": {
+        "positive": 3,
+        "applicable": 167,
+        "missing": 0
+      },
+      "clearance": {
+        "positive": 8,
+        "applicable": 45,
+        "missing": 0
+      },
+      "hazard": {
+        "positive": 29,
+        "applicable": 45,
+        "missing": 0
+      },
+      "correction": {
+        "positive": 15,
+        "applicable": 167,
+        "missing": 0
+      },
+      "provenance": {
+        "positive": 2,
+        "applicable": 45,
+        "missing": 0
+      },
+      "senderDeclaration": {
+        "positive": 2,
+        "applicable": 45,
+        "missing": 0
+      },
+      "responseLinkage": {
+        "positive": 8,
+        "applicable": 45,
+        "missing": 0
+      },
+      "priority": {
+        "positive": 45,
+        "applicable": 45,
+        "missing": 0
+      },
+      "anchors": {
+        "positive": 26,
+        "applicable": 167,
+        "missing": 0
+      },
+      "confidence": {
+        "positive": 352,
+        "applicable": 352,
+        "missing": 0
+      }
+    }
+  }
+}

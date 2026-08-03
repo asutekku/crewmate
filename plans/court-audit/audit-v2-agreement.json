@@ -1,0 +1,397 @@
+{
+  "rubricVersion": "2.3.0",
+  "holdoutIds": [
+    285,
+    39,
+    71,
+    268,
+    292,
+    291,
+    275,
+    154,
+    35,
+    136,
+    323,
+    70,
+    279,
+    269,
+    9
+  ],
+  "actBoundary": {
+    "tp": 49,
+    "fp": 4,
+    "fn": 13,
+    "precision": 0.9245283018867925,
+    "recall": 0.7903225806451613,
+    "f1": 0.8521739130434782
+  },
+  "actType": {
+    "tp": 48,
+    "fp": 5,
+    "fn": 14,
+    "precision": 0.9056603773584906,
+    "recall": 0.7741935483870968,
+    "f1": 0.8347826086956522
+  },
+  "dimensions": {
+    "priority": {
+      "applicable": 15,
+      "support": {
+        "important": 5,
+        "urgent": 5,
+        "normal": 5
+      },
+      "confusion": {
+        "important": {
+          "important": 5
+        },
+        "urgent": {
+          "urgent": 3,
+          "important": 2
+        },
+        "normal": {
+          "normal": 4,
+          "important": 1
+        }
+      },
+      "rawAgreement": 0.8,
+      "kappa": 0.7000000000000001
+    },
+    "author": {
+      "applicable": 49,
+      "support": {
+        "terrain-perf": 17,
+        "traffic-c9": 6,
+        "traffic-22": 2,
+        "water-dynamic": 1,
+        "adela": 13,
+        "traffic-aa": 2,
+        "water-sim-timberborn-7f": 4,
+        "traffic-07": 3,
+        "human": 1
+      },
+      "confusion": {
+        "terrain-perf": {
+          "terrain-perf": 17
+        },
+        "traffic-c9": {
+          "traffic-c9": 6
+        },
+        "traffic-22": {
+          "traffic-22": 2
+        },
+        "water-dynamic": {
+          "water-dynamic": 1
+        },
+        "adela": {
+          "adela": 13
+        },
+        "traffic-aa": {
+          "traffic-aa": 2
+        },
+        "water-sim-timberborn-7f": {
+          "water-sim-timberborn-7f": 4
+        },
+        "traffic-07": {
+          "traffic-07": 3
+        },
+        "human": {
+          "human": 1
+        }
+      },
+      "rawAgreement": 1,
+      "kappa": 1
+    },
+    "recipients": {
+      "applicable": 49,
+      "support": {
+        "adela": 12,
+        "water-sim-timberborn-7f": 4,
+        "traffic-07": 2,
+        "terrain-perf": 14,
+        "traffic-22": 7,
+        "traffic-aa": 4,
+        "akira": 3,
+        "water-dynamic": 2,
+        "traffic-c9": 1
+      },
+      "confusion": {
+        "adela": {
+          "adela": 12
+        },
+        "water-sim-timberborn-7f": {
+          "water-sim-timberborn-7f": 4
+        },
+        "traffic-07": {
+          "traffic-07": 2
+        },
+        "terrain-perf": {
+          "terrain-perf": 14
+        },
+        "traffic-22": {
+          "traffic-22": 7
+        },
+        "traffic-aa": {
+          "traffic-aa": 4
+        },
+        "akira": {
+          "akira": 3
+        },
+        "water-dynamic": {
+          "water-dynamic": 2
+        },
+        "traffic-c9": {
+          "traffic-c9": 1
+        }
+      },
+      "rawAgreement": 1,
+      "kappa": 1
+    },
+    "responsibility": {
+      "applicable": 49,
+      "support": {
+        "none": 17,
+        "assigned": 32
+      },
+      "confusion": {
+        "none": {
+          "none": 17
+        },
+        "assigned": {
+          "assigned": 32
+        }
+      },
+      "rawAgreement": 1,
+      "kappa": 1
+    },
+    "commitmentMode": {
+      "applicable": 9,
+      "support": {
+        "refrain": 4,
+        "perform": 5
+      },
+      "confusion": {
+        "refrain": {
+          "refrain": 3,
+          "perform": 1
+        },
+        "perform": {
+          "perform": 5
+        }
+      },
+      "rawAgreement": 0.8888888888888888,
+      "kappa": 0.7692307692307692
+    },
+    "conditionHandling": {
+      "applicable": 49,
+      "support": {
+        "none": 34,
+        "manual": 3,
+        "automatic": 7,
+        "resurface_on_related_event": 5
+      },
+      "confusion": {
+        "none": {
+          "none": 34
+        },
+        "manual": {
+          "manual": 3
+        },
+        "automatic": {
+          "automatic": 7
+        },
+        "resurface_on_related_event": {
+          "resurface_on_related_event": 3,
+          "automatic": 1,
+          "manual": 1
+        }
+      },
+      "rawAgreement": 0.9591836734693877,
+      "kappa": 0.9156626506024096
+    },
+    "constraintsPresence": {
+      "applicable": 49,
+      "support": {
+        "absent": 48,
+        "present": 1
+      },
+      "confusion": {
+        "absent": {
+          "absent": 46,
+          "present": 2
+        },
+        "present": {
+          "present": 1
+        }
+      },
+      "rawAgreement": 0.9591836734693877,
+      "kappa": 0.4842105263157882
+    },
+    "anchorPresence": {
+      "applicable": 49,
+      "support": {
+        "absent": 37,
+        "present": 12
+      },
+      "confusion": {
+        "absent": {
+          "present": 22,
+          "absent": 15
+        },
+        "present": {
+          "present": 12
+        }
+      },
+      "rawAgreement": 0.5510204081632653,
+      "kappa": 0.2503477051460361
+    },
+    "correctionType": {
+      "applicable": 4,
+      "support": {
+        "self_erratum": 2,
+        "peer_correction": 2
+      },
+      "confusion": {
+        "self_erratum": {
+          "self_erratum": 2
+        },
+        "peer_correction": {
+          "implementation_correction": 1,
+          "peer_correction": 1
+        }
+      },
+      "rawAgreement": 0.75,
+      "kappa": 0.6
+    },
+    "evidenceConfidence": {
+      "applicable": 49,
+      "support": {
+        "high": 49
+      },
+      "confusion": {
+        "high": {
+          "high": 47,
+          "medium": 2
+        }
+      },
+      "rawAgreement": 0.9591836734693877,
+      "kappa": 0
+    },
+    "clearancePresence": {
+      "applicable": 15,
+      "support": {
+        "absent": 12,
+        "present": 3
+      },
+      "confusion": {
+        "absent": {
+          "absent": 12
+        },
+        "present": {
+          "present": 3
+        }
+      },
+      "rawAgreement": 1,
+      "kappa": 1
+    },
+    "hazardPresence": {
+      "applicable": 15,
+      "support": {
+        "absent": 6,
+        "present": 9
+      },
+      "confusion": {
+        "absent": {
+          "present": 2,
+          "absent": 4
+        },
+        "present": {
+          "present": 9
+        }
+      },
+      "rawAgreement": 0.8666666666666667,
+      "kappa": 0.7058823529411765
+    },
+    "provenancePresence": {
+      "applicable": 15,
+      "support": {
+        "absent": 15
+      },
+      "confusion": {
+        "absent": {
+          "absent": 13,
+          "present": 2
+        }
+      },
+      "rawAgreement": 0.8666666666666667,
+      "kappa": 0
+    },
+    "declarationPresence": {
+      "applicable": 15,
+      "support": {
+        "absent": 15
+      },
+      "confusion": {
+        "absent": {
+          "absent": 15
+        }
+      },
+      "rawAgreement": 1,
+      "kappa": null,
+      "kappaUndefinedReason": "both reviewers have no variance"
+    },
+    "responsePresence": {
+      "applicable": 15,
+      "support": {
+        "absent": 10,
+        "present": 5
+      },
+      "confusion": {
+        "absent": {
+          "absent": 9,
+          "present": 1
+        },
+        "present": {
+          "present": 5
+        }
+      },
+      "rawAgreement": 0.9333333333333333,
+      "kappa": 0.8571428571428572
+    },
+    "outcomePresence": {
+      "applicable": 15,
+      "support": {
+        "present": 12,
+        "absent": 3
+      },
+      "confusion": {
+        "present": {
+          "present": 12
+        },
+        "absent": {
+          "absent": 3
+        }
+      },
+      "rawAgreement": 1,
+      "kappa": 1
+    }
+  },
+  "wholeMessageExact": {
+    "matched": 4,
+    "total": 15,
+    "rate": 0.26666666666666666
+  },
+  "gate": {
+    "passed": true,
+    "failures": [],
+    "provisional": [
+      "correctionType"
+    ],
+    "deferred": [
+      "constraintsPresence",
+      "anchorPresence",
+      "evidenceConfidence",
+      "provenancePresence"
+    ]
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "rubricVersion": "2.3.0",
+  "frozenAt": "2026-08-03",
+  "rubric": "rubric-v2.md",
+  "rubricSha256": "9623a1e2c1d0c90b85d386d8d68c02594c373274d6ba339fe8112ebfe19d3bd2",
+  "rubricRevisionHistory": [
+    { "version": "2.0.0", "sha256": "aec08bf0288f0f4a7143661b9251f56670317eff94e05622f736f794a7d6f917", "outcome": "invalidated after the first blind pass exposed ambiguous act segmentation and message-level outcomes" },
+    { "version": "2.1.0", "sha256": "ad9102b85a7526d1f9e91be16621e2a9154628def8bd436074bfca8eaef56761", "outcome": "invalidated after the blind pass exposed non-operational priority, responsibility, constraint, and anchor boundaries" },
+    { "version": "2.2.0", "sha256": "3594211d23d0802a373dcc16ebaf94aab93bce00c07f9b30653a0d58445ca532", "outcome": "invalidated after the blind pass exposed promise-responsibility and conditional-act boundary defects" },
+    { "version": "2.3.0", "sha256": "9623a1e2c1d0c90b85d386d8d68c02594c373274d6ba339fe8112ebfe19d3bd2", "outcome": "final frozen pass" }
+  ],
+  "source": "audit-source.json",
+  "sourceSha256": "30a723ba2f4b118acf3dbac589d5b1068f62af330bae774f1f1e8e510fc5a190",
+  "analysedIds": [8, 9, 35, 36, 37, 38, 39, 40, 70, 71, 95, 97, 109, 110, 111, 112, 122, 132, 133, 136, 141, 146, 154, 155, 161, 243, 248, 249, 262, 263, 267, 268, 269, 275, 279, 284, 285, 288, 289, 290, 291, 292, 295, 323, 399],
+  "excluded": [
+    { "id": 10, "why": "attribution self-test" },
+    { "id": 11, "why": "attribution self-test" },
+    { "id": 12, "why": "attribution self-test, sent to self" },
+    { "id": 13, "why": "attribution self-test" },
+    { "id": 24, "why": "channel test; real request shape but not real traffic" }
+  ],
+  "regressionIds": [36, 40, 97, 110, 112, 141, 146, 155, 161, 249, 262, 284, 289, 295, 399],
+  "reviewerHoldout": {
+    "algorithm": "Fisher-Yates over the ordered non-regression population using Mulberry32",
+    "seed": 20260803,
+    "orderedPopulation": [8, 9, 35, 37, 38, 39, 70, 71, 95, 109, 111, 122, 132, 133, 136, 154, 243, 248, 263, 267, 268, 269, 275, 279, 285, 288, 290, 291, 292, 323],
+    "selectedIds": [285, 39, 71, 268, 292, 291, 275, 154, 35, 136, 323, 70, 279, 269, 9]
+  },
+  "sourceCaveats": [
+    "audit-source.json is verbatim stored text, not reconstructed intended prose",
+    "messages 155 and 268 correct bodies damaged by shell transport",
+    "historical from_name is not authoritative; known bad rows remain uncorrected"
+  ],
+  "deferredFromP2": {
+    "anchorPresence": "Literal object anchors did not achieve reproducible holdout agreement; P2 must not add a generalized anchor field.",
+    "evidenceConfidence": "Confidence is retained as annotation-quality metadata only and is not authoritative presence state.",
+    "provenancePresence": "Only two full-corpus positives exist and holdout prevalence was unstable; P2 must not infer or store generalized provenance.",
+    "constraintsPresence": "Only three full-corpus positives exist; P2 may preserve explicit prose but must not generalize a structured constraints field from this corpus."
+  },
+  "freezeRule": "Any semantic rubric edit invalidates all v2 classifications and requires a new rubric version and complete rerun. Typo-only edits are logged and do not replace this frozen file."
+}

@@ -13,6 +13,13 @@ it. Disagree with a number and you can find the text it came from.
 | `audit-blind-review.json` | **independent interpretation** | a second classifier's labels on a stratified 15-message sample, blind to the first, against the frozen rubric |
 | `audit-manifest.json` | **provenance** | selection query, max message id at export, exclusions with reasons, reviewers, blind-sample ids and how they were chosen, file hashes |
 | `rubric-v1.md` | **the definitions** | the rubric both reviewers applied, frozen, with its known defects recorded |
+| `rubric-v2.md` | **replacement definitions** | the frozen, orthogonal act-level annotation model used by P1 |
+| `audit-v2-manifest.json` | **v2 provenance and freeze** | rubric/corpus hashes, exclusions, regression ids, and deterministic reviewer holdout |
+| `audit-v2-primary.json` | **complete v2 interpretation** | all 45 analysed messages classified under the frozen v2 rubric |
+| `audit-v2-regression.json` | **known-defect and support report** | executable checks for the original 15 defects plus full-corpus support denominators |
+| `audit-v2-holdout-review.json` | **fresh v2 interpretation** | independent labels for the deterministic 15-message reviewer holdout |
+| `audit-v2-agreement.json` | **machine-readable scoring** | confusion matrices, agreement statistics, and executable gate result |
+| `audit-v2-report.md` | **human-readable scoring** | generated summary of the same unadjudicated agreement result |
 
 Aggregates are not stored. They are derived from these files and reported in the
 plan, so a recount is always possible and a stale total cannot outlive the data.

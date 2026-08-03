@@ -350,54 +350,262 @@ Unblocked; nothing here depends on the taxonomy.
       run whatever was installed when they started, so without this "did this
       session ignore the feature or never have it?" is unanswerable
 
-### P1 — Rubric v2 corpus pass [ ]
+### P1 — Rubric v2 corpus pass [x]
 
 Blocks P2's schema only. **This is the gate on taxonomy-dependent fields**, not
 on P0.
 
-- [ ] rewrite the rubric around orthogonal dimensions (below), then **freeze it**
-- [ ] reclassify all 45 messages under v2
-- [ ] report **per-dimension support counts** alongside the labels — 45 messages
-      from one week against ~12 dimensions means some fields will rest on two or
-      three examples, and a field justified by two must not look as well-founded
-      as one justified by thirty
-- [ ] re-run the **original 15 as a regression set** — v2 was designed around
-      their failures, so they check that the known-hard cases now have somewhere
-      to live. That is not validation
-- [ ] **a fresh 15 drawn from the other 30 as a reviewer holdout**, classified
-      blind by a new reviewer. A v2 pass by one classifier re-inherits the
-      problem the first blind review exposed, and grading v2 on the examples that
-      produced it grades its own homework.
+#### The v2 observation model
 
-      **This is not a corpus holdout and the plan must not imply it is.** The
-      rubric's author has read all 45 messages, so nothing here is unseen data.
-      What it tests is narrower and still worth having: *can a fresh reviewer
-      apply v2 consistently to examples that did not directly produce its
-      known-defect list?*
-- [ ] **per-dimension agreement is the primary result; whole-message exact match
-      is secondary and deliberately strict.** A richer orthogonal schema can hold
-      exact match low while every dimension that matters improves — v1's two
-      failure modes (a threshold nobody stated, and outcomes borrowed from the
-      previous message) had different causes and would move independently
+The rubric is an **annotation model, not the P2 storage schema**. It records what
+is present in the prose without turning an inference into authority. Its fields
+may justify, remove or reshape a P2 type; they do not create an obligation.
+
+Every act carries the shortest decisive source span(s), as half-open UTF-16
+offsets into the immutable message body plus the quoted text. Offsets make a
+repeated phrase unambiguous; the quote makes an off-by-one reviewable. Two
+reviewers can then disagree about a boundary without the scorer guessing which
+phrases they meant. The frozen rubric defines these orthogonal dimensions and no
+reviewer derives them by reading the P2 implementation sketch:
+
+1. **acts** — zero or more act-level records: `inform · question · request ·
+   promise · correction · handoff · grant · proposal`. The rubric states the
+   inclusion threshold for a genuine act versus incidental language, and a
+   message may contain several acts of the same type
+2. **participants and responsibility, per act** — author, recipients, and
+   `assigned(actor) | unassigned | none`. This is where a message containing one
+   owned action and one orphan preserves both
+3. **commitment mode, per promise** — `perform | refrain`; forbearance is in
+4. **condition, per act** — absent, or `automatic |
+   resurface_on_related_event | manual`, with the anchor and branch text kept.
+   The annotation says what handling the prose supports; it does not pretend the
+   natural-language condition is executable
+5. **constraints, per act or clearance** — attached to the thing they qualify,
+   never collected at message level
+6. **clearance** — grant/revoke meaning and scope, separate from an obligation
+7. **hazard notice** — present/absent with subject and decisive span, independent
+   of act type and of priority
+8. **correction semantics** — `self_erratum | peer_correction |
+   implementation_correction`, plus a target when the text supplies one;
+   contradictory evidence does not imply supersession
+9. **provenance** — direct, sender-reported third-party act, or inferred signal.
+   A report names the reported actor/act when present and never becomes a direct
+   act merely because the reviewer believes it
+10. **sender declaration, per act** — e.g. "FYI, not a request". It governs only
+    the act it qualifies; conflicting content is preserved as a conflict rather
+    than silently overruling the sender
+11. **response linkage** — `respondsToMessageId?` and response disposition
+    (`acknowledge | accept | decline | counter | answer | return | none`), kept
+    separate from `outcomeOfThisMessage` (`fulfilled | violated | unresolved |
+    unassessable`). Reviewers may use the preserved corpus sequence to establish
+    an explicit linkage, but may not borrow the previous message's outcome as
+    this one's
+12. **priority, per recipient** — `normal | important | urgent`, judged by the
+    consequence of ignoring the delivery rather than typography
+13. **object anchors** — file, commit, work item, test, message or other explicit
+    object refs, attached to the relevant act/hazard/condition
+14. **confidence and ambiguity, per annotated record** — `high | medium | low`
+    plus a note. Missing, `none`, `unknown` and `not_applicable` are defined
+    separately; they are never interchangeable empty values
+
+Conditional offers get an explicit decomposition rule with worked examples.
+Sender labels versus content, branched obligations, same-message owned and
+orphaned actions, and the difference between no observed response and an
+unassessable outcome each get a positive and a negative example. Those are v1's
+known failure boundaries, not optional commentary.
+
+#### Freeze and artifacts
+
+- [x] write `rubric-v2.md`, including the field schema, allowed values,
+      applicability rules, act threshold, conditional-offer rule, source-span
+      rule and worked boundary examples
+- [x] freeze it **before any v2 classification**. Record `frozenAt`, a SHA-256
+      hash, corpus hashes, excluded ids and rubric version in
+      `audit-v2-manifest.json`. Any semantic rubric edit after classification
+      begins invalidates the pass and requires both reviewers to rerun; typo-only
+      edits are logged without replacing the frozen file
+- [x] add, never overwrite, these artifacts beside v1:
+      `audit-v2-primary.json`, `audit-v2-regression.json`,
+      `audit-v2-holdout-review.json`, `audit-v2-agreement.json` and
+      `audit-v2-report.md`. Raw reviewer labels remain immutable; adjudication,
+      if useful, is a separate file and never the input to agreement figures
+- [x] reclassify all 45 messages under v2. Preserve the five exclusions in the
+      manifest, and preserve known transport and attribution defects as source
+      caveats rather than repairing the source text by intuition
+- [x] report **per-dimension positive support, applicable denominator and missing
+      count** alongside every aggregate. With 45 messages against fourteen
+      dimensions, a field supported by two examples must not look as founded as
+      one supported by thirty. Fewer than five positive examples is explicitly
+      `provisional`, however good its agreement looks
+
+#### Regression and fresh-review holdout
+
+- [x] report the **original 15 ids** as a regression slice of the primary pass.
+      It passes only when every defect recorded in the v1 blind review is
+      representable in its intended dimension without an `inform`/`fyi` dump
+      label, a message-level owner boolean, or a free-text workaround. This is a
+      known-hard regression set, not validation and not a prevalence sample
+- [x] before the new reviewer starts, draw **15 ids from the other 30** with a
+      recorded deterministic seed and algorithm; store the ordered population,
+      selected ids and seed in the manifest. Do not redraw for better coverage
+      or better scores
+- [x] a fresh reviewer classifies those 15 blind to the primary v2 labels, v1
+      labels, prior blind-review notes, aggregates and P2 schema. They receive
+      only the frozen rubric, the **full verbatim source corpus** in order, the
+      15 ids they must label, and the source caveats. The surrounding rows are
+      necessary to score response linkage and later outcome; they are context,
+      not additional review items. Preserve the reviewer's output exactly as
+      returned
+
+This is a **reviewer holdout, not a corpus holdout**. The rubric's author has read
+all 45 messages, so no example is unseen data. It tests the narrower claim that a
+fresh reader can apply v2 consistently to messages that did not directly produce
+the known-defect list.
+
+#### Scoring and the gate into P2
+
+Act agreement has to be defined before it can be measured. Two acts align when
+their decisive source spans overlap; alignment maximises total span overlap
+one-to-one without considering the proposed type. Unmatched acts count as
+boundary disagreement. Type agreement is scored only after alignment, so a type
+error cannot be hidden by refusing to pair the records. Non-act records align by
+their declared subject span and dimension. The scorer and its tests live beside
+the artifacts; hand arithmetic is not the authority.
+
+- [x] for every single-valued applicable dimension report the confusion matrix,
+      raw agreement and Cohen's kappa; when kappa is undefined because one class
+      has no variance, say so rather than coercing it to 0 or 1
+- [x] for act boundaries/types and other multi-valued dimensions report
+      precision, recall and F1 in both reviewer directions, plus exact
+      whole-message match as a deliberately strict secondary figure
+- [x] **P1 passes** only when all of the following hold:
+      1. every dimension reports support and applicability denominators;
+      2. dimensions with at least five applicable holdout examples reach
+         **≥80% raw agreement and κ ≥0.60** (or ≥80% with kappa explicitly
+         undefined for a no-variance dimension);
+      3. act boundary/type micro-F1 is **≥0.80**;
+      4. no structural dimension — responsibility, condition attachment,
+         clearance, sender declaration or response linkage — has a repeated
+         directional disagreement on three or more holdout messages;
+      5. the original-15 regression condition above passes; and
+      6. every failed dimension is either revised and the entire frozen review
+         rerun, or explicitly deferred from P2. Low-support dimensions are
+         marked provisional and may justify only the narrow cases actually
+         observed, never an unsupported generalisation. A caveat may narrow the
+         schema; it may not wave a failed field through
+
+Whole-message exact match has **no pass threshold**. A richer orthogonal model
+can keep it low while each consequential dimension improves; v1's threshold
+ambiguity and borrowed outcomes had different causes and must be visible
+separately.
 
 The corpus is not only design evidence — it becomes regression fixtures, CLI
 formatting examples, and evaluation data if intent suggestion is ever automated.
 That is why it is worth rerunning rather than patching.
 
-### P2 — Obligations + message semantics + minimal exposure [ ]
+### P2 — Obligations + explicit message semantics [ ]
 
-One vertical slice. Splitting it fails in both directions: kinds alone label
-traffic nobody can act on; obligations alone are a command an agent must
-remember unprompted — which is how a feature ends up at one row.
+One vertical slice. Structured acts create durable state, the obligation fold
+makes that state actionable, and P0's existing allocator and append-only
+`injection_ledger` deliver it. P2 does **not** build another exposure path.
 
-**Do not lock this schema until all of these hold.** P0 is unblocked and does not
-wait on any of them:
+#### Revision after the P0 implementation and P1 gate
+
+This section is authoritative where older P2 text below used broader draft
+types. P1 passed act boundaries/types, priority, responsibility, commitment
+mode, condition handling, clearance, hazards, responses and outcomes. It did
+not license every field the annotation model could express.
+
+| P2 decision | Evidence and consequence |
+|---|---|
+| keep the consequential explicit act-record unit, one or many per message | act boundary F1 0.852 and type F1 0.835; `inform`/`proposal` remain prose because P2 gives them no lifecycle |
+| keep one responsible principal, separate from routing | responsibility 100%, κ 1.000 |
+| keep `perform` / `refrain` | commitment mode 88.9%, κ 0.769 |
+| keep typed automatic / related-event / manual conditions | condition handling 95.9%, κ 0.916 |
+| keep clearance, hazard, priority, response and outcome as orthogonal records | each passed its applicable gate |
+| keep correction only for an explicit structured correction command | only four holdout examples; subtype remains provisional |
+| **defer generalized constraints** | only three full-corpus positives; no `constraints[]` column or field in P2 |
+| **defer generalized object anchors** | 55.1% raw agreement; no generic `ObjectRef`, `subjectRef`, `anchorRef`, or inferred file/commit link |
+| **defer confidence** | annotation-QC metadata, never authoritative presence state |
+| **defer provenance and inferred signals** | no `InferredSignal`, `ReportedAct`, reported-act boolean, or promotion workflow in P2 |
+
+The deferrals are schema boundaries, not omitted TODOs. P2 preserves the full
+sender-supplied `text` on every act, clearance, hazard, condition and event, so
+information is not destroyed while unsupported structure is withheld. A later
+phase may add one deferred dimension only with new evidence and a migration.
+
+P2 accepts semantics only through explicit CLI/API variants. Plain `msg`/`say`
+remains prose and creates no act, obligation, clearance, correction or hazard.
+There is no intent parser, suggestion classifier, or automatic promotion from
+historical messages. This makes the P1 sender-declaration conflict safe by
+construction: the structured command is the declaration, and unrelated prose
+cannot manufacture a second act.
+
+P0 is the only delivery/exposure authority. An actionable obligation becomes an
+`InjectionCandidate` with:
+
+- `key`/`dedupeKey = obligation:<obligationId>`;
+- `stateVersion = sha256(canonical folded snapshot)`, where the canonical input
+  includes the event version and contains no timestamp;
+- priority maps exactly as `normal = 100`, `important = 105`, `urgent = 110`,
+  preserving P0's rule that obligations needing action outrank roster (`90`);
+- full and compact renderings generated from the same folded snapshot.
+
+Every selected, suppressed and omitted version is therefore reconstructable in
+the existing `injection_ledger`; no P2 `exposure` table or parallel suppression
+state is permitted. `cli.ts injection` remains the diagnostic surface.
+
+The first implementation slice is deliberately closed:
+
+1. explicit `ask`, `request`, `promise`, `handoff`, `grant`, `correct`, and
+   `hazard` commands create typed records and readable prose in
+   one transaction;
+2. obligation and clearance events append with optimistic version checking and
+   idempotency keys, then fold to current state;
+3. the allocator receives active/waiting/relevant obligation candidates and
+   records their delivery through P0;
+4. no historical backfill and no free-prose classification occur in P2;
+5. migrations are additive and old clients keep reading plain messages.
+
+P1's `inform` and `proposal` labels do not become P2 records: information and
+optional approaches with no authoritative lifecycle continue through `msg`/`say`.
+This avoids typed status channels nobody can act on while preserving the P1 rule
+that a message may create zero acts. A proposal becomes structured only when the
+sender turns it into a request, promise, handoff or grant.
+
+Candidate production is state-specific; "exists" is not synonymous with
+"actionable":
+
+| folded state | recipient | candidate |
+|---|---|---|
+| proposed request/handoff | proposed responsible actor | actionable: accept, decline or counter |
+| binding + active | current responsible actor | actionable: fulfil, relinquish, return, or report violation |
+| binding + waiting | current responsible actor | non-actionable compact context only; omitted rows do not enter the inbox |
+| unassigned + binding | operator and authorized coordinator sessions | actionable responsibility gap |
+| terminal authority/activation state | nobody | no candidate; history remains queryable |
+
+An event that changes any row increments the obligation version, changing
+`stateVersion` even when the rendered sentence happens to remain identical.
+That is intentional: P0 reconstructs which folded state was delivered, not only
+which bytes happened to render.
+
+Convenience CLI commands (`ask`, `request`, `promise`, `handoff`, `grant`,
+`correct`, `hazard`) call one typed service. A compound message uses
+`act batch --json <file>`; the service validates every act, dependency and
+participant first, then writes the message, acts, initial events and dependencies
+in one transaction. Partial compound messages are forbidden. Human-readable
+prose is rendered from the accepted typed input and stored with it; callers do
+not separately supply prose that could contradict the act.
+
+**This schema is now locked to the supported slice above.** P0 and P1 are
+complete; the following checklist records the invariants P2 must implement:
 
 1. every rubric-v1 aggregate labelled provisional — done, above
 2. act-level records rather than a singular message kind — specified below
 3. the automatic-creation rule stated once, not twice differently — below
 4. branching acceptance tests for 36 and 146 — below
-5. conditions and constraints attached to acts, not messages — below
+5. conditions attach to acts; generalized structured constraints are explicitly
+   deferred by P1 and remain only in preserved act text
 6. obligation history as events, not a mutable state column — below
 7. **binding separated from activation** — below
 8. **the event union covers activation, release, withdrawal and violation, and
@@ -406,8 +614,8 @@ wait on any of them:
    disposition with no type — below
 10. **warning and priority as orthogonal data** — `HazardNotice` as its own
     record, `priority` per recipient on delivery
-11. **acts are discriminated variants**, so a correction without a target or an
-    `inform` carrying a responsibility cannot be built — below
+11. **acts are discriminated variants**, so a correction without its explicit
+    provisional subtype or a grant carrying responsibility cannot be built
 12. **`ActorRef` everywhere a session string was**, and trustworthy attribution
     for new writes: diary 40 and 41 closed
 13. **typed `TriggerSpec` for automatic conditions**, and `ObligationDependency`
@@ -421,8 +629,8 @@ wait on any of them:
     no untyped `onResolution`
 17. **active refrain success is `fulfilled`, not `released`** — "it worked" and
     "it stopped mattering" must not collapse into one state
-18. **`ActOrigin` carries only authoritative origins**; inferred and reported
-    records cannot inhabit `MessageAct`
+18. **`ActOrigin` has one authoritative value, `structured_command`**; inferred
+    and reported records do not exist in the P2 schema
 19. **`ResponsibleActorRef` narrows who may own an obligation** to agent or
     operator
 20. **an authenticated actor on every event record, and the authorization matrix
@@ -434,9 +642,9 @@ wait on any of them:
 23. the v2 reviewer holdout passed (P1)
 24. `rubric-v2.md` written and frozen before that review runs (P1)
 
-Items 1–22 are settled in this document. **23 and 24 are the gate**, and they
-are P1's output — which is why P1 sits between the allocator and this slice
-rather than after it.
+Items 1–22 are settled subject to the P1 narrowing above. **23 and 24 passed**;
+P2 may now implement only the supported slice and must preserve the recorded
+deferrals.
 
 **Schema iteration ends here.** Items 14–22 all came from reading the fold on
 paper, and the paper has given up what it has: three of the last six were places
@@ -491,15 +699,15 @@ type Responsibility =
   | { kind: 'unassigned' };
 
 /**
- * Where an act came from — and ONLY the authoritative origins.
+ * Where an act came from. P2 accepts exactly one authoritative origin.
  *
  * `inferred` and `reported` were members here while the prose said inferred
  * signals are not acts and are not stored as acts. Leaving them in the union
  * meant a query that forgot to filter on origin could read a guess as a
- * commitment; removing them makes that unrepresentable. Both live in their own
- * records (`InferredSignal`, and `ReportedAct` if it is ever built).
+ * commitment; removing them makes that unrepresentable. P1 deferred both, so
+ * P2 has no inferred or reported record type at all.
  */
-type ActOrigin = 'explicit_command' | 'sender_declared';
+type ActOrigin = 'structured_command';
 
 interface ActBase {
   id: string;
@@ -513,29 +721,54 @@ interface ActBase {
 }
 
 // Variants, so the type system enforces what the prose asks for: a correction
-// without a target and a handoff without a subject are unrepresentable rather
+// without a subtype and a handoff without a subject are unrepresentable rather
 // than merely discouraged. A flat interface with every field optional permits
-// `{ type: 'inform', responsibility, condition, constraints }`, which means
+// `{ type: 'grant', responsibility, condition }`, which means
 // nothing.
 type MessageAct =
-  | (ActBase & { type: 'inform' })
   | (ActBase & { type: 'question';
       responsibility: Extract<Responsibility, { kind: 'assigned' }>;
       condition?: ObligationCondition })
   | (ActBase & { type: 'request';
       proposedResponsibility: Responsibility;
-      condition?: ObligationCondition; constraints?: string[] })
+      condition?: ObligationCondition })
   | (ActBase & { type: 'promise';
       responsibility: Extract<Responsibility, { kind: 'assigned' }>;
-      mode: CommitmentMode;
-      condition?: ObligationCondition; releaseBoundary?: ObligationCondition })
+      mode: 'perform'; condition?: ObligationCondition;
+      releaseBoundary?: ObligationCondition })
+  | (ActBase & { type: 'promise';
+      responsibility: Extract<Responsibility, { kind: 'assigned' }>;
+      mode: 'refrain'; condition?: ObligationCondition;
+      releaseBoundary: ObligationCondition })
   | (ActBase & { type: 'correction';
-      correctionType: CorrectionType; contradictsRef?: ObjectRef })
+      correctionType: CorrectionType; contradictsActId?: string })
   | (ActBase & { type: 'handoff';
-      subjectRef: ObjectRef; proposedRecipient: ResponsibleActorRef;
-      constraints?: string[] })
-  | (ActBase & { type: 'grant'; clearanceId: string })
-  | (ActBase & { type: 'proposal'; subjectRef?: ObjectRef });
+      subject: string; proposedRecipient: ResponsibleActorRef })
+  | (ActBase & { type: 'grant'; clearanceId: string });
+
+interface ObligationBase {
+  id: string;
+  sourceActId: string;
+  createdBy: ActorRef;
+  condition?: ObligationCondition;
+  validResolutionKeys: string[];     // declared up front; empty means unbranched
+}
+
+type Obligation =
+  | (ObligationBase & { kind: 'question' | 'request' | 'handoff' | 'unassigned_work' })
+  | (ObligationBase & { kind: 'promise'; mode: 'perform';
+      releaseBoundary?: ObligationCondition })
+  | (ObligationBase & { kind: 'promise'; mode: 'refrain';
+      releaseBoundary: ObligationCondition });
+
+/** Derived by folding events; never persisted as a mutable current-state row. */
+interface ObligationSnapshot {
+  obligationId: string;
+  authority: AuthorityState;
+  activation: ActivationState;
+  currentResponsible: Responsibility;
+  version: number;
+}
 
 /**
  * A hazard is its OWN record, not a field on an act.
@@ -551,13 +784,14 @@ interface HazardNotice {
   sourceMessageId: number;
   relatedActIds: string[];
   summary: string;
-  subjectRef?: ObjectRef;
+  subject: string;
 }
 
 /** Delivery weight, per recipient. Orthogonal to a hazard — an urgent question
  *  is not a warning, and a warning about something months away is not urgent. */
 interface MessageDelivery {
-  recipient: ActorRef;
+  sourceMessageId: number;
+  recipient: ResponsibleActorRef;
   priority: 'normal' | 'important' | 'urgent';
 }
 
@@ -570,18 +804,32 @@ interface MessageDelivery {
 interface Clearance {
   id: string;
   sourceActId: string;
-  scope: ObjectRef[];              // files, paths, subsystems
+  scopeText: string;               // preserved sender declaration, not parsed
   grantedBy: ActorRef;
   grantedTo: ResponsibleActorRef;
-  constraints: string[];           // "stay inside packBand/fillRow"
   releaseBoundary?: ObligationCondition;
 }
 
 type ClearanceEvent =
   | { type: 'granted' }
   | { type: 'revoked'; reason?: string }
-  | { type: 'expired'; triggerRef?: ObjectRef };
+  | { type: 'expired'; reason: string };
+
+interface ClearanceEventRecord {
+  id: string;
+  clearanceId: string;
+  actor: ActorRef;
+  occurredAt: number;
+  expectedVersion: number;
+  idempotencyKey: string;
+  payload: ClearanceEvent;
+}
 ```
+
+Clearance appends use the same transaction/version/idempotency protocol as
+obligations. `granted` is written by the structured grant's authenticated
+author, `revoked` by that grantor or the operator, and `expired` by an allowlisted
+system trigger or the operator. Granting and its initial event are atomic.
 
 **One act per message is the wrong unit** — an earlier draft of this file had a
 singular `declaredKind`, which is the flat-bag error this plan spends a section
@@ -590,36 +838,27 @@ question *and* a self-promise; answering the question does not fulfil the
 promise. Message 112 carries a clearance, a scope constraint on that clearance,
 and a promise with its own separate landing condition.
 
-That last example is also why conditions and constraints live on the act:
+That last example is why conditions live on the act while the original text is
+preserved verbatim:
 
 > Go ahead on `packBand`, but stay inside `packBand/fillRow`. I'll ping you when
 > my change lands.
 
-The scope constraint governs the clearance; the landing condition governs the
-promise. A message-level list loses which belongs to which.
+The landing condition governs the promise. P1 did not establish reliable
+structured constraint or anchor extraction, so P2 keeps "stay inside
+packBand/fillRow" inside the grant's `scopeText`/act text rather than pretending
+it has a trustworthy general-purpose constraint object.
 
 - [ ] acts as their own records; a message may have none, one, or several
-- [ ] the **sender's declared act wins — over the act it qualifies, and no
-      further.** "FYI, not a request" defeats automatic obligation creation for
-      that act; it does not suppress a separate promise in the same message. A
-      sender can truthfully mean *"none of this is a request, but I am promising
-      to ping you"*, and a message-wide override would silently eat the promise.
-      Act-level structure is what makes a declaration local. Parsing may surface
-      *"this appears to contain an expected action — record a request?"* and may
-      never manufacture one
-- [ ] **inferred signals are not acts and are not stored as acts.** A separate,
-      weaker record keeps a guess from ever being mistaken for a commitment by a
-      later query that forgets to filter on `origin`:
-
-      ```ts
-      interface InferredSignal {
-        sourceMessageId: number;
-        suggestedType: SpeechAct;
-        confidence: number;
-      }
-      ```
-
-      Promotion to a real act requires the sender confirming it
+- [ ] the **sender's explicit structured command is the declaration.** `msg` and
+      `say` never create semantic records, even when their prose looks like a
+      request. A compound intent is entered as several explicit acts in one
+      transaction, so "not a request, but I promise to ping" can create only the
+      promise. P2 contains no parser or suggestion surface
+- [ ] **inferred signals and reported acts are absent from P2.** P1 explicitly
+      deferred provenance and confidence. Plain prose remains only prose; there
+      is no weaker record, classifier output, or promotion path that a later
+      query could confuse with authority
 - [ ] **binding is not activation** — two independent folds, not one state
       column. "Do I owe this?" and "is it actionable now?" are different
       questions, and collapsing them is what made an earlier draft say a
@@ -658,7 +897,7 @@ promise. A message-level list loses which belongs to which.
         | { type: 'accepted' }
         | { type: 'declined'; reason?: string }
         | { type: 'countered'; replacementId: string }
-        | { type: 'withdrawn'; by: ActorRef; reason?: string }   // PROPOSAL pulled
+        | { type: 'withdrawn'; reason?: string }   // actor is on the event record
         | { type: 'cancelled'; reason: string }
         // ownership -- moves the owner WITHOUT touching either state
         | { type: 'relinquished'; from: ResponsibleActorRef; reason?: string }
@@ -666,12 +905,12 @@ promise. A message-level list loses which belongs to which.
         | { type: 'reassigned'; from: ResponsibleActorRef; to: ResponsibleActorRef }
         | { type: 'returned'; from: ResponsibleActorRef; to: ResponsibleActorRef }
         // activation
-        | { type: 'activated'; triggerRef?: ObjectRef }
+        | { type: 'activated'; trigger: TriggerSpec }
         | { type: 'released'; why: string }
         | { type: 'expired'; episodeId: string }
         // outcome -- `resolutionKey` names the branch a dependency keys on
-        | { type: 'fulfilled'; resolutionKey?: string; evidenceRef?: ObjectRef }
-        | { type: 'violated'; evidenceRef?: ObjectRef };
+        | { type: 'fulfilled'; resolutionKey?: string; evidenceMessageId?: number }
+        | { type: 'violated'; evidenceMessageId?: number };
       ```
 
       **`withdrawn` and `relinquished` are different events and an earlier draft
@@ -736,10 +975,11 @@ promise. A message-level list loses which belongs to which.
       nothing more — and the breach is the entire reason such promises are worth
       making in a shared tree. (This tool notifies and coordinates; it does not
       enforce. Recording a violation is what lets a person act on it.)
-      `withdrawn` is likewise distinct from `cancelled` and `returned`: the
-      holder stepping back ("I am stopping rather than trying a fourth fix") is a
-      different event from the work being handed on or called off, and message
-      295 is exactly that case.
+      `withdrawn` is likewise distinct from `cancelled`, `relinquished`, and
+      `returned`: a creator may withdraw an unaccepted proposal; a current holder
+      stepping back is `relinquished`; handing it to a previous owner is
+      `returned`; calling the work off is `cancelled`. Message 295 exercises the
+      latter ownership distinctions, not proposal withdrawal.
 
 - [ ] dispositions **typed against their targets** — `grant`/`revoke` apply to a
       clearance, `accept`/`decline`/`counter` to a request or handoff, `return`
@@ -751,9 +991,28 @@ promise. A message-level list loses which belongs to which.
       the second because the maker binds themselves and should not have to accept
       their own promise. *Requests* and *handoffs* start `proposed` and need the
       recipient's act. Binding says nothing about activation: a conditional
-      commitment is binding and `waiting` until its trigger fires. **Inferred
-      prose never creates authoritative state** — only `explicit_command` and
-      `sender_declared` origins may drive a transition
+      commitment is binding and `waiting` until its trigger fires. An explicit
+      unassigned work declaration is the exception: it starts binding and
+      unassigned because there is nobody who could accept a proposal; assignment
+      fills the responsibility gap without deciding whether the work is needed.
+      **Inferred
+      prose never creates authoritative state** — only `structured_command`
+      acts may seed an obligation or clearance
+
+      | structured input | initial authority | initial activation | responsibility |
+      |---|---|---|---|
+      | directed question | binding | active/waiting by condition | assigned recipient |
+      | assigned request | proposed | active/waiting by condition | proposed recipient |
+      | unassigned required work | binding | active/waiting by condition | unassigned |
+      | promise | binding | active/waiting by condition | assigned author |
+      | handoff | proposed | active/waiting by condition | proposed recipient |
+      | correction/hazard/grant | no obligation | no obligation | none |
+
+      A terminal authority state makes the combined obligation non-actionable
+      without rewriting the independent activation history. Thus a declined
+      proposed request may retain activation=`active` as a historical fact, but
+      candidate production requires authority=`binding` (except the proposed
+      recipient's accept/decline candidate).
 - [ ] `CommitmentMode: 'perform' | 'refrain'` — forbearance is not a negated
       action; fulfilment and violation are detected differently
 - [ ] **a refrain commitment requires a release boundary** — a release condition,
@@ -761,28 +1020,35 @@ promise. A message-level list loses which belongs to which.
       always means *until you return it or this episode closes*; without a
       terminator it becomes a permanent stale prohibition nobody remembers to
       lift
-- [ ] **an `automatic` condition needs a typed trigger, not an `ObjectRef`.** A
-      ref identifies the commit; it does not carry the predicate or the branch,
-      so `{ text, anchorRef?, handling }` could describe "the moment it lands on
-      master" and never evaluate it. The three handlings need three shapes:
+- [ ] **an `automatic` condition needs a typed trigger supplied by the structured
+      command, never an anchor extracted from prose.** P1 validated condition
+      handling and rejected generalized anchors. Consequently triggers name only
+      identifiers already authoritative in this store or an explicit commit SHA;
+      there is no `ObjectRef` escape hatch:
 
       ```ts
       type TriggerSpec =
-        | { kind: 'commit_reachable'; commitRef: ObjectRef; branch: string }
-        | { kind: 'work_completed'; workRef: ObjectRef }
-        | { kind: 'work_step_completed'; workRef: ObjectRef; step: number }
+        | { kind: 'commit_reachable'; commitSha: string; branch: string }
+        | { kind: 'work_completed'; workId: string }
+        | { kind: 'work_step_completed'; workId: string; step: number }
         | { kind: 'obligation_resolved'; obligationId: string;
             resolutionKey?: string };
 
+      type RelatedEventSpec =
+        | { kind: 'work_updated'; workId: string }
+        | { kind: 'obligation_updated'; obligationId: string };
+
       type ObligationCondition =
         | { text: string; handling: 'automatic'; trigger: TriggerSpec }
-        | { text: string; handling: 'resurface_on_related_event'; anchorRef: ObjectRef }
-        | { text: string; handling: 'manual'; anchorRef?: ObjectRef };
+        | { text: string; handling: 'resurface_on_related_event'; event: RelatedEventSpec }
+        | { text: string; handling: 'manual' };
       ```
 
       The system still never evaluates natural language — `text` is what a human
       reads, `trigger` is what the machine checks, and only the automatic variant
-      has one. `obligation_resolved` is what gives test 36 a real path: fulfilling
+      has one. Related-event conditions can name only an existing work or
+      obligation id; arbitrary paths/files remain in text. `obligation_resolved`
+      is what gives test 36 a real path: fulfilling
       the answer obligation is what fires the move-file promise
 - [ ] **every event is written by somebody, and the payloads do not say who.**
       `{ type: 'accepted' }` carries no actor, so nothing in the schema stops one
@@ -793,7 +1059,7 @@ promise. A message-level list loses which belongs to which.
       interface ObligationEventRecord {
         id: string;
         obligationId: string;
-        actor: ResponsibleActorRef;    // authenticated, never from `from_name`
+        actor: ActorRef;               // authenticated, never from `from_name`
         occurredAt: number;
         expectedVersion: number;       // optimistic concurrency, see below
         idempotencyKey: string;        // a hook retry must not double-append
@@ -810,10 +1076,12 @@ promise. A message-level list loses which belongs to which.
       | `reassigned` | current owner, or operator |
       | `returned` | current owner, to the previous or declared recipient |
       | `cancelled` | creator or operator, per an explicit policy |
-      | `violated` | a system detector, the operator, or the owner with evidence |
+      | `violated` | a named system detector, the operator, or the owner with evidence |
 
       This matrix is written **before** the CLI, not discovered by it. And the
-      actor must come from the authenticated session — diary 40 and 41 are why
+      agent/operator actors must come from the authenticated session; system
+      actors are accepted only from an in-process component allowlist and only
+      for event types the matrix grants them. Diary 40 and 41 are why
       `from_name` cannot be the source of an authorization decision
 - [ ] **append is transactional and version-checked.** Several agents and
       several lifecycle hooks write this store concurrently, so: read the fold
@@ -833,6 +1101,13 @@ promise. A message-level list loses which belongs to which.
         effect: 'activate' | 'release';
       }
       ```
+
+      Dependency effects are synchronous derived appends inside the same SQLite
+      transaction as the source event. Before writing, load and version-check
+      every affected obligation, compute the finite cascade, reject cycles or
+      conflicting effects, then append source and derived events atomically.
+      There is no post-commit worker and therefore no crash window in which the
+      source is fulfilled but its target never activates.
 
       **One resolution vocabulary.** An earlier draft had `answered` in the
       trigger, `fulfilled` in the events, and an untyped `onResolution: string`
@@ -855,25 +1130,28 @@ promise. A message-level list loses which belongs to which.
       `ResponsibleActorRef` narrows `ActorRef` to agent-or-operator, so an
       obligation owed by a `system` component or by "probably Hopper"
       (`legacy_uncertain`) is unrepresentable rather than merely discouraged
-- [ ] **`createdBy: ActorRef` is immutable; `currentResponsible: Responsibility`
-      moves.** Reassignment and inheritance change who owes it, never who made
-      it — and `createdBy` keeps the wider type, because historical authorship
-      is exactly where `legacy_uncertain` belongs
+- [ ] **`createdBy: ActorRef` is immutable; derived
+      `ObligationSnapshot.currentResponsible` moves.** There is no mutable owner
+      column. Reassignment and inheritance append events that change who the
+      fold says owes it, never who made it — and `createdBy` keeps the wider type,
+      because historical authorship is exactly where `legacy_uncertain` belongs
 - [ ] **new structured acts require trustworthy attribution.** Historical rows
       may stay `legacy_uncertain`, but an obligation authored off the defective
       `from_name` path would be a commitment attributed to the wrong agent —
       worse than no obligation. Diary 40 and 41 must be closed for new writes
       before this ships
-- [ ] correction carries `correctionType` and an optional `contradictsRef`.
-      Attaching contradictory evidence only — supersession stays explicit
-- [ ] **`reportedThirdPartyAct` is not a boolean.** Provenance needs who
-      reportedly acted, what they committed to, where the report came from and
-      whether it was confirmed — `{ reportedActorId?, actType, summary,
-      sourceRef?, confidence: 'reported' | 'confirmed' }`. A boolean would record
-      only that provenance once existed. **Defer it from P2 if that is too much
-      for the first slice; do not ship the boolean**
-- [ ] minimal exposure record written when obligations are first surfaced:
-      `sessionId · featureKey · surface · exposedAt · installedRevision`
+- [ ] correction carries the provisional `correctionType` and an optional
+      `contradictsActId`. It is available only through `correct`; no prose
+      inference or generalized evidence reference. Contradiction never implies
+      supersession, which remains an explicit event
+- [ ] **no provenance representation in P2.** P1 found only two full-corpus
+      positives and unstable holdout prevalence. Do not ship a boolean, a
+      confidence field, or a partial `ReportedAct`; reconsider only with a new
+      corpus gate
+- [ ] obligation delivery reuses P0's append-only `injection_ledger`. The
+      obligation id is the candidate key, folded event version is
+      `stateVersion`, and selected/omitted/suppressed outcomes are recorded by
+      `recordInjectionResult`. No `feature_exposure` table is added
 
 Acceptance tests, from the four lost obligations. Two of them **branch**, and
 the branches have different consequences — which is the clearest evidence that
@@ -885,17 +1163,63 @@ one message can produce *linked* obligations rather than one status:
       satisfies the first and emits `activated` on the second, which stays
       `active` until the move. **A test that only checks the question passes on
       half the message**
-- [ ] **#97** — condition and anchor preserved; outcome may stay honestly
+- [ ] **#97** — condition text and typed trigger preserved; outcome may stay honestly
       unassessable and is **never** falsely marked fulfilled
-- [ ] **#146** — recipient and file anchor retained; activity in `waterSim.ts`
-      produces a delivery. The refrain commitment is `binding` + `waiting`
+- [ ] **#146** — recipient retained; the structured command links the condition
+      to an existing work/obligation id rather than extracting a file anchor.
+      That related event produces a delivery. The refrain commitment is
+      `binding` + `waiting`
       throughout. Then it branches: *"stale claim"* satisfies the question and
       emits `released` on the commitment; *"yes, I'm in there"* satisfies the
       question and emits `activated`, holding until cleared. **Same two events,
       opposite branches — the test must exercise both**
 - [ ] **#295** — stays visible despite an inactive recipient; reassignable,
-      cancellable, inheritable. `withdrawn` is recorded as itself, not folded
-      into `cancelled` or `returned`. **Inactivity never implies completion**
+      cancellable, inheritable. The current holder's step-back is
+      `relinquished` (binding + unassigned); a later accepted hand-back is
+      `returned`. It is never `withdrawn`, because required work did not cease
+      to be wanted. **Inactivity never implies completion**
+
+The four corpus cases are necessary but not sufficient. P2's test gate also
+requires:
+
+- [ ] migration tests from the current P0 database and from every historical
+      schema fixture already supported; all new tables/columns/indexes are
+      additive and a second migration is a no-op
+- [ ] table constraints and service validation reject dangling message/act/
+      obligation/dependency/clearance ids, empty actor ids, duplicate act ids,
+      impossible initial states, unsupported correction subtypes, and any
+      deferred field smuggled into typed input
+- [ ] property tests generate legal event sequences and prove fold determinism,
+      immutable authorship, monotonic versioning, one current owner, separation
+      of authority from activation, and terminal-state rejection; generated
+      illegal transitions must fail without appending a row
+- [ ] authorization tests cover every event/actor cell in both directions,
+      including wrong session, stale display name, operator, system detector,
+      legacy-uncertain author, inactive owner, and unassigned responsibility
+- [ ] concurrency tests race equal `expectedVersion` appends (exactly one wins),
+      repeat every idempotency key (exactly one row), and verify a failed batch
+      leaves no message, act, event or dependency fragment
+- [ ] dependency tests cover activate/release, each resolution branch, a typoed
+      resolution key, cycles, self-edges, conflicting effects and duplicate
+      delivery; injected failures at every write boundary must roll back both
+      source and derived events
+- [ ] P0 integration tests force full, compact, unchanged, duplicate and
+      no-room outcomes; assert exact `obligation:<id>` keys/state versions in
+      `injection_ledger`, actionable omissions in `inbox`, non-actionable waiting
+      items absent from `inbox`, and reinjection after clear/compact/fork but
+      suppression on resume
+- [ ] priority tests prove `110 > 105 > 100 > roster 90`, stable key tie-breaks,
+      and no priority inversion when a larger urgent candidate fails to fit
+- [ ] CLI/API contract tests prove each convenience command and batch form emit
+      the same canonical records/prose, reject partial or contradictory input,
+      and never create semantics from `msg`/`say`
+- [ ] schema-shape tests assert that P2 contains no generalized constraints,
+      object anchors, confidence, inferred signals, provenance records, or
+      parallel exposure table. These are negative requirements from P1, not
+      merely untested features
+- [ ] restart/replay tests rebuild every fold solely from append-only events and
+      reproduce the same candidates and `stateVersion` values without relying
+      on cached current-state columns
 
 ### P3 — Full exposure ledger + denominator-aware stats [ ]
 
