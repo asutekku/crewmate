@@ -7,10 +7,8 @@
  * when a verb shipped without help text -- the feature worked, the tests passed,
  * and it was simply invisible to every agent that had not read CLAUDE.md.
  *
- * So this reads the `case` labels out of cli.ts SOURCE and compares them to the
- * table. Parsing source is normally a bad idea; here the alternative is
- * importing cli.ts, which dispatches on `Bun.argv` at module scope and would
- * run a command as a side effect of being imported.
+ * The CLI application is importable without process side effects, so this
+ * compares the registry itself to the table rather than parsing source text.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -23,20 +21,25 @@ import {
   VERB_GROUPS,
   VERBS,
 } from "../core/verbs.ts";
+import { commandNames } from "../cli/main.ts";
+import type { CliContext } from "../cli/types.ts";
 
-const CLI_SOURCE = await Bun.file(new URL("../cli.ts", import.meta.url)).text();
+const context: CliContext = {
+  dbPath: "",
+  projectName: "test",
+  projectRoot: "",
+  projectKey: "test",
+  isGit: false,
+  cwd: "",
+  binRoot: "",
+  sessionId: "",
+  now: () => 0,
+  log: () => {},
+  error: () => {},
+  fail: () => {},
+};
 
-/**
- * Every `case "x":` in cli.ts's dispatcher.
- *
- * The switch is the only place in the file with string case labels at exactly
- * two-space indentation, which is what keeps this from picking up cases inside
- * nested functions. `undefined` is filtered because bare `cli.ts` falling
- * through to `who` is a default, not a verb anyone types.
- */
-function dispatcherVerbs(): string[] {
-  return [...CLI_SOURCE.matchAll(/^ {2}case "([a-z-]+)":/gm)].map((m) => m[1] ?? "");
-}
+const dispatcherVerbs = (): string[] => commandNames(context);
 
 describe("the table and the dispatcher cannot drift", () => {
   test("every dispatched verb is in the table", () => {
@@ -53,11 +56,7 @@ describe("the table and the dispatcher cannot drift", () => {
     expect(phantom).toEqual([]);
   });
 
-  test("the dispatcher really was read -- a parse returning nothing would pass both", () => {
-    // Without this, a regex that stopped matching would make BOTH tests above
-    // vacuously green: no dispatched verbs means nothing missing, and the
-    // phantom check would fail loudly -- but only if the table is non-empty.
-    // Pin the count so a silent parse failure cannot masquerade as agreement.
+  test("the registry really was read -- an empty result would not pass", () => {
     expect(dispatcherVerbs().length).toBeGreaterThan(25);
     expect(VERBS.length).toBeGreaterThan(25);
   });
@@ -79,7 +78,10 @@ describe("the README documents what ships", () => {
    * catch, one level up. Windows paths are the plausible way it breaks.
    */
   function modulesIn(folder: string, atLeast: number): string[] {
-    const dir = new URL(`../${folder}`, import.meta.url).pathname.replace(/^\/(?=[A-Za-z]:)/, "");
+    const dir = new URL(`../${folder}`, import.meta.url).pathname.replace(
+      /^\/(?=[A-Za-z]:)/,
+      "",
+    );
     const files = [...new Bun.Glob("*.ts").scanSync(dir)];
     expect(files.length).toBeGreaterThanOrEqual(atLeast);
     return files;
@@ -87,17 +89,23 @@ describe("the README documents what ships", () => {
 
   test("every core module is in the module table", async () => {
     const text = await README.text();
-    expect(modulesIn("core", 15).filter((f) => !text.includes(`\`${f}\``))).toEqual([]);
+    expect(
+      modulesIn("core", 15).filter((f) => !text.includes(`\`${f}\``)),
+    ).toEqual([]);
   });
 
   test("every hook is in the hook table", async () => {
     const text = await README.text();
-    expect(modulesIn("hooks", 12).filter((f) => !text.includes(`\`${f}\``))).toEqual([]);
+    expect(
+      modulesIn("hooks", 12).filter((f) => !text.includes(`\`${f}\``)),
+    ).toEqual([]);
   });
 
   test("every verb reaches the README, not just --help", async () => {
     const text = await README.text();
-    expect(VERBS.filter((v) => v.hidden !== true && !text.includes(`\`${v.verb}`))).toEqual([]);
+    expect(
+      VERBS.filter((v) => v.hidden !== true && !text.includes(`\`${v.verb}`)),
+    ).toEqual([]);
   });
 });
 
@@ -129,7 +137,9 @@ describe("the table is well formed", () => {
 
 describe("usageFor", () => {
   test("states a verb's arguments once, for both help and argument errors", () => {
-    expect(usageFor("msg")).toBe('usage: cli.ts msg <name> "<text>" [--from <name>]');
+    expect(usageFor("msg")).toBe(
+      'usage: cli.ts msg <name> "<text>" [--from <name>]',
+    );
   });
 
   test("omits the space when a verb takes no arguments", () => {
@@ -155,7 +165,15 @@ describe("rendered help", () => {
 
   test("includes the verbs that were missing from the old hand-written string", () => {
     // The specific regression. These existed, worked, and appeared nowhere.
-    for (const v of ["note", "recall", "remember", "breaks", "needs", "blame", "files"]) {
+    for (const v of [
+      "note",
+      "recall",
+      "remember",
+      "breaks",
+      "needs",
+      "blame",
+      "files",
+    ]) {
       expect(text).toContain(v);
     }
   });
@@ -179,7 +197,8 @@ describe("rendered help", () => {
     // a 108-char line sailed through a 100-char budget, because the check was
     // computed from the UNPADDED call while the renderer padded to a column.
     for (const w of [80, 100, 120]) {
-      for (const line of usage(w).split("\n")) expect(line.length).toBeLessThanOrEqual(w);
+      for (const line of usage(w).split("\n"))
+        expect(line.length).toBeLessThanOrEqual(w);
     }
   });
 

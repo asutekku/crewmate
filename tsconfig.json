@@ -16,5 +16,5 @@
     "noFallthroughCasesInSwitch": true,
     "useUnknownInCatchVariables": true
   },
-  "include": ["cli.ts", "install.ts", "core/**/*.ts", "hooks/**/*.ts", "test/**/*.ts"]
+  "include": ["cli.ts", "cli/**/*.ts", "install.ts", "core/**/*.ts", "hooks/**/*.ts", "test/**/*.ts"]
 }

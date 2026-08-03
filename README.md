@@ -512,85 +512,86 @@ were invisible.
 
 ### Who is here
 
-| Command | Does |
-|---|---|
-| `who [--raw]` | the roster: who is live, on what, where |
-| `log [n] [--raw]` | recent messages from every agent |
-| `say <text>` | tell every agent something |
-| `msg <name> "<text>" [--from <name>]` | tell one agent something |
-| `where` | this session's repo, worktree, branch and drift from base |
-| `stats` | what the store holds, how large a sample that is, and which features have rows |
-| `injection [--agent <name>]` | what session start puts in this session's context, and what it left out |
-| `inbox [--agent <name>]` | the full text of anything omitted from that context for length |
-| `ask <name> "<question>"` | ask a peer something and record that a reply is owed |
-| `answer <id> "<answer>"` | answer a question asked of you |
-| `asks` | questions waiting on you, and what you are waiting for |
-| `request <name> "<text>"` | record a proposed obligation for a peer |
-| `promise <name> "<text>" [--refrain --until <text>]` | bind yourself to perform or refrain |
-| `handoff <name> "<subject>"` | propose moving responsibility to a peer |
-| `grant <name> "<scope>"` | grant clearance while preserving opaque scope text |
-| `correct <name> <self\|peer\|implementation> "<text>"` | record an explicit typed correction |
-| `hazard <name> "<subject>" "<warning>"` | record a warning independently of obligations |
-| `act <name> --json <file>` | atomically create a compound structured message |
-| `obligation <id> [event] [flags]` | inspect or append a versioned obligation event |
-| `clearance <id> [revoke\|expire] [flags]` | inspect, revoke or expire a clearance |
-| `files <agent> [--hours 24]` | every file an agent has touched, and why |
-| `blame <path>` | who has been in this file, newest first |
-| `quit <name>` | drop a dead session off the roster |
-| `clear` | wipe the roster and message log |
-| `help` | this list |
+| Command                                                | Does                                                                           |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------ |
+| `who [--raw]`                                          | the roster: who is live, on what, where                                        |
+| `log [n] [--raw]`                                      | recent messages from every agent                                               |
+| `say <text>`                                           | tell every agent something                                                     |
+| `msg <name> "<text>" [--from <name>]`                  | tell one agent something                                                       |
+| `where`                                                | this session's repo, worktree, branch and drift from base                      |
+| `stats`                                                | what the store holds, how large a sample that is, and which features have rows |
+| `injection [--agent <name>]`                           | what session start puts in this session's context, and what it left out        |
+| `inbox [--agent <name>]`                               | the full text of anything omitted from that context for length                 |
+| `ask <name> "<question>"`                              | ask a peer something and record that a reply is owed                           |
+| `answer <id> "<answer>"`                               | answer a question asked of you                                                 |
+| `asks`                                                 | questions waiting on you, and what you are waiting for                         |
+| `request <name> "<text>"`                              | record a proposed obligation for a peer                                        |
+| `promise <name> "<text>" [--refrain --until <text>]`   | bind yourself to perform or refrain                                            |
+| `handoff <name> "<subject>"`                           | propose moving responsibility to a peer                                        |
+| `grant <name> "<scope>"`                               | grant clearance while preserving opaque scope text                             |
+| `correct <name> <self\|peer\|implementation> "<text>"` | record an explicit typed correction                                            |
+| `hazard <name> "<subject>" "<warning>"`                | record a warning independently of obligations                                  |
+| `act <name> --json <file>`                             | atomically create a compound structured message                                |
+| `obligation <id> [event] [flags]`                      | inspect or append a versioned obligation event                                 |
+| `clearance <id> [revoke\|expire] [flags]`              | inspect, revoke or expire a clearance                                          |
+| `files <agent> [--hours 24]`                           | every file an agent has touched, and why                                       |
+| `blame <path>`                                         | who has been in this file, newest first                                        |
+| `quit <name>`                                          | drop a dead session off the roster                                             |
+| `clear`                                                | wipe the roster and message log                                                |
+| `help`                                                 | this list                                                                      |
 
 ### What you are doing
 
-| Command | Does |
-|---|---|
-| `doing "<subject>" [--plan "a; b; c"] [--plan-doc <path>]` | open a work item; --plan is optional |
-| `did <n> ["<what changed>"] [--item <match>]` | tick a step off, with what actually changed |
-| `step <n> "<status>" [--item <match>]` | note progress on a step without closing it |
-| `add "<step>" [--item <match>]` | a phase the plan missed |
-| `done [<subject match>] [--abandoned]` | close ONE item; --abandoned is the honest exit |
-| `board [<agent>] [--history] [--all]` | what everyone is doing |
-| `link <plan path> [--item <match>]` | say which plan document this item executes |
-| `plans` | every plan with work against it, and what shipped |
-| `mine` | my open items |
-| `breaks "<what>" [--item <match>]` | record a breaking change; tells agents in the same files |
-| `needs "<what>" [--item <match>]` | record what you are blocked on, and tell them |
+| Command                                                    | Does                                                     |
+| ---------------------------------------------------------- | -------------------------------------------------------- |
+| `doing "<subject>" [--plan "a; b; c"] [--plan-doc <path>]` | open a work item; --plan is optional                     |
+| `did <n> ["<what changed>"] [--item <match>]`              | tick a step off, with what actually changed              |
+| `step <n> "<status>" [--item <match>]`                     | note progress on a step without closing it               |
+| `add "<step>" [--item <match>]`                            | a phase the plan missed                                  |
+| `done [<subject match>] [--abandoned]`                     | close ONE item; --abandoned is the honest exit           |
+| `board [<agent>] [--history] [--all]`                      | what everyone is doing                                   |
+| `link <plan path> [--item <match>]`                        | say which plan document this item executes               |
+| `plans`                                                    | every plan with work against it, and what shipped        |
+| `mine`                                                     | my open items                                            |
+| `breaks "<what>" [--item <match>]`                         | record a breaking change; tells agents in the same files |
+| `needs "<what>" [--item <match>]`                          | record what you are blocked on, and tell them            |
 
 ### Findings that outlive the session
 
-| Command | Does |
-|---|---|
-| `note "<title>" --topic <t> [--scope <dir>] [--kind error] [--fixes <id>]` | file a finding, or a bug; `note <id>` reads one |
-| `recall <words> [--scope <dir>] [--limit n]` | search findings |
-| `bugs [--scope <dir>] [--limit n]` | errors nobody has fixed yet |
-| `topics` | every topic, with how much is under it |
-| `topic <name> [--limit n]  \|  merge <from> <into>` | read one topic, or fold two together |
-| `tags` | every tag in use |
-| `note-deprecate <id> "<why it stopped being true>"` | mark a finding no longer true, keeping the history |
-| `note-supersede <old-id> <new-id>` | point an old finding at the one that replaced it |
-| `diary check` | findings that look stale, thin or duplicated |
+| Command                                                                    | Does                                               |
+| -------------------------------------------------------------------------- | -------------------------------------------------- |
+| `note "<title>" --topic <t> [--scope <dir>] [--kind error] [--fixes <id>]` | file a finding, or a bug; `note <id>` reads one    |
+| `recall <words> [--scope <dir>] [--limit n]`                               | search findings                                    |
+| `bugs [--scope <dir>] [--limit n]`                                         | errors nobody has fixed yet                        |
+| `topics`                                                                   | every topic, with how much is under it             |
+| `topic <name> [--limit n]  \|  merge <from> <into>`                        | read one topic, or fold two together               |
+| `tags`                                                                     | every tag in use                                   |
+| `note-deprecate <id> "<why it stopped being true>"`                        | mark a finding no longer true, keeping the history |
+| `note-supersede <old-id> <new-id>`                                         | point an old finding at the one that replaced it   |
+| `diary check`                                                              | findings that look stale, thin or duplicated       |
 
 ### What you remember about the user
 
-| Command | Does |
-|---|---|
-| `remember "<title>" [--body "<detail>"] [--tags a,b] [--global]` | keep something about the user across sessions |
-| `about-me [--all]` | what you have kept |
-| `forget <id>` | drop a memory outright -- a wrong one must not outlive you |
-| `inherit [<name>]` | take up a departed agent's knowledge; bare lists them |
+| Command                                                          | Does                                                       |
+| ---------------------------------------------------------------- | ---------------------------------------------------------- |
+| `remember "<title>" [--body "<detail>"] [--tags a,b] [--global]` | keep something about the user across sessions              |
+| `about-me [--all]`                                               | what you have kept                                         |
+| `forget <id>`                                                    | drop a memory outright -- a wrong one must not outlive you |
+| `inherit [<name>]`                                               | take up a departed agent's knowledge; bare lists them      |
 
 ### Names and roles
 
-| Command | Does |
-|---|---|
-| `call-me <name> [--agent <who>]` | take a different name; peers type it at msg |
-| `call-you "<role>" [--agent <who>]` | say what you ARE: Keeper of Wet Things |
+| Command                             | Does                                        |
+| ----------------------------------- | ------------------------------------------- |
+| `call-me <name> [--agent <who>]`    | take a different name; peers type it at msg |
+| `call-you "<role>" [--agent <who>]` | say what you ARE: Keeper of Wet Things      |
 
 ## Files
 
-Three folders by role: `hooks/` is the event surface, `core/` is everything they
-share, `test/` never ships. Only `cli.ts` and `install.ts` sit at the top,
-because they are the two things you run by hand.
+Four folders by role: `hooks/` is the event surface, `core/` is shared domain
+code and persistence, `cli/` owns the command application, and `test/` never
+ships. Only `cli.ts` and `install.ts` sit at the top because they are the two
+things you run by hand; `cli.ts` is deliberately only an executable boundary.
 
 **`bin/` mirrors this layout**, so the relative imports that ship resolve exactly
 as they do here — `install.ts` walks the tree rather than flattening it, and
@@ -602,15 +603,15 @@ replaces `bin/` wholesale so a module that moves cannot leave a stale twin.
 | ------------------- | ------------------------------------------------------------------------- |
 | `session-start.ts`  | **SessionStart** — register; inject the roster.                           |
 | `prompt-submit.ts`  | **UserPromptSubmit** — heartbeat; deliver unread; record the stated task. |
-| `pre-edit.ts`       | **PreToolUse**(Edit) — claim the path; warn on peer overlap.             |
-| `pre-bash.ts`       | **PreToolUse**(Bash) — deny a loop polling a background task's output.   |
+| `pre-edit.ts`       | **PreToolUse**(Edit) — claim the path; warn on peer overlap.              |
+| `pre-bash.ts`       | **PreToolUse**(Bash) — deny a loop polling a background task's output.    |
 | `tool-batch.ts`     | **PostToolBatch** — mid-turn delivery.                                    |
 | `turn-end.ts`       | **Stop** — publish the turn's files; deliver directed mail.               |
 | `turn-failed.ts`    | **StopFailure** — a dead turn stops reading as "still working".           |
 | `notify.ts`         | **Notification** — records "waiting for permission".                      |
 | `subagent-start.ts` | **SubagentStart** — tells a subagent what peers hold.                     |
-| `subagent-stop.ts`  | **SubagentStop** — closes the minion out, so the count is live.          |
-| `commit-landed.ts`  | **PostToolUse(Bash)** — reads git's own output; records the sha.         |
+| `subagent-stop.ts`  | **SubagentStop** — closes the minion out, so the count is live.           |
+| `commit-landed.ts`  | **PostToolUse(Bash)** — reads git's own output; records the sha.          |
 | `compacted.ts`      | **PostCompact** — refreshes intent from the compaction summary.           |
 | `cwd-changed.ts`    | **CwdChanged** — keeps worktree/branch true after a `cd`.                 |
 | `task-changed.ts`   | **TaskCreated/Completed** — mirrors per-session tasks to a shared board.  |
@@ -618,32 +619,32 @@ replaces `bin/` wholesale so a module that moves cannot leave a stale twin.
 
 ### `core/` — shared by every hook and the CLI
 
-| File                  | Role                                                                                |
-| --------------------- | ----------------------------------------------------------------------------------- |
-| `store.ts`            | SQLite schema + all state access. The only file that knows SQL.                     |
-| `repo.ts`             | Project identity, worktree, db path (cached — a `git rev-parse` costs 31 ms).       |
-| `shared.ts`           | Payload reading, report formatting, `emit`.                                         |
-| `topic.ts`            | Lossy, credential-rejecting text → one-line roster label.                           |
-| `colour.ts`           | ANSI for the CLI only. Never reaches an agent's context.                            |
-| `agents.ts`           | Reads `claude agents --json` for real names + idle/busy.                            |
-| `transcript.ts`       | Bounded tail read of a session's own JSONL — conversation title, recent prose.      |
-| `summary.ts`          | Prompts Haiku for a "what is it doing now" line; spawns, never waits.               |
-| `summarize-worker.ts` | The detached process that call runs in, so no hook ever blocks on it.               |
-| `layout.ts`           | Roster layout arithmetic — widths, file summarising, background processes.          |
-| `work.ts`             | The work board's tables, agent key, and the event fold. Its own lifetime rule.      |
-| `board.ts`            | Rendering the board — takes a paint callback, so it is testable without a terminal. |
-| `diary.ts`            | Findings that outlive a session: topics, tags, scopes, FTS5 search.                 |
-| `questions.ts`        | Questions between agents — state, delivery, and expiry against a dead target.       |
-| `obligations.ts`      | Explicit acts, append-only folds, authorization, dependencies, and P0 candidates.  |
-| `features.ts`         | Canonical feature ids, labels, candidate mappings, act mappings, and CLI surfaces. |
-| `hook.ts`             | Shared hook input and output helpers.                                                |
-| `personal.ts`         | Per-agent memories, in one db outside any project. `forget` deletes.                |
-| `verbs.ts`            | Every CLI verb in one table; `usage()` and per-verb argument errors render from it. |
-| `names.ts`            | The given-name pool, and the two casers (prose role vs typeable name).              |
-| `dirty.ts`            | Uncommitted files, for the roster's "what is in flight" line.                       |
-| `config.ts`           | Tunables — staleness windows, how much of the board to show.                        |
-| `stats.ts`            | Aggregates rows plus separate feature availability/exposure/use observations, session opportunities, and surfaces. |
-| `injection.ts`        | What reaches a session's context: identity as an un-evictable envelope, everything else ranked against a budget. |
+| File                  | Role                                                                                                                                      |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `store.ts`            | SQLite schema + all state access. The only file that knows SQL.                                                                           |
+| `repo.ts`             | Project identity, worktree, db path (cached — a `git rev-parse` costs 31 ms).                                                             |
+| `shared.ts`           | Payload reading, report formatting, `emit`.                                                                                               |
+| `topic.ts`            | Lossy, credential-rejecting text → one-line roster label.                                                                                 |
+| `colour.ts`           | ANSI for the CLI only. Never reaches an agent's context.                                                                                  |
+| `agents.ts`           | Reads `claude agents --json` for real names + idle/busy.                                                                                  |
+| `transcript.ts`       | Bounded tail read of a session's own JSONL — conversation title, recent prose.                                                            |
+| `summary.ts`          | Prompts Haiku for a "what is it doing now" line; spawns, never waits.                                                                     |
+| `summarize-worker.ts` | The detached process that call runs in, so no hook ever blocks on it.                                                                     |
+| `layout.ts`           | Roster layout arithmetic — widths, file summarising, background processes.                                                                |
+| `work.ts`             | The work board's tables, agent key, and the event fold. Its own lifetime rule.                                                            |
+| `board.ts`            | Rendering the board — takes a paint callback, so it is testable without a terminal.                                                       |
+| `diary.ts`            | Findings that outlive a session: topics, tags, scopes, FTS5 search.                                                                       |
+| `questions.ts`        | Questions between agents — state, delivery, and expiry against a dead target.                                                             |
+| `obligations.ts`      | Explicit acts, append-only folds, authorization, dependencies, and P0 candidates.                                                         |
+| `features.ts`         | Canonical feature ids, labels, candidate mappings, act mappings, and CLI surfaces.                                                        |
+| `hook.ts`             | Shared hook input and output helpers.                                                                                                     |
+| `personal.ts`         | Per-agent memories, in one db outside any project. `forget` deletes.                                                                      |
+| `verbs.ts`            | Every CLI verb in one table; `usage()` and per-verb argument errors render from it.                                                       |
+| `names.ts`            | The given-name pool, and the two casers (prose role vs typeable name).                                                                    |
+| `dirty.ts`            | Uncommitted files, for the roster's "what is in flight" line.                                                                             |
+| `config.ts`           | Tunables — staleness windows, how much of the board to show.                                                                              |
+| `stats.ts`            | Aggregates rows plus separate feature availability/exposure/use observations, session opportunities, and surfaces.                        |
+| `injection.ts`        | What reaches a session's context: identity as an un-evictable envelope, everything else ranked against a budget.                          |
 | `sessionBlock.ts`     | The session-start candidates themselves — roster, recent activity, diary, memories — built once for both the hook and `cli.ts injection`. |
 
 `feature_events` is the raw P3 evidence ledger. Availability means a session
@@ -657,19 +658,44 @@ come from exposed sessions, including those that did not use the feature.
 Injection observations retain the originating delivery id, while measurement
 history has its own lifetime independent of live suppression state.
 
+### `cli/` — one command family per module
+
+| File                   | Role                                                                                |
+| ---------------------- | ----------------------------------------------------------------------------------- |
+| `main.ts`              | Builds the command registry, dispatches one command, and records CLI-use telemetry. |
+| `types.ts`             | Explicit command context and handler contracts.                                     |
+| `registry.ts`          | Duplicate-safe composition of independently owned command families.                 |
+| `args.ts`              | Shared flag extraction.                                                             |
+| `command.ts`           | Centralized usage and command-failure presentation.                                 |
+| `result.ts`            | Explicit success/failure values and safe caught-error normalization.                |
+| `roster.ts`            | Short orchestration pipeline for the live roster command.                           |
+| `roster-model.ts`      | Store synchronization, snapshot indexing, contention analysis, and layout.          |
+| `roster-renderers.ts`  | Independent session, minion, claim, background-process, and warning renderers.      |
+| `messaging.ts`         | Log, directed messages, and broadcasts.                                             |
+| `work.ts`              | Work-item mutations, board/history rendering, and break/need signaling.             |
+| `diary.ts`             | Findings, bugs, search, topics, tags, and retirement.                               |
+| `personal.ts`          | Operator memories and lineage inheritance.                                          |
+| `questions.ts`         | Answering and inspecting questions.                                                 |
+| `obligations.ts`       | Structured acts and obligation/clearance lifecycle commands.                        |
+| `obligation-events.ts` | Pure version validation and obligation/clearance event construction.                |
+| `structured.ts`        | Pure parser for single-act structured-message shortcuts.                            |
+| `admin.ts`             | Naming, roles, project location, roster clearing, and deregistration.               |
+| `diagnostics.ts`       | Edit history and store statistics.                                                  |
+| `injection.ts`         | Session-start envelope and omission inspection.                                     |
+
 ### Top level
 
-| File                      | Role                                                     |
-| ------------------------- | -------------------------------------------------------- |
-| `cli.ts`                  | Human inspection + broadcast + the work board.           |
-| `install.ts`              | Copy to `~/.claude/agent-presence/bin/`, register hooks. |
-| `test/store.test.ts`      | Delivery + identity, against a real throwaway db.        |
-| `test/topic.test.ts`      | What may become a roster label, and what may not.        |
-| `test/roster.test.ts`     | Roster layout, asserted with colour codes stripped.      |
-| `test/layout.test.ts`     | Width arithmetic and path classification.                |
-| `test/transcript.test.ts` | Tail reads of real transcript shapes.                    |
-| `test/work.test.ts`       | The timeline property, and several items open at once.   |
-| `test/board.test.ts`      | Board rendering — widths measured on UNPAINTED text.     |
+| File                      | Role                                                      |
+| ------------------------- | --------------------------------------------------------- |
+| `cli.ts`                  | Eleven-line executable boundary that calls `cli/main.ts`. |
+| `install.ts`              | Copy to `~/.claude/agent-presence/bin/`, register hooks.  |
+| `test/store.test.ts`      | Delivery + identity, against a real throwaway db.         |
+| `test/topic.test.ts`      | What may become a roster label, and what may not.         |
+| `test/roster.test.ts`     | Roster layout, asserted with colour codes stripped.       |
+| `test/layout.test.ts`     | Width arithmetic and path classification.                 |
+| `test/transcript.test.ts` | Tail reads of real transcript shapes.                     |
+| `test/work.test.ts`       | The timeline property, and several items open at once.    |
+| `test/board.test.ts`      | Board rendering — widths measured on UNPAINTED text.      |
 
 ## Tests
 
@@ -882,13 +908,13 @@ the title half is free and independent.
 Plans live in **[plans/](plans/)** — see [plans/README.md](plans/README.md) for
 the index and the reading order.
 
-| Plan | Covers | Status |
-|---|---|---|
-| [DIARY_PLAN.md](plans/DIARY_PLAN.md) | shared findings, topics, tags, scopes, FTS | shipped |
-| [WORK_RECORDS_PLAN.md](plans/WORK_RECORDS_PLAN.md) | the work board, landed commits, breaks/needs | shipped |
-| [COORDINATION_PLAN.md](plans/COORDINATION_PLAN.md) | generated `--help`, questions, bug state + `--fixes` | P0 done, P1–P2 pending |
-| [LINEAGE_PLAN.md](plans/LINEAGE_PLAN.md) | memory that outlives a uuid, disciple naming, handoff | pending |
-| [AFFINITY_PLAN.md](plans/AFFINITY_PLAN.md) | which agents work well together | deferred — measured, no data |
+| Plan                                               | Covers                                                | Status                       |
+| -------------------------------------------------- | ----------------------------------------------------- | ---------------------------- |
+| [DIARY_PLAN.md](plans/DIARY_PLAN.md)               | shared findings, topics, tags, scopes, FTS            | shipped                      |
+| [WORK_RECORDS_PLAN.md](plans/WORK_RECORDS_PLAN.md) | the work board, landed commits, breaks/needs          | shipped                      |
+| [COORDINATION_PLAN.md](plans/COORDINATION_PLAN.md) | generated `--help`, questions, bug state + `--fixes`  | P0 done, P1–P2 pending       |
+| [LINEAGE_PLAN.md](plans/LINEAGE_PLAN.md)           | memory that outlives a uuid, disciple naming, handoff | pending                      |
+| [AFFINITY_PLAN.md](plans/AFFINITY_PLAN.md)         | which agents work well together                       | deferred — measured, no data |
 
 A plan's checkboxes are re-measured **against the code**, never against what the
 plan last said about itself. `WORK_RECORDS_PLAN.md` once carried four

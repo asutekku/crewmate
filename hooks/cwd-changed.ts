@@ -20,6 +20,7 @@ import {
   resolveProject,
   worktreeRoot,
 } from "../core/repo.ts";
+import { runHook } from "../core/hook.ts";
 
 async function main(): Promise<void> {
   const payload = await readPayload();
@@ -46,12 +47,4 @@ async function main(): Promise<void> {
   });
 }
 
-try {
-  await main();
-} catch (err) {
-  // Fail open — but REPORT. A silent catch turns a programmer error into a
-  // hook that exits 0 having done nothing, which is indistinguishable from
-  // "nothing to report" and is exactly how a missing import shipped.
-  console.error(`[presence] ${import.meta.file} failed:`, err);
-  // Fail open.
-}
+await runHook(import.meta.file, main);

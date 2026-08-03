@@ -121,3 +121,146 @@ input types and validate external data before invoking application services.
 
 Each extraction should be behavior-preserving, covered by focused tests, and small enough
 to review independently.
+
+## CLI refactoring status
+
+The CLI portion of this audit has been implemented. `cli.ts` is now only the executable
+boundary, while command families are importable modules composed through a declarative
+registry. The obligation command path additionally enforces these invariants:
+
+- Domain event construction is pure and separate from database mutation.
+- Each store operation captures one timestamp and reuses it for lookups and events.
+- Shared `Result<T>` and command-failure helpers replace ad hoc result shapes and repeated
+  usage/error handling.
+- Versions are accepted only when they are non-negative integers.
+- Structured JSON validates every top-level field consumed by the CLI before conversion.
+- Obligation display no longer performs the unused event-history query.
+- Caught values remain `unknown` until converted by the shared error boundary.
+- CLI argument mutation is confined to argument-consumption code; domain inputs are
+  readonly values.
+
+Architecture tests enforce the thin entry point, module size ceiling, explicit clocks,
+absence of `any`, centralized usage rendering, and removal of the history query.
+
+The roster command now follows the same extraction standard:
+
+- Claims are indexed once by handle and path, rather than repeatedly filtering the full
+  collection.
+- Dirty-file state is cached per worktree for the duration of one roster operation.
+- Store synchronization and snapshot reads are separate pipeline stages.
+- Terminal and column layout is calculated once and passed to renderers.
+- Sessions, minions, claims, background processes, and contention warnings have separate
+  renderers.
+- Named constants own presentation limits such as name width, age width, and background
+  process count.
+- The `who` handler is a short orchestration layer over synchronization, collection,
+  view-model construction, and rendering.
+
+## Hard CLI refactoring requirements
+
+The following rules are acceptance criteria for every file under `cli/`.
+
+### Architecture and responsibility
+
+- Command registration stays declarative and handlers delegate immediately to named
+  functions.
+- Argument parsing, domain decisions, persistence, view-model construction, and rendering
+  are separate stages.
+- Store callbacks remain short and operate on one consistent snapshot or mutation.
+- Complex reports build view models first and render independent sections with explicit
+  inputs.
+- Multi-step mutations belong in atomic domain/store operations, not CLI orchestration.
+- Filesystem, Git, process, clock, and database access never occurs in renderers.
+- Policy decisions and fallback identity/ownership rules have explicit names.
+
+### Type safety and validation
+
+- External strings and `unknown` values are decoded into validated domain types; a cast to
+  a domain type is never validation.
+- Enums use one canonical exported value list and exhaustive switches.
+- IDs, versions, counts, and limits are safe integers within documented ranges.
+- Missing and invalid values are distinct failures. Duplicate or unknown flags,
+  unsupported trailing arguments, conflicting selectors, and ambiguous names are rejected.
+- JSON decoders validate complete structures, not only their outer containers.
+- Expected failures use discriminated result types. Caught values remain `unknown` and are
+  normalized only at the shared boundary.
+
+### Mutation and consistency
+
+- Each logical operation captures one clock value. Identifier and idempotency-key ownership
+  is explicit.
+- Every reference is validated before the first write; related writes are atomic and
+  success is reported only after all required writes complete.
+- Reads, external probes, asynchronous refreshes, and writes are not mixed in one store
+  transaction.
+- History/query ordering is defined and tested. Replayable commands are idempotent.
+
+### Performance and data access
+
+- Repeated lookups use one index by path, handle, ID, or group. Expensive filesystem and
+  repository probes are cached for one command.
+- Full-array filtering does not occur inside loops. Terminal dimensions and shared layout
+  values are calculated once.
+- Potentially quadratic similarity searches use an index or domain helper.
+- Unused queries, histories, parameters, and intermediate data are removed, and database
+  transactions never remain open during Git or filesystem work.
+
+### Security and output boundaries
+
+- Database content, repository/process metadata, filenames, and agent text are untrusted.
+  Terminal output strips ANSI, OSC, and unsafe controls before measurement or colouring;
+  identifiers and labels are flattened unless explicitly multiline.
+- Subprocesses use executable-plus-argument arrays with shell mode disabled. SQL is
+  parameterized inside store methods. Paths are normalized and checked against their
+  intended root before sensitive operations.
+- Full session IDs, tokens, paths, and internal identifiers are hidden unless required.
+  Sanitization remains separate from canonical storage and is specific to the actual sink.
+- Tests cover ANSI/OSC, newlines, quotes, shell metacharacters, traversal attempts, and
+  Unicode edge cases.
+
+### CLI argument handling
+
+- Each command parses once into a typed input object using centralized parsers for IDs,
+  versions, limits, enums, selectors, and booleans; command code does not scatter
+  `shift()`, `splice()`, or `indexOf()`.
+- Usage metadata drives help, dispatch, documentation, and supported-verb drift tests.
+- Defaults are named constants whose policy meaning is documented.
+
+### Rendering and layout
+
+- Measurement uses uncoloured, sanitized strings and an explicitly named metric (code
+  points, graphemes, bytes, tokens, or another deliberate unit), never ANSI byte length.
+- Structural blank lines are output explicitly rather than embedded at the start of log
+  strings. Magic widths and history limits are named constants.
+- Groups, conflicts, topics, and histories have deterministic ordering. Empty filtered
+  views state that they are empty.
+- Renderers are deterministic and have no database, clock, filesystem, Git, or process
+  access.
+
+### Testing and maintainability
+
+- Parsers and event builders are unit-tested without a store. Renderers have colour-free
+  snapshots. Empty, singular, ambiguous, stale, malformed, and maximum-size inputs are
+  covered.
+- Drift tests cover registry, dispatch, usage, documentation, and canonical domain enums.
+  Transactional failure is tested at each mutation boundary, and sanitization independently
+  from business logic.
+- Stable domain/view-model types are exported directly. Modules are split by domain
+  responsibility, never solely to satisfy a line-count target. Comments explain contracts
+  and surprising policies rather than syntax.
+
+### Current compliance audit
+
+| Module | Status | Principal remaining work |
+| --- | --- | --- |
+| `main.ts`, `registry.ts`, `types.ts` | Partial | command metadata must become the single source for usage and documentation |
+| `args.ts`, `structured.ts` | Non-compliant | replace mutation-based parsing with typed, duplicate-aware decoders |
+| `obligations.ts` | Partial | complete nested JSON decoding and ambiguous selector/name handling |
+| `work.ts` | Non-compliant | extract typed parsers, atomic domain operations, view models, and report sections |
+| `diary.ts` | Non-compliant | canonical enum decoding, safe limits/IDs, indexed similarity, and report view models |
+| `personal.ts` | Partial | typed selectors/flags, ambiguity policy, and renderer extraction |
+| `messaging.ts`, `questions.ts` | Partial | typed inputs, safe IDs/limits, and named handlers |
+| `admin.ts` | Partial | typed selectors and explicit identity/ownership policies |
+| `diagnostics.ts`, `injection.ts` | Non-compliant | typed selectors, external-probe separation, and terminal report abstraction |
+| `roster*.ts` | Mostly compliant | terminal sanitization and colour-free renderer snapshots |
+| `result.ts`, `command.ts`, `obligation-events.ts` | Compliant foundation | extend use across every command family |

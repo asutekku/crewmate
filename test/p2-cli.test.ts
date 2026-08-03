@@ -1,37 +1,125 @@
 import { describe, expect, test } from "bun:test";
 
-const source = await Bun.file(new URL("../cli.ts", import.meta.url)).text();
+import { parseStructuredShortcut } from "../cli/structured.ts";
 
-function caseBody(name:string):string {
-  const start=source.indexOf(`case "${name}"`);
-  if(start<0)return "";
-  const next=source.indexOf("\n  case ",start+8);
-  return source.slice(start,next<0?source.length:next);
+function parsed(command: string, args: readonly string[]) {
+  const result = parseStructuredShortcut(command, args);
+  expect(result.matched).toBeTrue();
+  expect(result.matched && result.result.ok).toBeTrue();
+  if (!result.matched || !result.result.ok)
+    throw new Error("expected a valid structured shortcut");
+  return result.result.value;
 }
 
-describe("P2 CLI contract",()=>{
-  test.each(["request","promise","handoff","grant","correct","hazard"])("%s dispatches through the one structured batch service",verb=>{
-    expect(caseBody(verb)).toContain("structured(");
+describe("structured CLI shortcuts", () => {
+  test("request creates a proposed request act", () => {
+    expect(parsed("request", ["ada", "review", "the", "store"])).toEqual({
+      command: "request",
+      target: "ada",
+      acts: [{ key: "request", type: "request", text: "review the store" }],
+    });
   });
-  test("ask uses the same structured service and creates a question act",()=>{
-    const start=source.indexOf("function ask(");
-    const end=source.indexOf("\n}",start);
-    const body=source.slice(start,end);
-    expect(body).toContain("structured(");
-    expect(body).toContain('type:"question"');
+
+  test("perform and refrain promises retain their distinct semantics", () => {
+    expect(parsed("promise", ["ada", "run", "the", "tests"]).acts).toEqual([
+      {
+        key: "promise",
+        type: "promise",
+        text: "run the tests",
+        mode: "perform",
+      },
+    ]);
+    expect(
+      parsed("promise", [
+        "ada",
+        "--refrain",
+        "--until",
+        "release",
+        "touch",
+        "store.ts",
+      ]).acts,
+    ).toEqual([
+      {
+        key: "promise",
+        type: "promise",
+        text: "touch store.ts",
+        mode: "refrain",
+        releaseBoundary: { text: "release", handling: "manual" },
+      },
+    ]);
   });
-  test("compound act forwards typed acts, dependencies and idempotency key",()=>{
-    const body=caseBody("act");
-    expect(body).toContain("body.acts");
-    expect(body).toContain("body.dependencies");
-    expect(body).toContain("body.idempotencyKey");
+
+  test.each([
+    [
+      "handoff",
+      ["ada", "schema", "ownership"],
+      {
+        key: "handoff",
+        type: "handoff",
+        text: "Responsibility for schema ownership",
+        subject: "schema ownership",
+      },
+    ],
+    [
+      "grant",
+      ["ada", "presence", "hooks"],
+      {
+        key: "grant",
+        type: "grant",
+        text: "Go ahead on presence hooks",
+        scopeText: "presence hooks",
+      },
+    ],
+    [
+      "correct",
+      ["ada", "peer", "the", "claim", "expired"],
+      {
+        key: "correction",
+        type: "correction",
+        text: "the claim expired",
+        correctionType: "peer_correction",
+      },
+    ],
+    [
+      "hazard",
+      ["ada", "store.ts", "migration", "ordering"],
+      {
+        key: "hazard",
+        type: "hazard",
+        text: "migration ordering",
+        subject: "store.ts",
+      },
+    ],
+  ] as const)("%s builds the expected act", (command, args, act) => {
+    expect(parsed(command, args).acts).toEqual([act]);
   });
-  test.each(["msg","say"])("plain %s never calls the semantic service",verb=>{
-    expect(caseBody(verb)).not.toContain("structured(");
-    expect(caseBody(verb)).not.toContain("obligations");
+
+  test("invalid shortcut arguments are rejected before service execution", () => {
+    expect(
+      parseStructuredShortcut("promise", [
+        "ada",
+        "--refrain",
+        "touch",
+        "store.ts",
+      ]),
+    ).toEqual({
+      matched: true,
+      result: { ok: false, error: "invalid shortcut arguments" },
+    });
+    expect(
+      parseStructuredShortcut("correct", ["ada", "guess", "something"]),
+    ).toEqual({
+      matched: true,
+      result: { ok: false, error: "invalid shortcut arguments" },
+    });
   });
-  test("obligation and clearance lifecycle commands are both dispatched",()=>{
-    expect(caseBody("obligation")).toContain("obligationCommand");
-    expect(caseBody("clearance")).toContain("clearanceCommand");
+
+  test("plain messages are outside the semantic shortcut parser", () => {
+    expect(parseStructuredShortcut("msg", ["ada", "hello"])).toEqual({
+      matched: false,
+    });
+    expect(parseStructuredShortcut("say", ["hello"])).toEqual({
+      matched: false,
+    });
   });
 });

@@ -182,7 +182,13 @@ export type StructuredActInput =
   | (ActCommon & { type: "grant"; scopeText: string; releaseBoundary?: ObligationCondition })
   | (ActCommon & { type: "correction"; correctionType: CorrectionType; contradictsActId?: string })
   | (ActCommon & { type: "hazard"; subject: string; relatedActKeys?: string[] });
-export interface StructuredBatchInput { senderSessionId: string; senderName: string; recipientSessionId: string; recipientName: string; acts: StructuredActInput[]; dependencies?: Array<{ sourceKey: string; resolutionKey?: string; targetKey: string; effect: "activate" | "release" }>; idempotencyKey: string; nowMs: number; surface?: "cli" | "api" }
+export interface StructuredDependencyInput {
+  sourceKey: string;
+  resolutionKey?: string;
+  targetKey: string;
+  effect: "activate" | "release";
+}
+export interface StructuredBatchInput { senderSessionId: string; senderName: string; recipientSessionId: string; recipientName: string; acts: StructuredActInput[]; dependencies?: StructuredDependencyInput[]; idempotencyKey: string; nowMs: number; surface?: "cli" | "api" }
 export interface StructuredBatchResult { messageId: number; actIds: Record<string, string>; obligationIds: Record<string, string>; clearanceIds: Record<string, string> }
 export interface HazardNotice { id: string; sourceMessageId: number; relatedActIds: string[]; summary: string; subject: string }
 
