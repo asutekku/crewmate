@@ -34,8 +34,16 @@ function allowed(
   label: string,
 ): Result<void> {
   const unexpected = Object.keys(value).find((key) => !keys.includes(key));
+  // NAMES THE PATH AND THE ALTERNATIVES, because the common failure is a field
+  // in the right vocabulary at the wrong DEPTH: `{"text": …}` at the top level
+  // reported "unsupported field text" when `text` is very much supported --
+  // inside `acts[]`. Measured 2026-08-05: two consecutive failures on the one
+  // verb designed for structured use, before a correct call.
   return unexpected
-    ? failure(`${label} contains unsupported field ${unexpected}`)
+    ? failure(
+        `${label} contains unsupported field ${unexpected} — ` +
+          `${label} accepts ${keys.join(", ")}`,
+      )
     : success(undefined);
 }
 

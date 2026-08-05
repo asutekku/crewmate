@@ -26,8 +26,11 @@ let n = 0;
 const paths: string[] = [];
 
 test("question report is deterministic and sanitizes terminal controls", () => {
+  // Ids are obligation uuids since `asks` moved onto the ledger; the renderer
+  // shortens them to 8 characters, so the fixture is a realistic uuid rather
+  // than the integer the retired `questions` table used.
   const question = {
-    id: 7,
+    id: "3177d957-aed2-4878-b033-b366241819be",
     askerSession: "asker",
     askerName: "peer\u001b]8;;https://evil.test\u0007",
     targetSession: "target",

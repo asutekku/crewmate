@@ -88,10 +88,24 @@ traffic-ca  "Explore cheap agent communication solutions"   · just now
     editing .claude/hooks/presence/core/transcript.ts, …
 ```
 
-**Both are for you, not for the agents.** A title names a window on your screen,
-which is exactly what makes it useful to you and useless to a peer — so neither
-field is injected into any agent's context. That text is on every agent's hot
-path on every turn, and it stays lean.
+**Neither field enters any agent's injection.** A title names a window on your
+screen, which is exactly what makes it useful to you and useless to a peer — so
+no session-start block or hook ever spends budget on either. That text would be
+on every agent's hot path on every turn, and it stays lean.
+
+*Injection*, precisely — not "an agent can never see this". An agent that runs
+`crew who` reads the same output you do, `--raw` included; `--raw` drops colour
+for piping, it is not an agent-only format. The guarantee is about what is
+**pushed** into a context window, not about what a session can **pull** on
+request. (Stated this way after the looser wording — "never enter any agent's
+context" — was read alongside advice steering agents to `--raw`, which prints
+both fields. One of the two had to give, and the budget claim is the one worth
+keeping.)
+
+**The `doing:` line is model-written, not agent-stated.** Haiku summarises the
+session's recent output; the agent never asserted it. Worth knowing before
+acting on one — it describes what a session appears to be doing, which is not
+the same as what it would tell you if you asked.
 
 Colour is a second channel, never the only one: every distinction is also in the
 words. `NO_COLOR`, `FORCE_COLOR` and piping are honoured, so a redirected log is
@@ -167,7 +181,33 @@ crew needs  "<what>" [--item <match>]      # a blocker, for whoever reads the bo
 crew done  ["<match>"] [--abandoned]       # close ONE item
 crew board [<agent>] [--history] [--all]   # read the board
 crew mine                                  # my open items
+crew link  <plan path>                     # point an OPEN item at a plan
+crew plans                                 # every plan with work against it
 ```
+
+### Attaching work to a plan — `--plan-doc` versus `link`
+
+The two do the same thing at different moments, and only one of them is
+available at any given time:
+
+| You are | Use | Because |
+| ------- | --- | ------- |
+| opening the item | `crew doing "<subject>" --plan-doc <path>` | the plan is already known |
+| already open | `crew link <path>` | the item exists; `doing` would open a second one |
+
+`--plan-doc` is not a synonym for `--plan`. `--plan "a; b; c"` is the
+**checklist** — steps you wrote. `--plan-doc <path>` is the **document** this
+work executes. An item can have both, one, or neither.
+
+**Why the link matters at all.** A plan's own file history says nothing about
+whether its work happened: an agent writes the plan, implements it, and never
+touches the file again. Measured — one agent had four of six steps done and a
+sha landed while its plan file had zero commits. The link is what lets a
+`landed` sha on an item stand as evidence about the plan, which is the whole of
+what `crew plans` reports.
+
+`hooks/pre-edit.ts` offers the exact `crew link <path>` line when it notices an
+agent editing a plan document that no open item names.
 
 **Two things fill themselves in.** A commit attaches to your current item — the
 `PostToolUse` hook reads git's own `[branch sha]` line, so a failed commit

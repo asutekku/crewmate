@@ -14,6 +14,7 @@ import {
   pad,
   renderFileLine,
   shortAge,
+  stateLegend,
   summarizeFiles,
 } from "../core/layout.ts";
 import { minionName } from "../core/names.ts";
@@ -74,12 +75,22 @@ export function renderRosterHeader(
  */
 export function renderRosterLegend(view: RosterView): string[] {
   const anyOverlap = view.claims.contestedPaths.size > 0;
+  // `gone` is omitted: a roster lists the living, so there is no such row to
+  // explain. The MEANING of every glyph shown comes from `STATE_LEGEND` --
+  // see `core/layout.ts` for why that is shared with `board` rather than
+  // spelled out twice.
   return [
     "",
     dim(
-      `  ${green("●")} running   ${red("⏸")} needs you   ○ at a prompt   ✎ files this agent holds${
-        anyOverlap ? `   ${red("⚠")} also held by a peer` : ""
-      }`,
+      stateLegend(
+        ["busy", "waiting", "idle"],
+        [
+          "✎ files this agent holds",
+          ...(anyOverlap ? [`${red("⚠")} also held by a peer`] : []),
+        ],
+        (state, glyph) =>
+          state === "busy" ? green(glyph) : state === "waiting" ? red(glyph) : glyph,
+      ),
     ),
   ];
 }

@@ -10,14 +10,17 @@ import type {
   StructuredActInput,
   StructuredDependencyInput,
 } from "../core/obligations.ts";
-import { bold, green } from "../core/colour.ts";
+import { describeState, terminalAuthority } from "../core/obligations.ts";
+import { bold, dim, green } from "../core/colour.ts";
 import { displayName, type Store, withStore } from "../core/store.ts";
 import {
+  booleanFlag,
   parseArguments,
   stringFlag,
   type ParsedArguments,
 } from "./args.ts";
 import { failCommand, failUsage } from "./command.ts";
+import { sanitizeTerminalText } from "./terminal.ts";
 import {
   buildClearanceEvent,
   buildObligationEvent,
@@ -122,7 +125,8 @@ function shortcut(
   command: StructuredShortcut,
   args: readonly string[],
 ): void {
-  const parsed = parseStructuredShortcut(command, args);
+  const now = context.now();
+  const parsed = parseStructuredShortcut(command, args, now);
   if (!parsed.matched || !parsed.result.ok) {
     failUsage(context, command);
     return;
@@ -133,14 +137,27 @@ function shortcut(
 }
 
 function readObligation(store: Store, id: string): Result<ObligationView> {
-  const definition = store.obligations.definition(id);
-  const snapshot = store.obligations.snapshot(id);
+  // PREFIX-TOLERANT, because every id a reader sees is already shortened:
+  // `asks` prints 8 characters and `crew answer` takes 8, so `crew obligation`
+  // demanding all 36 was the one surface that made a copied id fail.
+  const found = store.obligations.resolveId(id);
+  if (!found.ok) return failure(found.error);
+  const definition = store.obligations.definition(found.id);
+  const snapshot = store.obligations.snapshot(found.id);
   return definition && snapshot
     ? success({ definition, snapshot })
     : failure(`no obligation ${id}`);
 }
 
-function obligation(
+/**
+ * Append one event to an obligation, or print it when `input` is absent.
+ *
+ * EXPORTED so `answer` files its reply through exactly this path rather than a
+ * parallel one. A question answered with `crew answer` and one discharged with
+ * `crew obligation … fulfil` must fold identically — two writers on one ledger
+ * is how the `questions`/`obligations` split happened in the first place.
+ */
+export function obligation(
   context: CliContext,
   id: string,
   input?: ObligationCommandInput,
@@ -193,9 +210,13 @@ function obligation(
     return;
   }
   context.log(
-    `${bold(id)}  ${outcome.value.snapshot.authority} / ${outcome.value.snapshot.activation}  v${outcome.value.snapshot.version}`,
+    `${bold(id)}  ${describeState(outcome.value.snapshot)}  v${outcome.value.snapshot.version}`,
   );
   context.log(`  ${outcome.value.definition.text}`);
+  // The ANSWER, when there is one. A question whose reply is stored but never
+  // shown is the same failure as one that could not be answered at all.
+  if (outcome.value.snapshot.resolution)
+    context.log(`  ${dim("→")} ${outcome.value.snapshot.resolution}`);
 }
 
 function readClearance(store: Store, id: string): Result<ClearanceView> {
@@ -310,7 +331,7 @@ function handleAct(context: CliContext, args: readonly string[]): void {
 function handleObligation(context: CliContext, args: readonly string[]): void {
   const parsed = parsedCommand(context, "obligation", args, {
     valueFlags: [
-      "--version", "--reason", "--resolution", "--to",
+      "--version", "--reason", "--resolution", "--resolution-key", "--to",
       "--replacement", "--episode", "--key",
     ],
     maxPositionals: 2,
@@ -328,6 +349,7 @@ function handleObligation(context: CliContext, args: readonly string[]): void {
           version: stringFlag(parsed.value, "--version") ?? "",
           reason: stringFlag(parsed.value, "--reason") ?? "",
           resolution: stringFlag(parsed.value, "--resolution") ?? "",
+          resolutionKey: stringFlag(parsed.value, "--resolution-key") ?? "",
           target: stringFlag(parsed.value, "--to"),
           replacement: stringFlag(parsed.value, "--replacement") ?? "",
           episode: stringFlag(parsed.value, "--episode") ?? "",
@@ -359,6 +381,95 @@ function handleClearance(context: CliContext, args: readonly string[]): void {
   );
 }
 
+/**
+ * THE LEDGER, ENUMERATED. The only handles before this were by-uuid inspect
+ * (which requires already having the uuid), `injection --agent` (top-priority
+ * candidates only) and `stats` (a bare row count) — so neither operator nor
+ * agent could answer "what is outstanding between these two".
+ *
+ * Terminal rows are hidden unless `--all`: a ledger that shows every discharged
+ * obligation forever is one nobody reads, and "what is outstanding" is the
+ * question being asked.
+ */
+function handleObligationList(context: CliContext, args: readonly string[]): void {
+  const parsed = parsedCommand(context, "obligations", args, {
+    valueFlags: ["--agent"],
+    booleanFlags: ["--all"],
+    maxPositionals: 0,
+  });
+  if (!parsed) return;
+  const only = (stringFlag(parsed.value, "--agent") ?? "").toLowerCase();
+  const all = booleanFlag(parsed.value, "--all");
+  const now = context.now();
+  const rows = withStore(context.dbPath, (store) => {
+    const names = new Map(
+      store.liveSessions(now).map((s) => [s.sessionId, displayName(s)]),
+    );
+    const who = (actor: { kind: string; agentId?: string }): string =>
+      actor.kind === "agent"
+        ? (names.get(actor.agentId ?? "") ?? (actor.agentId ?? "").slice(0, 8))
+        : actor.kind;
+    return store.obligations
+      .all()
+      .filter(({ snapshot: s }) => all || describeState(s) !== s.authority || !terminalAuthority(s.authority))
+      .map(({ definition: d, snapshot: s }) => ({
+        id: d.id,
+        kind: d.kind,
+        state: describeState(s),
+        from: who(d.createdBy),
+        to:
+          s.currentResponsible.kind === "assigned"
+            ? who(s.currentResponsible.actor)
+            : "unassigned",
+        text: d.text,
+        resolution: s.resolution ?? "",
+      }))
+      .filter((r) => only === "" || r.from.toLowerCase().includes(only) || r.to.toLowerCase().includes(only));
+  });
+  if (rows.length === 0) {
+    context.log(dim(all ? "no obligations recorded." : "nothing outstanding — `--all` includes settled ones."));
+    return;
+  }
+  for (const r of rows) {
+    context.log(
+      `${bold(r.id.slice(0, 8))} ${dim(`${r.kind} · ${r.state}`)}  ` +
+        `${sanitizeTerminalText(r.from)} → ${sanitizeTerminalText(r.to)}`,
+    );
+    context.log(`  ${sanitizeTerminalText(r.text)}`);
+    if (r.resolution) context.log(`  ${dim("→")} ${sanitizeTerminalText(r.resolution)}`);
+  }
+  context.log(dim(`${rows.length} shown — \`crew obligation <id>\` reads one.`));
+}
+
+/** The same enumeration for clearances, which had the identical gap. */
+function handleClearanceList(context: CliContext, args: readonly string[]): void {
+  const parsed = parsedCommand(context, "clearances", args, {
+    booleanFlags: ["--all"],
+    maxPositionals: 0,
+  });
+  if (!parsed) return;
+  const all = booleanFlag(parsed.value, "--all");
+  const rows = withStore(context.dbPath, (store) =>
+    store.obligations
+      .allClearances()
+      .filter(({ snapshot: s }) => all || s.state === "active")
+      .map(({ definition: d, snapshot: s }) => ({
+        id: s.clearanceId,
+        state: s.state,
+        scope: d.scopeText,
+      })),
+  );
+  if (rows.length === 0) {
+    context.log(dim(all ? "no clearances recorded." : "no active clearances — `--all` includes revoked ones."));
+    return;
+  }
+  for (const r of rows)
+    context.log(
+      `${bold(r.id.slice(0, 8))} ${dim(r.state)}  ${sanitizeTerminalText(r.scope)}`,
+    );
+  context.log(dim(`${rows.length} shown — \`crew clearance <id>\` reads one.`));
+}
+
 export function createObligationCommands(context: CliContext): CommandMap {
   const shortcuts = Object.fromEntries(
     SHORTCUT_COMMANDS.map((command) => [
@@ -371,6 +482,8 @@ export function createObligationCommands(context: CliContext): CommandMap {
     ask: (args) => handleAsk(context, args),
     act: (args) => handleAct(context, args),
     obligation: (args) => handleObligation(context, args),
+    obligations: (args) => handleObligationList(context, args),
     clearance: (args) => handleClearance(context, args),
+    clearances: (args) => handleClearanceList(context, args),
   };
 }

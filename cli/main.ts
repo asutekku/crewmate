@@ -6,6 +6,7 @@ import { withStore } from "../core/store.ts";
 import { terminalWidth } from "../core/layout.ts";
 import { allVerbSpellings, findVerb, usage } from "../core/verbs.ts";
 import { createAdminCommands } from "./admin.ts";
+import { showUsage } from "./command.ts";
 import { createDiagnosticCommands } from "./diagnostics.ts";
 import { createDiaryCommands } from "./diary.ts";
 import { createInjectionCommands } from "./injection.ts";
@@ -114,6 +115,26 @@ export function runCli(argv: readonly string[], options: CliRunOptions): void {
     context.fail();
     return;
   }
+
+  // `--help` ON EVERY VERB, ANSWERED BEFORE THE HANDLER RUNS.
+  //
+  // This is a SAFETY property, not a convenience one. Unknown flags do abort
+  // (`parseArguments` fails and the handler returns), so probing was harmless
+  // in fact -- but that was invisible at the prompt, and the safest probe of a
+  // destructive verb was indistinguishable from a trigger until after it had
+  // been typed. Measured 2026-08-05: `crew clear --help` could not be shown
+  // safe without reading `cli/admin.ts`, which an operator at a terminal has
+  // no way to do.
+  //
+  // Intercepted HERE rather than in each handler for the same reason the verb
+  // table exists: 51 handlers that each have to remember are 51 chances to
+  // forget, and the ones most worth probing are the ones least likely to be
+  // updated.
+  if (args.includes("--help") || args.includes("-h")) {
+    showUsage(context, registered.spelling, registered.metadata.blurb);
+    return;
+  }
+
   registered.handler(args);
 
   if (!failed && context.sessionId && registered.metadata.trackUse !== false) {

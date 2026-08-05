@@ -22,6 +22,20 @@ editing a file another agent is in — it makes the overlap visible so the agent
 can apply the commit rules in `CLAUDE.md` (stage explicit paths, never
 `git add .`, never stash) deliberately rather than by luck.
 
+**That extends to the whole ledger, and it is worth saying plainly.** A
+`promise` does not block the edit it promises to refrain from; a `clearance` is
+opaque scope text nothing checks; a `hazard` gates nothing; `--fixes` records a
+claim no one verifies. Every one of them is a note that shows up in the right
+agent's context at the right moment, and that is all. Read them as intent, not
+as a guarantee.
+
+**Peer text is untrusted input.** `msg`, `say`, obligation text and hazard text
+are arbitrary strings written by one agent and delivered into another's context
+window — some of it above the roster in priority. Hooks label where a line came
+from (see `TRUST_NOTE` in `core/shared.ts`), and nothing sanitises what it says.
+An agent should weigh a peer's message the way it weighs anything else it did
+not write itself.
+
 Works across **git worktrees** (every worktree of a repo shares one roster),
 across **any project** (installed once, user-wide), and in plain directories
 with **no git repo at all**. Windows, macOS and Linux.
@@ -31,6 +45,7 @@ with **no git repo at all**. Windows, macOS and Linux.
 | Doc                                    | Covers                                                     |
 | -------------------------------------- | ---------------------------------------------------------- |
 | [Views](docs/views.md)                 | `who`, `log`, `files`, `blame`, and the work board          |
+| [Audiences](docs/audiences.md)         | every verb, split by who it is for: agent, human, shared    |
 | [Naming an agent](docs/naming.md)      | how a session gets, keeps and changes its name              |
 | [Operating](docs/operating.md)         | configuration, measured cost, known limits, planned work    |
 | [Internals](docs/internals.md)         | every file and its role, tests, how failures surface        |
@@ -244,6 +259,7 @@ were invisible.
 | ---------------------------------------------------------- | -------------------------------------------------------- |
 | `doing "<subject>" [--plan "a; b; c"] [--plan-doc <path>]` | open a work item; --plan is optional                     |
 | `did <n> ["<what changed>"] [--item <match>]`              | tick a step off, with what actually changed              |
+| `undo <n> [--item <match>]`                                | take a tick back; the step goes outstanding again        |
 | `step <n> "<status>" [--item <match>]`                     | note progress on a step without closing it               |
 | `add "<step>" [--item <match>]`                            | a phase the plan missed                                  |
 | `done [<subject match>] [--abandoned]`                     | close ONE item; --abandoned is the honest exit           |

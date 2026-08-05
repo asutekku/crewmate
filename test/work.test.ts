@@ -177,21 +177,52 @@ describe("the P0 gate: several items open at once", () => {
     });
   });
 
-  test("a bare command targets the most recently touched item", () => {
+  /**
+   * REPLACES "a bare command targets the most recently touched item".
+   *
+   * That test asserted `target` returning `items[0]` under
+   * `ORDER BY updated_ms DESC`, on the reasoning that an agent saying "back to
+   * the core work" and then reporting should hit the item it just touched. The
+   * intent was right; the mechanism was a silent guess.
+   *
+   * MEASURED 2026-08-06: `crew did 1 "…"` with two items open ticked a step on
+   * the OTHER item, twice in five minutes. The second was `crew did 3` with no
+   * note, which left no trace at all. Because `updated_ms` moves on every tick,
+   * one wrong guess captured every later bare command; because a tick could not
+   * be undone, the board then asserted work that never happened.
+   *
+   * The narration case the old test defended is still served — by `--item`,
+   * which is one flag and is visible in the transcript.
+   */
+  test("a bare command refuses to choose between several open items", () => {
     fresh((store) => {
       const w = store.work;
       const core = w.open(AGENT, "a", "retiring the old net core", [], 1000);
-      const sliver = w.open(AGENT, "a", "junction sliver fix", [], 2000);
-      expect(w.target(AGENT)?.workId).toBe(sliver);
+      w.open(AGENT, "a", "junction sliver fix", [], 2000);
+      expect(w.target(AGENT)).toBeNull();
 
-      // Touching the older one makes it the target: an agent that says
-      // "back to the core work" then reports against it must hit that item.
+      // Touching one does NOT make it the winner: recency is not consent.
       w.record(core, "note", "back on this", 3000);
-      expect(w.target(AGENT)?.workId).toBe(core);
+      expect(w.target(AGENT)).toBeNull();
+
+      // Naming it resolves — the ambiguity is the only thing refused.
+      expect(w.target(AGENT, "core")?.workId).toBe(core);
     });
   });
 
-  test("a subject substring overrides the most-recent rule", () => {
+  test("a bare command still resolves when only one item is open", () => {
+    // The common case the board is built for must not pay for the refusal.
+    fresh((store) => {
+      const w = store.work;
+      const only = w.open(AGENT, "a", "the only thing", [], 1000);
+      expect(w.target(AGENT)?.workId).toBe(only);
+    });
+  });
+
+  // Titled for the old most-recent rule until 2026-08-06. There is no recency
+  // rule left to override: a substring is now the ONLY way to pick among
+  // several, and it must itself be unambiguous.
+  test("a subject substring selects one item, and misses resolve to nothing", () => {
     fresh((store) => {
       const w = store.work;
       w.open(AGENT, "a", "retiring the old net core", [], 1000);

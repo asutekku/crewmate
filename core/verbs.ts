@@ -37,6 +37,16 @@ export const CLI = "crew";
 /** Which section of the help a verb belongs under. Order here is display order. */
 export type VerbGroup = "presence" | "work" | "diary" | "memory" | "identity";
 
+/**
+ * Who a verb is for. Orthogonal to `VerbGroup`, which says what it is ABOUT.
+ *
+ * - `agent`     reached from an injection, a hook, or peer coordination
+ * - `human`     an operator surface; built for a terminal window
+ * - `shared`    symmetric — both parties do the same thing (`msg`, `say`)
+ * - `oversight` asymmetric — agents write it, the operator audits it
+ */
+export type VerbAudience = "agent" | "human" | "shared" | "oversight";
+
 export interface Verb {
   /** The literal typed at the CLI -- must match a `case` label in cli.ts. */
   readonly verb: string;
@@ -60,6 +70,28 @@ export interface Verb {
   readonly hidden?: boolean;
   /** False when the command records its own richer feature-use event. */
   readonly trackUse?: boolean;
+  /**
+   * Who this verb is FOR — see `docs/audiences.md`.
+   *
+   * NOT A PERMISSION MODEL. Nothing is gated by caller: every verb works
+   * whether a human types it or an agent shells out. This records who is TOLD
+   * the verb exists (agents learn from `core/sessionBlock.ts` and the hooks;
+   * operators from `crew help` and `docs/`) and who has a reason to run it.
+   *
+   * REQUIRED, because the alternative was measured and failed. The audience
+   * split lived in prose in `docs/audiences.md` and drifted immediately: that
+   * document mis-stated its own totals, and the plan written to fix the drift
+   * reproduced it. Hand-maintained counts in this repo have a 100% drift rate.
+   * A field here means the tables are generated and `test/audit-remediation`
+   * asserts they match — the same reason `usage()` is generated rather than
+   * hand-written.
+   *
+   * `oversight` is the asymmetric case: agent-writes, operator-audits. It is
+   * deliberately distinct from `shared`, which means SYMMETRIC use (`msg`,
+   * `say` — both parties do the same thing). Collapsing the two hid the real
+   * gap, which is that the operator had no aggregate read surface at all.
+   */
+  readonly audience: VerbAudience;
 }
 
 export const VERB_GROUPS: ReadonlyArray<{ group: VerbGroup; title: string }> = [
@@ -72,47 +104,62 @@ export const VERB_GROUPS: ReadonlyArray<{ group: VerbGroup; title: string }> = [
 
 export const VERBS: readonly Verb[] = [
   // ---- presence
-  { verb: "who", args: "[--raw]", blurb: "the roster: who is live, on what, where", group: "presence" },
-  { verb: "log", args: "[n] [--raw]", blurb: "recent messages from every agent", group: "presence" },
-  { verb: "say", args: "<text>", blurb: "tell every agent something", group: "presence" },
-  { verb: "msg", args: '<name> "<text>" [--from <name>]', blurb: "tell one agent something", group: "presence" },
-  { verb: "where", args: "", blurb: "this session's repo, worktree, branch and drift from base", group: "presence" },
-  { verb: "stats", args: "", blurb: "what the store holds, over how large a sample", group: "presence" },
-  { verb: "injection", args: "[--agent <name> | --session <id>]", blurb: "what session start puts in context, and what it left out", group: "presence" },
-  { verb: "inbox", args: "[--agent <name> | --session <id>]", blurb: "items omitted from your context for length", group: "presence" },
-  { verb: "ask", args: '<name> "<question>"', blurb: "ask a peer something and record that a reply is owed", group: "presence", trackUse: false },
-  { verb: "answer", args: '<id> "<answer>"', blurb: "answer a question asked of you", group: "presence" },
-  { verb: "asks", args: "", blurb: "questions waiting on you, and what you are waiting for", group: "presence" },
-  { verb: "request", args: '<name> "<text>"', blurb: "record a proposed obligation for a peer", group: "presence", trackUse: false },
-  { verb: "promise", args: '<name> "<text>" [--refrain --until <text>]', blurb: "bind yourself to perform or refrain", group: "presence", trackUse: false },
-  { verb: "handoff", args: '<name> "<subject>"', blurb: "propose moving responsibility to a peer", group: "presence", trackUse: false },
-  { verb: "grant", args: '<name> "<scope>"', blurb: "grant explicit clearance over opaque scope text", group: "presence", trackUse: false },
-  { verb: "correct", args: '<name> <self|peer|implementation> "<text>"', blurb: "record an explicit typed correction", group: "presence", trackUse: false },
-  { verb: "hazard", args: '<name> "<subject>" "<warning>"', blurb: "record a warning independently of obligations", group: "presence", trackUse: false },
-  { verb: "act", args: '<name> --json <file>', blurb: "atomically create a compound structured message", group: "presence", trackUse: false },
-  { verb: "obligation", args: '<id> [event] [flags]', blurb: "inspect or append a versioned obligation event", group: "presence" },
-  { verb: "clearance", args: '<id> [revoke|expire] [flags]', blurb: "inspect, revoke or expire a clearance", group: "presence" },
-  { verb: "files", args: "<agent> [--hours 24]", blurb: "every file an agent has touched, and why", group: "presence" },
-  { verb: "blame", args: "<path>", blurb: "who has been in this file, newest first", group: "presence" },
-  { verb: "quit", args: "<name>", blurb: "drop a dead session off the roster", group: "presence" },
-  { verb: "clear", args: "", blurb: "wipe the roster and message log", group: "presence" },
+  { verb: "who", audience: "human", args: "[--raw]", blurb: "the roster: who is live, on what, where", group: "presence" },
+  { verb: "log", audience: "shared", args: "[n] [--raw]", blurb: "recent messages from every agent", group: "presence" },
+  { verb: "say", audience: "shared", args: "<text>", blurb: "tell every agent something", group: "presence" },
+  { verb: "msg", audience: "shared", args: '<name> "<text>" [--from <name>]', blurb: "tell one agent something", group: "presence" },
+  { verb: "where", audience: "human", args: "", blurb: "this session's repo, worktree, branch and drift from base", group: "presence" },
+  { verb: "stats", audience: "human", args: "", blurb: "what the store holds, over how large a sample", group: "presence" },
+  { verb: "injection", audience: "oversight", args: "[--agent <name> | --session <id>]", blurb: "what session start puts in context, and what it left out", group: "presence" },
+  { verb: "inbox", audience: "oversight", args: "[--agent <name> | --session <id>]", blurb: "items omitted from your context for length", group: "presence" },
+  { verb: "ask", audience: "agent", args: '<name> "<question>"', blurb: "ask a peer something and record that a reply is owed", group: "presence", trackUse: false },
+  // `<id>` is an obligation uuid PREFIX, not an integer: `ask` writes to the
+  // obligation ledger, and `answer` used to demand an id from a separate
+  // `questions` table that `ask` never populated.
+  { verb: "answer", audience: "agent", args: '<id> "<answer>"', blurb: "answer a question asked of you (id from `asks`)", group: "presence" },
+  { verb: "asks", audience: "agent", args: "", blurb: "questions waiting on you, and what you are waiting for", group: "presence" },
+  { verb: "request", audience: "agent", args: '<name> "<text>"', blurb: "record a proposed obligation for a peer", group: "presence", trackUse: false },
+  { verb: "promise", audience: "agent", args: '<name> "<text>" [--refrain --until 4h|<text>]', blurb: "bind yourself to perform or refrain", group: "presence", trackUse: false },
+  { verb: "handoff", audience: "agent", args: '<name> "<subject>"', blurb: "propose moving responsibility to a peer", group: "presence", trackUse: false },
+  { verb: "grant", audience: "agent", args: '<name> "<scope>"', blurb: "grant explicit clearance over opaque scope text", group: "presence", trackUse: false },
+  { verb: "correct", audience: "agent", args: '<name> <self|peer|implementation> "<text>"', blurb: "record an explicit typed correction", group: "presence", trackUse: false },
+  { verb: "hazard", audience: "agent", args: '<name> "<subject>" "<warning>"', blurb: "record a warning independently of obligations", group: "presence", trackUse: false },
+  { verb: "act", audience: "agent", args: '<name> --json <file>', blurb: "atomically create a compound structured message", group: "presence", trackUse: false },
+  { verb: "obligation", audience: "oversight", args: '<id> [event] [flags]', blurb: "inspect or append a versioned obligation event", group: "presence" },
+  { verb: "obligations", audience: "oversight", args: "[--agent <name>] [--all]", blurb: "everything outstanding across the ledger", group: "presence" },
+  { verb: "clearance", audience: "oversight", args: '<id> [revoke|expire] [flags]', blurb: "inspect, revoke or expire a clearance", group: "presence" },
+  { verb: "clearances", audience: "oversight", args: "[--all]", blurb: "every clearance still in force", group: "presence" },
+  { verb: "files", audience: "human", args: "<agent> [--hours 24]", blurb: "every file an agent has touched, and why", group: "presence" },
+  { verb: "blame", audience: "human", args: "<path>", blurb: "who has been in this file, newest first", group: "presence" },
+  // "dead" was a PROMISE THE CODE DOES NOT KEEP: there is no liveness check, so
+  // `quit <live peer>` deregisters a working agent mid-task. `docs/views.md` is
+  // honest about this at length ("deregisters, it does not kill", and why
+  // liveness cannot be detected); this one line was not.
+  { verb: "quit", audience: "human", args: "<name> [--force]", blurb: "drop a session off the roster; no liveness check", group: "presence" },
+  // MEASURED, because the old blurb was wrong in both directions: `clear`
+  // deletes sessions and claims only (`cli/admin.ts`) and prints "(Message log
+  // is kept; it self-prunes.)" -- it never touched the log, and an audit
+  // avoided running it on the strength of a blast radius it does not have.
+  { verb: "clear", audience: "human", args: "[--force]", blurb: "wipe the roster and claims; the log is kept", group: "presence" },
+  { verb: "export", audience: "human", args: "[path]", blurb: "copy the store somewhere safe before anything destructive", group: "presence" },
   // `--help`/`-h` dispatch here too. They are flag SPELLINGS rather than verbs,
   // so they are aliases (recognised, never advertised) -- help offering three
   // ways to ask for help is help that wastes its first line on itself.
-  { verb: "help", args: "", blurb: "this list", group: "presence", aliases: ["--help", "-h"] },
+  { verb: "help", audience: "human", args: "", blurb: "this list", group: "presence", aliases: ["--help", "-h"] },
 
   // ---- work
-  { verb: "doing", args: '"<subject>" [--plan "a; b; c"] [--plan-doc <path>]', blurb: "open a work item; --plan is optional", group: "work" },
-  { verb: "did", args: '<n> ["<what changed>"] [--item <match>]', blurb: "tick a step off, with what actually changed", group: "work" },
-  { verb: "step", args: '<n> "<status>" [--item <match>]', blurb: "note progress on a step without closing it", group: "work" },
-  { verb: "add", args: '"<step>" [--item <match>]', blurb: "a phase the plan missed", group: "work" },
-  { verb: "done", args: "[<subject match>] [--abandoned]", blurb: "close ONE item; --abandoned is the honest exit", group: "work" },
-  { verb: "board", args: "[<agent>] [--history] [--all]", blurb: "what everyone is doing", group: "work" },
-  { verb: "link", args: "<plan path> [--item <match>]", blurb: "say which plan document this item executes", group: "work" },
-  { verb: "plans", args: "", blurb: "every plan with work against it, and what shipped", group: "work" },
-  { verb: "mine", args: "", blurb: "my open items", group: "work" },
-  { verb: "breaks", args: '"<what>" [--item <match>]', blurb: "record a breaking change; tells agents in the same files", group: "work" },
-  { verb: "needs", args: '"<what>" [--item <match>]', blurb: "record what you are blocked on, and tell them", group: "work" },
+  { verb: "doing", audience: "agent", args: '"<subject>" [--plan "a; b; c"] [--plan-doc <path>]', blurb: "open a work item; --plan is optional", group: "work" },
+  { verb: "did", audience: "agent", args: '<n> ["<what changed>"] [--item <match>]', blurb: "tick a step off, with what actually changed", group: "work" },
+  { verb: "undo", audience: "agent", args: "<n> [--item <match>]", blurb: "take a tick back; the step goes outstanding again", group: "work" },
+  { verb: "step", audience: "agent", args: '<n> "<status>" [--item <match>]', blurb: "note progress on a step without closing it", group: "work" },
+  { verb: "add", audience: "agent", args: '"<step>" [--item <match>]', blurb: "a phase the plan missed", group: "work" },
+  { verb: "done", audience: "agent", args: "[<subject match>] [--abandoned]", blurb: "close ONE item; --abandoned is the honest exit", group: "work" },
+  { verb: "board", audience: "human", args: "[<agent>] [--history] [--all]", blurb: "what everyone is doing", group: "work" },
+  { verb: "link", audience: "agent", args: "<plan path> [--item <match>]", blurb: "say which plan document this item executes", group: "work" },
+  { verb: "plans", audience: "human", args: "", blurb: "every plan with work against it, and what shipped", group: "work" },
+  { verb: "mine", audience: "agent", args: "", blurb: "my open items", group: "work" },
+  { verb: "breaks", audience: "agent", args: '"<what>" [--item <match>]', blurb: "record a breaking change; tells agents in the same files", group: "work" },
+  { verb: "needs", audience: "agent", args: '"<what>" [--item <match>]', blurb: "record what you are blocked on, and tell them", group: "work" },
 
   // ---- diary
   // The flag list is deliberately partial -- `--tags`, `--body` and `--fixes`
@@ -133,25 +180,28 @@ export const VERBS: readonly Verb[] = [
   // Naming the second kind and moving `--fixes` to the usage line is therefore
   // not a trade -- it costs nothing and buys 12 rows back at 120 columns. The
   // blurb feeds the same column, so it is measured with the spec, not after.
-  { verb: "note", args: '"<title>" --topic <t> [--scope <dir>] [--kind error|decision]', blurb: "file a finding, a bug, or a decision; `note <id>` reads one", group: "diary" },
-  { verb: "recall", args: "<words> [--scope <dir>] [--limit n]", blurb: "search findings", group: "diary" },
-  { verb: "bugs", args: "[--scope <dir>] [--limit n]", blurb: "errors nobody has fixed yet", group: "diary" },
-  { verb: "topics", args: "", blurb: "every topic, with how much is under it", group: "diary" },
-  { verb: "topic", args: "<name> [--limit n]  |  merge <from> <into>", blurb: "read one topic, or fold two together", group: "diary" },
-  { verb: "tags", args: "", blurb: "every tag in use", group: "diary" },
-  { verb: "note-deprecate", args: '<id> "<why it stopped being true>"', blurb: "mark a finding no longer true, keeping the history", group: "diary" },
-  { verb: "note-supersede", args: "<old-id> <new-id>", blurb: "point an old finding at the one that replaced it", group: "diary" },
-  { verb: "diary", args: "check", blurb: "findings that look stale, thin or duplicated", group: "diary" },
+  { verb: "note", audience: "agent", args: '"<title>" --topic <t> [--scope <dir>] [--kind error|decision]', blurb: "file a finding, a bug, or a decision; `note <id>` reads one", group: "diary" },
+  { verb: "recall", audience: "agent", args: "<words> [--scope <dir>] [--limit n]", blurb: "search findings", group: "diary" },
+  { verb: "bugs", audience: "agent", args: "[--scope <dir>] [--limit n]", blurb: "errors nobody has fixed yet", group: "diary" },
+  { verb: "topics", audience: "agent", args: "", blurb: "every topic, with how much is under it", group: "diary" },
+  { verb: "topic", audience: "agent", args: "<name> [--limit n]  |  merge <from> <into>", blurb: "read one topic, or fold two together", group: "diary" },
+  { verb: "tags", audience: "agent", args: "", blurb: "every tag in use", group: "diary" },
+  { verb: "note-deprecate", audience: "agent", args: '<id> "<why it stopped being true>"', blurb: "mark a finding no longer true, keeping the history", group: "diary" },
+  { verb: "note-supersede", audience: "agent", args: "<old-id> <new-id>", blurb: "point an old finding at the one that replaced it", group: "diary" },
+  { verb: "diary", audience: "oversight", args: "check", blurb: "findings that look stale, thin or duplicated", group: "diary" },
 
   // ---- memory
-  { verb: "remember", args: '"<title>" [--body "<detail>"] [--tags a,b] [--global]', blurb: "keep something about the user across sessions", group: "memory" },
-  { verb: "about-me", args: "[--all]", blurb: "what you have kept", group: "memory" },
-  { verb: "forget", args: "<id>", blurb: "drop a memory outright -- a wrong one must not outlive you", group: "memory" },
-  { verb: "inherit", args: "[<name>]", blurb: "take up a departed agent's knowledge; bare lists them", group: "memory" },
+  { verb: "remember", audience: "agent", args: '"<title>" [--body "<detail>"] [--tags a,b] [--global]', blurb: "keep something about the user across sessions", group: "memory" },
+  { verb: "about-me", audience: "oversight", args: "[--all]", blurb: "what you have kept", group: "memory" },
+  // `about-me` answers "what have I kept?"; this answers "what does ANYONE
+  // hold about me?" -- the operator's question, and one no verb could ask.
+  { verb: "memories", audience: "oversight", args: "[--agent <name>] [--all-projects]", blurb: "every memory every agent holds about you", group: "memory" },
+  { verb: "forget", audience: "oversight", args: "<id>", blurb: "drop a memory outright -- a wrong one must not outlive you", group: "memory" },
+  { verb: "inherit", audience: "agent", args: "[<name>]", blurb: "take up a departed agent's knowledge; bare lists them", group: "memory" },
 
   // ---- identity
-  { verb: "call-me", args: "<name> [--agent <who>]", blurb: "take a different name; peers type it at msg", group: "identity", aliases: ["name"] },
-  { verb: "call-you", args: '"<role>" [--agent <who>]', blurb: "say what you ARE: Keeper of Wet Things", group: "identity", aliases: ["role"] },
+  { verb: "call-me", audience: "agent", args: "<name> [--agent <who>]", blurb: "take a different name; peers type it at msg", group: "identity", aliases: ["name"] },
+  { verb: "call-you", audience: "agent", args: '"<role>" [--agent <who>]', blurb: "say what you ARE: Keeper of Wet Things", group: "identity", aliases: ["role"] },
 ];
 
 /** Every spelling that must appear as a `case` label, aliases included. */

@@ -156,6 +156,10 @@ export function summarizeFiles(
 
   // Contested first: it is the reason to read this line at all, and it must
   // survive any truncation applied further down.
+  // Contested paths are shown IN FULL, never shortened. They are the one entry
+  // on the line that requires a decision, so the reader must be able to act on
+  // the text without reconstructing it -- and a red marker on an ambiguous name
+  // is worse than no marker at all.
   const pieces: FilePiece[] = contested.map((text) => ({ text, contested: true }));
 
   if (real.length > collapseAbove) {
@@ -165,8 +169,10 @@ export function summarizeFiles(
     const label = dir !== "" ? `${dir}/ (${real.length} files)` : `${real.length} files`;
     pieces.push({ text: label, contested: false });
   } else {
-    for (const p of real.slice(0, maxNamed)) {
-      pieces.push({ text: p.split("/").pop() ?? p, contested: false });
+    const named = real.slice(0, maxNamed);
+    const label = disambiguate([...contested, ...named]);
+    for (const p of named) {
+      pieces.push({ text: label(p), contested: false });
     }
     const unnamed = real.length - Math.min(real.length, maxNamed);
     if (unnamed > 0) pieces.push({ text: `+${unnamed} more`, contested: false });
@@ -241,6 +247,97 @@ export function backgroundProcesses<T extends ProcessLike>(
     })
     .slice()
     .sort((a, b) => a.startedAtMs - b.startedAtMs);
+}
+
+/**
+ * Shortest path suffix that still names ONE file, per path.
+ *
+ * WHY NOT JUST SHOW FULL PATHS. The column is width-bound and four agents in
+ * one tree do not need `src/` repeated on every row — the basename is right
+ * almost always, and the docs' "repeated facts move to the header" rule applies
+ * to directories too.
+ *
+ * WHY NOT JUST SHOW BASENAMES, which is what this did. Contention is computed
+ * on the FULL path (`cli/roster-model.ts`) while the display was the leaf, so
+ * `README.md` and `plans/README.md` rendered identically: two agents in
+ * different files looked like a collision, and a real collision could not be
+ * told from a coincidence of names. That defeats red-for-contested, which the
+ * docs call the one marker that always means "look at this".
+ *
+ * So: lengthen only what would otherwise be ambiguous, one directory segment at
+ * a time, and leave every unambiguous name alone. Identical paths are not
+ * ambiguous with each other — the same file listed twice is one file.
+ */
+export function disambiguate(paths: readonly string[]): (path: string) => string {
+  const unique = [...new Set(paths)];
+  const suffix = (path: string, depth: number): string =>
+    path.split("/").slice(-depth).join("/");
+  const resolved = new Map<string, string>();
+  for (const path of unique) {
+    const segments = path.split("/").length;
+    let depth = 1;
+    // Grow until this path's suffix is claimed by no OTHER path, or until the
+    // whole path is spelled out and there is nothing further to add.
+    while (
+      depth < segments &&
+      unique.some((other) => other !== path && suffix(other, depth) === suffix(path, depth))
+    )
+      depth += 1;
+    resolved.set(path, suffix(path, depth));
+  }
+  return (path: string) => resolved.get(path) ?? (path.split("/").pop() ?? path);
+}
+
+/**
+ * THE GLYPH FOR EACH AGENT STATE, DEFINED ONCE.
+ *
+ * `who` and `board` rendered these independently and diverged: `○` meant "at a
+ * prompt" in `cli/roster-renderers.ts` and "gone" in `cli/work.ts`, in the two
+ * surfaces the docs call the most heavily tuned. An operator who learned `○`
+ * from `who` read `board`'s `○` as a live idle agent — the exact inversion of
+ * "who can I still reach". Measured 2026-08-05.
+ *
+ * Keyed on `AgentState` (`core/work.ts`) rather than on free strings, so a new
+ * state is a type error in both renderers instead of a silently missing row.
+ * The two surfaces may still choose WHICH states they show — `who` folds
+ * `gone` away because a roster only lists the living — but they can no longer
+ * disagree about what a symbol means.
+ */
+export const STATE_GLYPHS = {
+  waiting: "⏸",
+  busy: "●",
+  idle: "◐",
+  gone: "○",
+} as const;
+
+/** One legend entry per state, in reading order: most to least urgent. */
+export const STATE_LEGEND: ReadonlyArray<{
+  readonly state: keyof typeof STATE_GLYPHS;
+  readonly label: string;
+}> = [
+  { state: "busy", label: "running" },
+  { state: "waiting", label: "needs you" },
+  { state: "idle", label: "at a prompt" },
+  { state: "gone", label: "gone" },
+];
+
+/**
+ * The legend line, rendered from the table above.
+ *
+ * `states` selects which entries appear, because the two surfaces genuinely
+ * differ: `who` has no `gone` rows to explain. `extras` carries the
+ * surface-specific tail (`✎ files this agent holds`, `— no plan recorded`)
+ * that is not a state at all.
+ */
+export function stateLegend(
+  states: ReadonlyArray<keyof typeof STATE_GLYPHS>,
+  extras: readonly string[] = [],
+  paint: (state: keyof typeof STATE_GLYPHS, glyph: string) => string = (_s, g) => g,
+): string {
+  const entries = STATE_LEGEND.filter((e) => states.includes(e.state)).map(
+    (e) => `${paint(e.state, STATE_GLYPHS[e.state])} ${e.label}`,
+  );
+  return `  ${[...entries, ...extras].join("   ")}`;
 }
 
 /** `just now` / `2m` / `3h` — short enough for a narrow fixed column. */

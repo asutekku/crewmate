@@ -63,19 +63,23 @@ function questionLines(
 ): string[] {
   const lines: string[] = [];
 
-  const resolved = store.questions.drainResolved(sessionId, nowMs);
-  for (const q of resolved) {
-    if (q.answeredMs > 0) lines.push(`${q.targetName} answered: "${q.text}" — ${q.answer}`);
-    // An expiry is reported rather than dropped: "nobody will answer this" is
-    // the actionable half, and silence would leave the asker waiting forever.
-    else lines.push(`No answer coming from ${q.targetName} — "${q.text}" (they went away).`);
-  }
+  // READS THE OBLIGATION LEDGER. This block used to read `store.questions`,
+  // which `ask` has never written to — so it advertised
+  // `crew answer <id>` to agents holding a uuid the old integer-only `answer`
+  // rejected. A hook that instructs an agent to run a command that cannot
+  // succeed is worse than silence: it burns a turn on a guaranteed failure.
+  const open = store.obligations.openQuestions(sessionId);
+  const live = store.liveSessions(nowMs);
+  const nameFor = (id: string): string => {
+    const hit = live.find((s) => s.sessionId === id);
+    return hit ? displayName(hit) : id.slice(0, 8);
+  };
 
-  const owed = store.questions.openFor(sessionId);
-  if (owed.length > 0) {
-    lines.push(`${owed.length} question(s) waiting on you:`);
-    for (const q of owed) {
-      lines.push(`  #${q.id} from ${q.askerName}: ${q.text}`);
+  if (open.mine.length > 0) {
+    lines.push(`${open.mine.length} question(s) waiting on you:`);
+    for (const q of open.mine) {
+      const who = q.asker === "" ? "the operator" : nameFor(q.asker);
+      lines.push(`  ${q.id.slice(0, 8)} from ${who}: ${q.text}`);
     }
     lines.push(`  Answer with \`crew answer <id> "<text>"\`, or say why not.`);
   }

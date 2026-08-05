@@ -9,7 +9,7 @@ import {
   red,
   yellow,
 } from "../core/colour.ts";
-import { fit, terminalWidth } from "../core/layout.ts";
+import { fit, STATE_GLYPHS, stateLegend, terminalWidth } from "../core/layout.ts";
 import { CLI } from "../core/verbs.ts";
 import {
   operatorNames,
@@ -58,7 +58,26 @@ function commandArguments(
   return undefined;
 }
 
-function noOpenItem(context: CliContext, match: string): void {
+/**
+ * Why a bare command found no item — which is two different failures.
+ *
+ * AMBIGUITY IS NOT ABSENCE. `target` refuses to guess between several open
+ * items, so the honest message names the choices rather than claiming there is
+ * nothing open. Reporting "no open work item" to an agent holding two would be
+ * a worse lie than the guess this refusal replaced: it is wrong AND it hides
+ * the fix, which is one `--item` away.
+ */
+function noOpenItem(context: CliContext, match: string, open: readonly WorkItem[] = []): void {
+  if (open.length > 1) {
+    context.error(
+      match !== ""
+        ? `${bold(match)} matches ${open.length} open items — name one.`
+        : `${open.length} open work items — say which with \`--item <match>\`.`,
+    );
+    for (const item of open) context.error(dim(`  ${item.subject}`));
+    context.fail();
+    return;
+  }
   context.error(
     match !== ""
       ? `no open work item matching ${bold(match)}.`
@@ -140,10 +159,13 @@ const STATE_SECTIONS: ReadonlyArray<{
   readonly title: string;
   readonly glyph: string;
 }> = [
-  { state: "waiting", title: "NEEDS YOU", glyph: "⏸" },
-  { state: "busy", title: "RUNNING", glyph: "●" },
-  { state: "idle", title: "IDLE — at a prompt", glyph: "◐" },
-  { state: "gone", title: "GONE — pick up or drop", glyph: "○" },
+  // Glyphs come from `STATE_GLYPHS` (`core/layout.ts`), never spelled out here:
+  // this table and `who`'s legend disagreed about `○` until they shared a
+  // source. Titles stay local -- they are board-specific framing, not meaning.
+  { state: "waiting", title: "NEEDS YOU", glyph: STATE_GLYPHS.waiting },
+  { state: "busy", title: "RUNNING", glyph: STATE_GLYPHS.busy },
+  { state: "idle", title: "IDLE — at a prompt", glyph: STATE_GLYPHS.idle },
+  { state: "gone", title: "GONE — pick up or drop", glyph: STATE_GLYPHS.gone },
 ];
 
 interface BoardView {
@@ -416,7 +438,7 @@ function renderBoard(
   }
   context.log("");
   context.log(
-    dim("  ● running   ⏸ needs you   ◐ at a prompt   ○ gone   — no plan recorded"),
+    dim(stateLegend(["busy", "waiting", "idle", "gone"], ["— no plan recorded"])),
   );
   if (view.closedHidden > 0)
     context.log(dim(`  ${view.closedHidden} closed — \`board --all\` to include them`));
@@ -487,7 +509,7 @@ export function createWorkCommands(context: CliContext): CommandMap {
         const me = callerIdentity(context, store);
         if (!me) return notAnAgent(context, "`did`");
         const item = store.work.target(me.agentId, match);
-        if (!item) return noOpenItem(context, match);
+        if (!item) return noOpenItem(context, match, store.work.openItems(me.agentId));
         if (
           !store.work.tick(item.workId, stepNumber, note, now)
         ) {
@@ -497,6 +519,44 @@ export function createWorkCommands(context: CliContext): CommandMap {
             context.error(dim(`  ${step.idx}  ${step.text}`));
           if (steps.length === 0)
             context.error(dim('  (no checklist — `crew add "<step>"`)'));
+          context.fail();
+          return;
+        }
+        printProgress(context, store, item.workId, item.subject);
+      });
+    },
+
+    /**
+     * Takes a tick back.
+     *
+     * The counterpart to `did`, and the reason it exists is that `did` was
+     * unrecoverable: `step` writes a status note but leaves `done_ms` set, so a
+     * correction rendered UNDER a green check and the board kept counting work
+     * that had not happened. Recovery meant editing sqlite by hand.
+     */
+    undo(args) {
+      const input = commandArguments(context, "undo", args, {
+        valueFlags: ["--item"],
+      });
+      if (!input) return;
+      const parsedStep = requireSafeInteger(input.positionals[0], "step", {
+        min: 1,
+        max: Number.MAX_SAFE_INTEGER,
+      });
+      if (!parsedStep.ok) return failCommand(context, `undo: ${parsedStep.error}`);
+      const stepNumber = parsedStep.value;
+      const match = stringFlag(input, "--item") ?? "";
+      withStore(context.dbPath, (store) => {
+        const now = context.now();
+        const me = callerIdentity(context, store);
+        if (!me) return notAnAgent(context, "`undo`");
+        const item = store.work.target(me.agentId, match);
+        if (!item) return noOpenItem(context, match, store.work.openItems(me.agentId));
+        if (!store.work.untick(item.workId, stepNumber, now)) {
+          const steps = store.work.steps(item.workId);
+          context.error(`${bold(item.subject)} has no step ${stepNumber}.`);
+          for (const step of steps)
+            context.error(dim(`  ${step.idx}  ${step.text}`));
           context.fail();
           return;
         }
@@ -527,7 +587,7 @@ export function createWorkCommands(context: CliContext): CommandMap {
         const me = callerIdentity(context, store);
         if (!me) return notAnAgent(context, "`step`");
         const item = store.work.target(me.agentId, match);
-        if (!item) return noOpenItem(context, match);
+        if (!item) return noOpenItem(context, match, store.work.openItems(me.agentId));
         store.work.record(item.workId, "step", status, now, String(stepNumber));
         context.log(
           `${cyan("▪")} ${bold(item.subject)} ${dim(`step ${stepNumber}`)}: ${status}`,
@@ -551,7 +611,7 @@ export function createWorkCommands(context: CliContext): CommandMap {
         const me = callerIdentity(context, store);
         if (!me) return notAnAgent(context, "`add`");
         const item = store.work.target(me.agentId, match);
-        if (!item) return noOpenItem(context, match);
+        if (!item) return noOpenItem(context, match, store.work.openItems(me.agentId));
         const index = store.work.addStep(item.workId, text, now);
         context.log(
           `${green("+")} ${bold(item.subject)} ${dim(`step ${index}`)}: ${text}`,
@@ -573,7 +633,7 @@ export function createWorkCommands(context: CliContext): CommandMap {
         const me = callerIdentity(context, store);
         if (!me) return notAnAgent(context, "`done`");
         const item = store.work.target(me.agentId, match);
-        if (!item) return noOpenItem(context, match);
+        if (!item) return noOpenItem(context, match, store.work.openItems(me.agentId));
         const outcome = abandoned ? "abandoned" : "done";
         const state = progress(store.work.steps(item.workId));
         store.work.close(item.workId, outcome, body, now);
@@ -611,7 +671,7 @@ export function createWorkCommands(context: CliContext): CommandMap {
         const me = callerIdentity(context, store);
         if (!me) return notAnAgent(context, "`link`");
         const item = store.work.target(me.agentId, match);
-        if (!item) return noOpenItem(context, match);
+        if (!item) return noOpenItem(context, match, store.work.openItems(me.agentId));
         const path = normalisePlanPath(planDoc);
         if (!store.work.link(item.workId, path, now)) {
           context.error(`no work item #${item.workId}`);
@@ -758,12 +818,10 @@ function flag(
     if (!me) return notAnAgent(context, `\`${kind}\``);
     const now = context.now();
     const item = store.work.target(me.agentId, match);
-    if (!item) {
-      context.error(`${red("✗")} no open work item to attach this to`);
-      context.error(dim('  `crew doing "<subject>"` opens one.'));
-      context.fail();
-      return;
-    }
+    // Shares `noOpenItem` so ambiguity reads the same here as everywhere else:
+    // this site had its own "no open work item" string, which told an agent
+    // holding two that it held none.
+    if (!item) return noOpenItem(context, match, store.work.openItems(me.agentId));
     const reached = store.recordWorkFlag({
       workId: item.workId,
       kind,

@@ -17,6 +17,41 @@ and defaults apply **per field** so one bad line cannot revert the rest.
 | `workKeepMs`        | 7 days  | how long a **closed** work record is kept             |
 | `editKeepMs`        | 30 days | how long edit history is kept                         |
 
+**Before anything destructive, `crew export [path]`.** It copies the store —
+including the write-ahead log, which the db file alone can be missing rows
+without — to a path you name, defaulting to `<project>-<timestamp>.db` in the
+working directory. `clear`, `quit`, `forget` and `done --abandoned` all remove
+state; this is the only thing that gets it back.
+
+`clear` and `quit` now refuse to act silently. Bare `crew clear` lists the
+sessions and claim counts that *would* go and stops; `--force` performs it.
+`crew quit <name>` on a session whose process is still running refuses and names
+the pid, because "drop a dead session" was a guarantee the code never kept —
+there is no liveness check, only Claude Code's own process list.
+
+**Obligations expire only if given a deadline.** `--until 4h` (also `30m`,
+`2d`) records an automatic boundary that the session-start sweep can fire;
+`--until "the release lands"` stays prose and waits for a human. The distinction
+is load-bearing: an obligation with no deadline outlives every session that
+cared about it, sitting above the roster in its target's injection. At most five
+obligations are injected at once — the rest collapse to a count pointing at
+`crew obligations`.
+
+**The message log is not on this table, and that is the point.** It is pruned by
+**row count, not age**: `core/store/messages.ts` deletes on every insert, keeping
+the newest `MAX_MESSAGES` (2000, `core/store/types.ts`). There is no config key
+and no time horizon — a busy repo silently loses a day of messages, a quiet one
+keeps them forever. `crew clear`'s "(Message log is kept; it self-prunes.)" means
+this ring buffer, nothing else.
+
+That interacts badly with the obligation ledger, which is **permanent**:
+obligation events are append-only and never pruned, so a `withdraw` whose reason
+reads *"answered over msg"* cites evidence that will eventually be evicted. The
+same holds for `correct` and `breaks`, whose whole purpose is answering "who
+changed the baselines?" days later. **Treat `log` as ephemeral**: if a
+justification needs to outlive the buffer, put it in the obligation's own
+`--resolution` or in the diary, not in a message the ledger merely points at.
+
 `editKeepMs` is the longest because it is the only one answering a question about
 the past. There is no "off": an append-only table on a repo with 36 worktrees is
 how this gets slow, and the honest knob is _how long_, not _whether_.

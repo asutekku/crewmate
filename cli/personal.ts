@@ -13,6 +13,7 @@ import {
 import { failUsage } from "./command.ts";
 import { failCommand } from "./command.ts";
 import { notAnAgent, resolveLiveName } from "./identity.ts";
+import { sanitizeTerminalText } from "./terminal.ts";
 import { failure, success } from "./result.ts";
 import type { CliContext, CommandMap } from "./types.ts";
 
@@ -54,6 +55,69 @@ function memorySubjectPolicy(
 
 export function createPersonalCommands(context: CliContext): CommandMap {
   return {
+    /**
+     * Every memory every agent holds about the operator.
+     *
+     * WHY IT IS A SEPARATE VERB. `about-me` is keyed to the CALLING agent, and
+     * its aggregate branch requires `resolved === null` — reachable only when
+     * `context.sessionId` is empty, which no live agent ever has. The view was
+     * written and unreachable; the only hint a peer held anything was `inherit`
+     * refusing with "still held — ask them instead".
+     *
+     * The operator is the SUBJECT of this data and could not enumerate it.
+     * That is the gap the `oversight` audience exists to make visible.
+     */
+    memories(args) {
+      const input = personalArguments(context, "memories", args, {
+        valueFlags: ["--agent"],
+        booleanFlags: ["--all-projects"],
+        maxPositionals: 0,
+      });
+      if (!input) return;
+      const only = stringFlag(input, "--agent") ?? "";
+      const allProjects = booleanFlag(input, "--all-projects");
+      withPersonal((personal) => {
+        const held = personal.lineages();
+        if (held.length === 0) {
+          context.log(dim("no agent has recorded anything about you yet."));
+          return;
+        }
+        let shown = 0;
+        for (const lineage of held) {
+          const who = lineage.agents.join(", ") || lineage.lineage;
+          if (only !== "" && !who.toLowerCase().includes(only.toLowerCase())) continue;
+          const memories = personal.forLineage(lineage.lineage, context.projectName, {
+            allProjects,
+          });
+          if (memories.length === 0) continue;
+          shown += 1;
+          context.log(
+            `${bold(sanitizeTerminalText(who))} ${dim(`— ${memories.length}`)}`,
+          );
+          for (const memory of memories) {
+            context.log(`  ${dim(`#${memory.id}`)} ${sanitizeTerminalText(memory.title)}`);
+            if (memory.body)
+              for (const line of wrap(sanitizeTerminalText(memory.body), 72))
+                context.log(`      ${dim(line)}`);
+          }
+        }
+        if (shown === 0) {
+          context.log(
+            dim(
+              only === ""
+                ? "nothing recorded about you in this project."
+                : `no agent matching ${only} has recorded anything about you here.`,
+            ),
+          );
+          if (!allProjects) context.log(dim("  `--all-projects` looks in every repo."));
+          return;
+        }
+        // NAMES THE ERASURE PATH, because a wrong memory about the operator
+        // must not outlive the agent that wrote it -- and `forget` is not
+        // gated across agents, so the operator can drop each of these.
+        context.log(dim("`crew forget <id>` drops one."));
+      });
+    },
     remember(args) {
       const input = personalArguments(context, "remember", args, {
         valueFlags: ["--body", "--tags"],

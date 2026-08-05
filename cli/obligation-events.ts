@@ -15,7 +15,10 @@ export interface ObligationEventInput {
   readonly id: string;
   readonly eventName: string;
   readonly reason?: string;
+  /** Free-text outcome: what actually happened. Validated against nothing. */
   readonly resolution?: string;
+  /** One of the obligation's `validResolutionKeys`. Validated on fold. */
+  readonly resolutionKey?: string;
   readonly replacement?: string;
   readonly episode?: string;
   readonly to?: ActorRef;
@@ -44,7 +47,14 @@ export function buildObligationEvent(
 ): Result<ObligationEvent> {
   const reason = input.reason || undefined;
   const eventName = OBLIGATION_COMMAND_EVENTS.find((name) => name === input.eventName);
-  if (!eventName) return failure(`unknown obligation event ${input.eventName}`);
+  // THE VOCABULARY IS IN THE ERROR. Without it the only way to learn the valid
+  // events is to open `core/obligations.ts` -- measured: an agent reached for
+  // `discharge`, got no hint, and read the source to find `fulfil`.
+  if (!eventName)
+    return failure(
+      `unknown obligation event ${input.eventName} — ` +
+        `expected one of: ${OBLIGATION_COMMAND_EVENTS.join(", ")}`,
+    );
   switch (eventName) {
     case "accept":
       return success({ type: "accepted" });
@@ -62,9 +72,15 @@ export function buildObligationEvent(
         reason: input.reason || "cancelled explicitly",
       });
     case "fulfil":
+      // `--resolution` is PROSE and goes to the free-text field. It used to be
+      // routed into `resolutionKey`, which is validated against the
+      // obligation's `validResolutionKeys` -- empty for everything `ask`
+      // creates, so every answer failed with "unknown resolution key". A
+      // controlled key now has its own flag.
       return success({
         type: "fulfilled",
-        resolutionKey: input.resolution || undefined,
+        resolution: input.resolution || undefined,
+        resolutionKey: input.resolutionKey || undefined,
       });
     case "violate":
       return success({ type: "violated" });

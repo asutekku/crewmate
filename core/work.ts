@@ -374,12 +374,28 @@ export class WorkStore {
   }
 
   /**
-   * The item a bare command means.
+   * The item a bare command means, or `null` when that is a guess.
    *
-   * MOST RECENTLY TOUCHED, unless a subject substring is given. With several
-   * items open every command needs to know which, and this matches how an agent
-   * narrates it ("finished the sliver fix, back to the core work") without
-   * making it pass an id it would have to look up.
+   * ONE OPEN ITEM, or a subject substring that picks exactly one. With several
+   * items open a bare command is AMBIGUOUS and is refused, because the caller
+   * cannot see which one was chosen.
+   *
+   * IT USED TO ANSWER "most recently touched" (`items[0]` under
+   * `ORDER BY updated_ms DESC`). That reads well — it matches how an agent
+   * narrates work ("finished the sliver fix, back to the core work") — and it
+   * is wrong in the one way a board must never be wrong: MEASURED 2026-08-06,
+   * `crew did 1 "…"` with two items open ticked a step on the other item, twice
+   * within five minutes. The note text made the first one visible; the second
+   * was `crew did 3` with no note and left no trace at all.
+   *
+   * The heuristic is also SELF-REINFORCING: every tick writes `updated_ms`, so
+   * one wrong guess makes that item the target of every later bare command. And
+   * because a tick could not be undone (see `untick`), the board then asserted
+   * work that had never happened — the `[x] IMPLEMENTED` failure
+   * `plans/README.md` opens with, reached by a typo rather than by optimism.
+   *
+   * Refusing costs the multi-item agent one `--item` flag. Guessing costs a
+   * board nobody can trust, which is the whole artefact.
    */
   target(agentId: string, match?: string): WorkItem | null {
     const q = (match ?? "").trim().toLowerCase();
@@ -387,8 +403,12 @@ export class WorkStore {
       .query(`SELECT ${WORK_COLUMNS} FROM work WHERE agent_id = ? AND closed_ms = 0 ORDER BY updated_ms DESC`)
       .all(agentId) as Array<Record<string, string | number>>;
     const items = rows.map(rowToItem);
-    if (q === "") return items[0] ?? null;
-    return items.find((i) => i.subject.toLowerCase().includes(q)) ?? null;
+    // Exactly one open item is not ambiguous, so a bare command still works for
+    // the common case the board was built for.
+    if (q === "") return items.length === 1 ? (items[0] ?? null) : null;
+    const hits = items.filter((i) => i.subject.toLowerCase().includes(q));
+    // A substring matching two subjects is the same guess wearing an argument.
+    return hits.length === 1 ? (hits[0] ?? null) : null;
   }
 
   openItems(agentId: string): WorkItem[] {
@@ -560,7 +580,11 @@ export class WorkStore {
       if (res.changes === 0) return false;
       this.db
         .query(`INSERT INTO work_events (work_id, ts_ms, kind, body, ref) VALUES (?, ?, 'linked', ?, ?)`)
-        .run(workId, nowMs, path === "" ? "unlinked" : `executing ${path}`, path);
+        // BODY CARRIES NO PATH: `ref` already holds it, and `renderHistory`
+        // prints ref then body -- so `executing ${path}` rendered as
+        // "linked  docs/audiences.md executing docs/audiences.md". Every other
+        // event kind keeps the identifier in `ref` alone; this one drifted.
+        .run(workId, nowMs, path === "" ? "unlinked" : "executing", path);
       return true;
     });
     return run();
@@ -660,6 +684,40 @@ export class WorkStore {
     run();
     const text = String(step["text"]);
     this.record(workId, "did", note !== "" ? `${text}: ${note}` : text, nowMs, String(idx));
+    return true;
+  }
+
+  /**
+   * Puts a step back to outstanding. Returns false when there is no such step.
+   *
+   * THE MISSING HALF OF `tick`. Until this existed a tick was permanent: `step`
+   * writes a status note but leaves `done_ms` set, so a correction rendered
+   * UNDER a green check and the board went on counting work that had not
+   * happened. MEASURED 2026-08-06 — the only recovery was editing sqlite by
+   * hand, which no operator should ever be asked to do to unsay something.
+   *
+   * The note is cleared with the tick. A step showing "outstanding" beside the
+   * completion note it was ticked with is the same false claim in smaller type.
+   *
+   * HARMLESS ON AN ALREADY-OUTSTANDING STEP: the clearing write is idempotent,
+   * so `untick` twice is not an error. It still records the event, because "this
+   * was taken back" is history worth keeping even when the second one is a
+   * no-op — the append-only log is what `board --history` reads, and a silent
+   * correction is exactly what this whole file exists to prevent.
+   */
+  untick(workId: number, idx: number, nowMs: number): boolean {
+    const step = this.db
+      .query(`SELECT * FROM work_steps WHERE work_id = ? AND idx = ?`)
+      .get(workId, idx) as Record<string, string | number> | null;
+    if (!step) return false;
+    const run = this.db.transaction(() => {
+      this.db
+        .query(`UPDATE work_steps SET done_ms = 0, note = '' WHERE work_id = ? AND idx = ?`)
+        .run(workId, idx);
+      this.db.query(`UPDATE work SET updated_ms = ? WHERE work_id = ?`).run(nowMs, workId);
+    });
+    run();
+    this.record(workId, "step", `reopened ${String(step["text"])}`, nowMs, String(idx));
     return true;
   }
 

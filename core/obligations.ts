@@ -21,6 +21,15 @@ export type AuthorityState =
 export type ActivationState =
   "waiting" | "active" | "fulfilled" | "released" | "violated" | "expired";
 export type TriggerSpec =
+  /**
+   * A wall-clock deadline, in epoch milliseconds.
+   *
+   * THE ONLY TRIGGER NOTHING ELSE HAS TO OBSERVE. Every other kind waits for
+   * an event some agent must produce; if that agent never returns, the
+   * obligation is immortal — and it sits above the roster in its target's
+   * injection while it waits. `--until 4h` is what lets `expire` finally fire.
+   */
+  | { kind: "deadline"; atMs: number }
   | { kind: "commit_reachable"; commitSha: string; branch: string }
   | { kind: "work_completed"; workId: string }
   | { kind: "work_step_completed"; workId: string; step: number }
@@ -117,7 +126,18 @@ export type ObligationEvent =
   | { type: "activated"; trigger: TriggerSpec }
   | { type: "released"; why: string }
   | { type: "expired"; episodeId: string }
-  | { type: "fulfilled"; resolutionKey?: string; evidenceMessageId?: number }
+  // `resolutionKey` is a CONTROLLED VOCABULARY, checked against the
+  // obligation's `validResolutionKeys`. `resolution` is FREE TEXT, checked
+  // against nothing. The distinction is load-bearing: `crew answer` files
+  // prose, and prose put in `resolutionKey` failed validation against an empty
+  // vocabulary -- every `ask`-created question was unanswerable. Measured
+  // 2026-08-05 by hopper, one hour after the Q&A collapse shipped.
+  | {
+      type: "fulfilled";
+      resolutionKey?: string;
+      resolution?: string;
+      evidenceMessageId?: number;
+    }
   | { type: "violated"; evidenceMessageId?: number };
 
 export const OBLIGATION_COMMAND_EVENTS = [
@@ -141,6 +161,26 @@ export interface ObligationSnapshot {
   currentResponsible: Responsibility;
   version: number;
   lastEventId: string;
+  /**
+   * Free-text outcome from the `fulfilled` event, when there was one.
+   *
+   * ON THE FOLD rather than read from the event log by callers: `crew answer`
+   * files prose, and an answer nobody can read back is a message that was
+   * accepted and lost. `cli/obligations.ts` is barred from touching
+   * `obligations.events(` (see `test/cli-architecture.test.ts`), so current
+   * state has to arrive here or not at all.
+   */
+  resolution?: string;
+}
+/** One unanswered question, flattened for `asks`. Ids are obligation uuids. */
+export interface OpenQuestion {
+  readonly id: string;
+  readonly text: string;
+  readonly askedMs: number;
+  /** Conversation id of the asker, or "" when the operator asked. */
+  readonly asker: string;
+  /** Conversation id of whoever owes the answer, or "" if unassigned. */
+  readonly responsible: string;
 }
 export interface Dependency {
   sourceObligationId: string;
@@ -211,10 +251,32 @@ const validateActor = (a: ActorRef): void => {
   else if (a.kind === "legacy_uncertain")
     nonempty(a.label, "legacy actor label");
 };
-const terminalAuthority = (x: AuthorityState): boolean =>
+export const terminalAuthority = (x: AuthorityState): boolean =>
   ["declined", "countered", "withdrawn", "cancelled"].includes(x);
 const terminalActivation = (x: ActivationState): boolean =>
   ["fulfilled", "released", "violated", "expired"].includes(x);
+
+/**
+ * The two-axis state, rendered so it cannot read as a contradiction.
+ *
+ * `AuthorityState` and `ActivationState` are genuinely orthogonal -- authority
+ * is what the PARTIES have settled, activation is whether the duty is live --
+ * so `withdrawn / active` was correct and unreadable: authority reached a
+ * terminal state while activation was never advanced past its default.
+ *
+ * Once authority is terminal the activation axis carries no information: a
+ * withdrawn obligation obliges nobody whatever its condition says. So the pair
+ * collapses to the settled half, and only a live obligation shows both.
+ */
+export function describeState(s: {
+  readonly authority: AuthorityState;
+  readonly activation: ActivationState;
+}): string {
+  if (terminalAuthority(s.authority)) return s.authority;
+  return terminalActivation(s.activation)
+    ? s.activation
+    : `${s.authority} / ${s.activation}`;
+}
 
 export function validateCondition(c: ObligationCondition | undefined): void {
   if (!c) return;
@@ -317,6 +379,7 @@ export function foldObligation(
         )
           fail("resolution", "unknown resolution key");
         s.activation = "fulfilled";
+        if (e.resolution) s.resolution = e.resolution;
         break;
       case "released":
         if (s.authority !== "binding" || s.activation !== "waiting")
@@ -677,6 +740,109 @@ export class ObligationStore {
    * the manual path (`--kind decision` in the diary) exists for choices made
    * without an obligation behind them, not for these.
    */
+  /**
+   * Open questions in both directions for one conversation id.
+   *
+   * THE QUESTION LOOP LIVES HERE, NOT IN `questions`. `ask` has always written
+   * an obligation (`kind: "question"`, binding, responsible = the recipient),
+   * while `asks` and `answer` read a separate `questions` table that `ask`
+   * never wrote to. Measured 2026-08-05: 5 obligations, 0 question rows — so
+   * `asks` reported "No open questions" with three outstanding and `answer`
+   * rejected the uuid it had just been handed. Two ledgers, one of them empty
+   * and both advertised.
+   *
+   * `mine` is what this session must answer; `waiting` is what it is owed. A
+   * question is open until its activation is terminal — `fulfil` is what
+   * `answer` files, so an answered question drops out of both lists.
+   */
+  openQuestions(agentId: string): {
+    mine: OpenQuestion[];
+    waiting: OpenQuestion[];
+  } {
+    const mine: OpenQuestion[] = [];
+    const waiting: OpenQuestion[] = [];
+    for (const { definition: d, snapshot: s } of this.all()) {
+      if (d.kind !== "question") continue;
+      if (terminalAuthority(s.authority) || terminalActivation(s.activation)) continue;
+      // The `created` event IS the ask. `ObligationSnapshot` is a fold and
+      // carries no timestamp, so the age a reader needs comes from the event
+      // log rather than from the snapshot.
+      const askedMs = this.events(d.id)[0]?.occurredAt ?? 0;
+      const r = s.currentResponsible;
+      const responsible =
+        r.kind === "assigned" && r.actor.kind === "agent" ? r.actor.agentId : "";
+      const asker = d.createdBy.kind === "agent" ? d.createdBy.agentId : "";
+      const row: OpenQuestion = { id: d.id, text: d.text, askedMs, asker, responsible };
+      if (responsible === agentId) mine.push(row);
+      else if (asker === agentId) waiting.push(row);
+    }
+    return { mine, waiting };
+  }
+
+  /**
+   * Fires `expire` for every obligation whose deadline has passed.
+   *
+   * WHY A SWEEP AND NOT A TIMER. Nothing here runs when no agent is working —
+   * there is no daemon, and a hook only fires because its own session did
+   * something. So expiry is checked opportunistically, on the paths that
+   * already read this table. An obligation may therefore outlive its deadline
+   * by however long the project is idle, which is correct: nobody was there to
+   * be misled by it.
+   *
+   * Idempotent by construction — a terminal activation is skipped, and
+   * `expired` is terminal — so calling it on every read is safe.
+   */
+  expireDue(nowMs: number): number {
+    let fired = 0;
+    for (const { definition: d, snapshot: s } of this.all()) {
+      if (terminalAuthority(s.authority) || terminalActivation(s.activation)) continue;
+      const boundary = d.releaseBoundary;
+      if (
+        !boundary ||
+        boundary.handling !== "automatic" ||
+        boundary.trigger.kind !== "deadline" ||
+        boundary.trigger.atMs > nowMs
+      )
+        continue;
+      this.append({
+        id: randomUUID(),
+        obligationId: d.id,
+        actor: { kind: "system", component: "expiry" },
+        occurredAt: nowMs,
+        expectedVersion: s.version,
+        idempotencyKey: `expire:${d.id}`,
+        payload: { type: "expired", episodeId: `deadline:${boundary.trigger.atMs}` },
+      });
+      fired += 1;
+    }
+    return fired;
+  }
+
+  /**
+   * Resolve a git-style id prefix to one obligation id.
+   *
+   * Uuids are 36 characters and nobody retypes one. `ask` hands the asker a
+   * full uuid and the peer sees it in an injected line; requiring both to be
+   * copied exactly is what made `answer` feel unusable even before the table
+   * split was found. Ambiguity is an error rather than a guess — answering the
+   * wrong obligation is worse than being asked to type two more characters.
+   */
+  resolveId(prefix: string): { ok: true; id: string } | { ok: false; error: string } {
+    const needle = prefix.trim().toLowerCase();
+    if (needle === "") return { ok: false, error: "empty obligation id" };
+    const hits = this.all()
+      .map((o) => o.definition.id)
+      .filter((id) => id.toLowerCase().startsWith(needle));
+    if (hits.length === 1) return { ok: true, id: hits[0]! };
+    return {
+      ok: false,
+      error:
+        hits.length === 0
+          ? `no obligation matching ${prefix}`
+          : `ambiguous obligation ${prefix}: ${hits.map((h) => h.slice(0, 8)).join(", ")}`,
+    };
+  }
+
   decisions(): Decision[] {
     const byId = new Map(this.all().map((o) => [o.definition.id, o]));
     const out: Decision[] = [];
@@ -707,6 +873,25 @@ export class ObligationStore {
     return out.sort((a, b) => a.decidedAtMs - b.decidedAtMs);
   }
   /** P0 candidates for one authenticated conversation id. */
+  /**
+   * Who an obligation was addressed TO, which is not who owes it.
+   *
+   * A promise assigns responsibility to the PROMISOR, so `currentResponsible`
+   * cannot answer "was this made to me?". The recipient is on the message that
+   * carried it (`message_deliveries`), joined by `source_message_id`.
+   */
+  private recipientsOf(sourceMessageId: number): Set<string> {
+    const rows = this.db
+      .query(`SELECT recipient_json FROM message_deliveries WHERE source_message_id = ?`)
+      .all(sourceMessageId) as Array<{ recipient_json: string }>;
+    const out = new Set<string>();
+    for (const row of rows) {
+      const actor = parse<ActorRef>(row.recipient_json);
+      if (actor.kind === "agent") out.add(actor.agentId);
+    }
+    return out;
+  }
+
   candidates(agentId: string, operator = false): InjectionCandidate[] {
     const mine = (r: Responsibility): boolean =>
       r.kind === "assigned" &&
@@ -728,6 +913,23 @@ export class ObligationStore {
       } else if (s.authority === "binding" && mine(s.currentResponsible)) {
         relevant = true;
         actionable = s.activation === "active";
+      } else if (
+        // A PROMISE MADE TO YOU. Responsibility sits with the promisor, so this
+        // is the only branch that can reach the beneficiary -- without it a
+        // promise was invisible to the one peer it was for, which is the whole
+        // point of making one. Measured 2026-08-05: still absent after 45
+        // minutes while every other kind injected.
+        d.kind === "promise" &&
+        s.authority === "binding" &&
+        s.activation === "active" &&
+        !mine(s.currentResponsible) &&
+        this.recipientsOf(d.sourceMessageId).has(agentId)
+      ) {
+        relevant = true;
+        // NEVER ACTIONABLE: `only owner may perform event` is correct and
+        // stays, so telling the beneficiary to act would advertise a command
+        // that fails -- the same defect as the `crew answer` hook did.
+        actionable = false;
       }
       if (
         !relevant ||
@@ -746,7 +948,12 @@ export class ObligationStore {
           ? "awaiting your response"
           : s.activation === "waiting"
             ? "waiting on its condition"
-            : "needs action";
+            : // A non-actionable candidate is one you are TOLD about, not one
+              // you owe -- a promise made to you. "needs action" there would
+              // ask for something the ledger will refuse.
+              actionable
+              ? "needs action"
+              : "made to you; nothing owed";
       return [
         {
           key: `obligation:${d.id}`,
@@ -1286,6 +1493,30 @@ export class ObligationStore {
         JSON.stringify(r.payload),
       );
   }
+  /**
+   * Every clearance with its folded state — the shape a list needs.
+   *
+   * Mirrors `all()` for obligations, and exists for the same reason: the only
+   * handle was by-uuid inspect, which requires already having the uuid. Neither
+   * operator nor agent could answer "what is outstanding between these two",
+   * and unenumerable state is unusable state.
+   */
+  allClearances(): Array<{
+    definition: ClearanceDefinition;
+    snapshot: ClearanceSnapshot;
+  }> {
+    const rows = this.db
+      .query(`SELECT clearance_id FROM clearances ORDER BY rowid`)
+      .all() as Array<{ clearance_id: string }>;
+    const out: Array<{ definition: ClearanceDefinition; snapshot: ClearanceSnapshot }> = [];
+    for (const row of rows) {
+      const definition = this.clearance(row.clearance_id);
+      const snapshot = this.clearanceSnapshot(row.clearance_id);
+      if (definition && snapshot) out.push({ definition, snapshot });
+    }
+    return out;
+  }
+
   clearance(id: string): ClearanceDefinition | null {
     const r = this.db
       .query(`SELECT * FROM clearances WHERE clearance_id=?`)

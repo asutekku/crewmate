@@ -24,6 +24,16 @@ import { loadConfig } from "./config.ts";
 const RECENT_LINES = 8;
 
 /**
+ * How many obligations may occupy the injection before the rest collapse.
+ *
+ * Five is enough for the real cases measured (three outstanding was the most
+ * seen) and small enough that a peer filing in bulk cannot own the budget.
+ * `all()` returns insertion order, so the survivors are the OLDEST — a
+ * long-outstanding obligation must not be starved by a fresh one.
+ */
+export const MAX_OBLIGATION_CANDIDATES = 5;
+
+/**
  * What outranks what, in one table rather than in the order of the code.
  *
  * The old assembly encoded priority as the sequence of `lines.push` calls,
@@ -222,7 +232,41 @@ export function sessionEnvelope(store: Store, input: EnvelopeInputs): Envelope {
 
   // P2 produces candidates; P0 remains the only allocator and exposure ledger.
   // The conversation uuid is the durable agent principal across resume/restart.
-  for (const obligation of store.obligations.candidates(sessionId)) add(obligation);
+  //
+  // CAPPED, because obligations are the one priority class that can crowd out
+  // everything else. They rank ABOVE the roster and nothing expires them --
+  // `--until` is opaque text and the `expire` event has no trigger -- so a
+  // peer that files twenty obligations occupies the whole budget of a session
+  // that never agreed to any of them. Measured 2026-08-05: three sat above a
+  // roster for 45 minutes with no path to removal.
+  //
+  // Oldest first, so a long-outstanding obligation is never starved by a fresh
+  // one; the remainder collapses to a single countable line. This is the
+  // `inbox` pattern already built, applied to the class that most needed it.
+  // EXPIRY IS SWEPT HERE because this is the path that would otherwise show a
+  // dead obligation to an agent. There is no daemon; a hook only runs because
+  // its own session did something, so the check has to ride along with a read
+  // that already happens. Idempotent, so doing it every session start is safe.
+  store.obligations.expireDue(now);
+  const obligations = store.obligations.candidates(sessionId);
+  for (const obligation of obligations.slice(0, MAX_OBLIGATION_CANDIDATES))
+    add(obligation);
+  const crowded = obligations.length - MAX_OBLIGATION_CANDIDATES;
+  if (crowded > 0)
+    add({
+      key: "obligations-overflow",
+      priority: P.roster,
+      text:
+        `${crowded} further obligation(s) not shown — \`crew obligations\` lists ` +
+        `them, \`crew obligation <id>\` reads one.`,
+      actionable: false,
+      stateVersion: `overflow:${crowded}`,
+      // A COUNT WRITTEN BY THIS TOOL, not text a peer supplied — so it carries
+      // no peer framing. The obligations it stands in for do; they are read
+      // through `crew obligations`, where their provenance travels with them.
+      origin: "system" as const,
+      requiresPeerFraming: false,
+    });
 
   if (peers.length === 0) {
     add({

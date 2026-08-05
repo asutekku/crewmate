@@ -1,3 +1,4 @@
+import { copyFileSync, existsSync, statSync } from "node:fs";
 import { listAgents } from "../core/agents.ts";
 import { bold, cyan, dim, green, handleColour, red } from "../core/colour.ts";
 import {
@@ -14,8 +15,9 @@ import {
   withStore,
 } from "../core/store.ts";
 import { validateAlias, validateRole } from "../core/topic.ts";
-import { parseArguments, stringFlag } from "./args.ts";
+import { booleanFlag, parseArguments, stringFlag } from "./args.ts";
 import { failCommand, failUsage } from "./command.ts";
+import { attempt } from "./result.ts";
 import { resolveLiveName, resolveSelf } from "./identity.ts";
 import type { CliContext, CommandMap } from "./types.ts";
 
@@ -84,17 +86,80 @@ export function createAdminCommands(context: CliContext): CommandMap {
     "call-you": role,
     role,
     clear(args) {
-      const parsed = parseArguments(args, { maxPositionals: 0 });
+      const parsed = parseArguments(args, {
+        booleanFlags: ["--force"],
+        maxPositionals: 0,
+      });
       if (!parsed.ok) return failCommand(context, `clear: ${parsed.error}`);
+      const force = booleanFlag(parsed.value, "--force");
+      const now = context.now();
+      // NAMES WHAT WOULD GO BEFORE IT GOES. Deregistering is reversible — each
+      // hook re-registers — but the CLAIMS are not, and a path two agents both
+      // hold loses its collision warning the moment one row disappears. The
+      // dry run costs one read and turns an irreversible surprise into a
+      // decision.
+      const live = withStore(context.dbPath, (store) => {
+        const claims = store.allClaims(now);
+        return store.liveSessions(now).map((session) => ({
+          name: displayName(session),
+          sessionId: session.sessionId,
+          claims: claims.filter((claim) => claim.handle === session.handle).length,
+        }));
+      });
+      if (!force) {
+        if (live.length === 0) {
+          context.log(dim("nothing to clear — no live sessions."));
+          return;
+        }
+        context.log(
+          `${live.length} live session(s) would be dropped from the roster:`,
+        );
+        for (const session of live)
+          context.log(
+            `  ${bold(session.name)} ${dim(`— ${session.claims} claim(s)`)}`,
+          );
+        context.log(
+          dim("The message log is kept. Re-run with `--force` to go ahead."),
+        );
+        return;
+      }
       withStore(context.dbPath, (store) => {
-        const now = context.now();
-        for (const session of store.liveSessions(now))
-          store.unregister(session.sessionId, now);
+        for (const session of live) store.unregister(session.sessionId, now);
       });
       context.log(
-        "Cleared sessions and claims. " +
-          dim("(Message log is kept; it self-prunes.)"),
+        `Cleared ${live.length} session(s) and their claims. ` +
+          dim("(Message log is kept; it self-prunes at 2000 rows.)"),
       );
+    },
+    /**
+     * Copies the store somewhere safe.
+     *
+     * THE PAIR FOR EVERY DESTRUCTIVE VERB. `clear`, `quit`, `forget` and
+     * `done --abandoned` all remove state, and there was no backup path at all
+     * — the mitigation was "copy the file `crew where` prints", which is
+     * correct, undocumented, and not something anyone does under pressure.
+     */
+    export(args) {
+      const parsed = parseArguments(args, { maxPositionals: 1 });
+      if (!parsed.ok) return failCommand(context, `export: ${parsed.error}`);
+      const now = context.now();
+      const stamp = new Date(now).toISOString().replace(/[:.]/g, "-");
+      const target =
+        parsed.value.positionals[0] ?? `${context.projectName}-${stamp}.db`;
+      const result = attempt(() => {
+        // The db and its write-ahead log are one unit: copying the db alone
+        // can miss committed rows that have not been checkpointed.
+        copyFileSync(context.dbPath, target);
+        for (const suffix of ["-wal", "-shm"])
+          if (existsSync(`${context.dbPath}${suffix}`))
+            copyFileSync(`${context.dbPath}${suffix}`, `${target}${suffix}`);
+        return statSync(target).size;
+      });
+      if (!result.ok) return failCommand(context, `export: ${result.error}`);
+      context.log(
+        `${green("✓")} ${bold(target)} ${dim(`— ${(result.value / 1024).toFixed(1)} KB`)}`,
+      );
+      context.log(dim(`  from ${context.dbPath}`));
     },
     where(args) {
       const parsed = parseArguments(args, { maxPositionals: 0 });
@@ -126,8 +191,12 @@ export function createAdminCommands(context: CliContext): CommandMap {
       );
     },
     quit(args) {
-      const parsed = parseArguments(args, { maxPositionals: 1 });
+      const parsed = parseArguments(args, {
+        booleanFlags: ["--force"],
+        maxPositionals: 1,
+      });
       if (!parsed.ok) return failCommand(context, `quit: ${parsed.error}`);
+      const force = booleanFlag(parsed.value, "--force");
       const target = parsed.value.positionals[0];
       if (!target) {
         failUsage(context, "quit");
@@ -186,6 +255,20 @@ export function createAdminCommands(context: CliContext): CommandMap {
         }
         if (mine.length > 0)
           context.log(dim(`  releasing ${mine.length} claim(s)`));
+        // A RUNNING PROCESS NEEDS INTENT. `docs/views.md` explains at length
+        // why liveness cannot be DETECTED from a heartbeat -- but Claude Code's
+        // own process list can say "this pid is alive", and dropping a peer
+        // that is mid-task on a bare `quit` is what the "drop a dead session"
+        // blurb wrongly promised was impossible. The check is not a guess: it
+        // is the same `listAgents()` the roster already trusts.
+        if (live && !force) {
+          context.error(
+            dim(`  ${displayName(match)} is running (pid ${live.pid}) — ` +
+              "`--force` to deregister anyway"),
+          );
+          context.fail();
+          return;
+        }
         if (!store.departSession(match.sessionId, now)) {
           context.error(`${red("✗")} session disappeared before it could be removed`);
           context.fail();

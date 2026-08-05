@@ -81,12 +81,18 @@ function clip(value: string): string {
     : `${[...text].slice(0, PREVIEW_WIDTH - 1).join("")}…`;
 }
 
-function renderInbox(context: CliContext, omissions: readonly { key: string; reason: string; text: string }[]): void {
+function renderInbox(
+  context: CliContext,
+  omissions: readonly { key: string; reason: string; text: string }[],
+  self = true,
+  who = "",
+): void {
+  const whose = self ? "your" : `${who}'s`;
   if (omissions.length === 0) {
-    context.log(dim("nothing was omitted from your session-start context"));
+    context.log(dim(`nothing was omitted from ${whose} session-start context`));
     return;
   }
-  context.log(bold(`${omissions.length} item(s) omitted for length:`));
+  context.log(bold(`${omissions.length} item(s) omitted from ${whose} context for length:`));
   context.log("");
   for (const omission of omissions) {
     context.log(`${bold(sanitizeTerminalText(omission.key))} ${dim(`(${sanitizeTerminalText(omission.reason)})`)}`);
@@ -143,11 +149,18 @@ function handleInbox(context: CliContext, args: readonly string[]): void {
   const snapshot = withStore(context.dbPath, (store) => {
     const recipient = resolveSubject(store, selector, context.sessionId, now);
     return recipient.ok
-      ? success(store.injectionOmissions(recipient.value.sessionId))
+      ? success({
+          omissions: store.injectionOmissions(recipient.value.sessionId),
+          // WHOSE inbox this is, so the empty line can say so. Reporting a
+          // peer's context as "your session-start context" is the attribution
+          // slip the README's `human to traffic-c9` anecdote warns about.
+          self: recipient.value.sessionId === context.sessionId,
+          who: sanitizeTerminalText(displayName(recipient.value)),
+        })
       : recipient;
   });
   if (!snapshot.ok) return failCommand(context, snapshot.error);
-  renderInbox(context, snapshot.value);
+  renderInbox(context, snapshot.value.omissions, snapshot.value.self, snapshot.value.who);
 }
 
 function handleInjection(context: CliContext, args: readonly string[]): void {
