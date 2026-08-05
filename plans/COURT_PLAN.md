@@ -1301,14 +1301,75 @@ it has stopped being P4 and should be argued for on its own evidence.
 
 ### P5 — Tales, domain experience [ ]
 
-- [ ] tales as a curated diary kind, linking existing findings rather than
-      duplicating them. Threshold: *would a later agent misunderstand the project
-      seeing only the final finding and not how the team got there?*
-- [ ] **domain experience, not expertise.** An edit log proves exposure and
-      context, not skill — this tool's own busiest agent is partly busy from
-      getting it wrong repeatedly. Output is evidence plus interpretation
-      (*"383 edits, 21 retained findings, last active 2h ago → extensive current
-      context"*), never a score
+*Scoped 2026-08-05, against the live store.*
+
+Both halves answer "who knows this code". One is fundable and one is not — and
+it is not the half this section originally assumed.
+
+```
+41 diary entries, 6 topics   ·  2 superseded, 4 fixed, 39 scoped
+1039 edits, 10 agent names   ·  hopper 537 (65 paths), akira 146, ambrose 94
+```
+
+#### Tales: no new kind, one nullable column
+
+- [ ] **`note-supersede <old> <new> "<what changed>"`** — the reason becomes an
+      optional third argument and a nullable column. Existing chains keep
+      working; nothing is backfilled
+- [ ] **`cli.ts tale <id>`** renders the supersession chain oldest-first, each
+      finding beside the reason it was replaced. A tale is a VIEW, like P4's
+      decisions
+- [ ] **no pre-edit surfacing.** A tale is something you go and read, not an
+      interrupt. The `LOUD_KINDS` budget stays where it is
+
+The threshold in the original draft — *would a later agent misunderstand seeing
+only the final finding and not how the team got there?* — is already what
+`note-supersede` records. It is used twice in 41 entries: the machinery exists
+and the chain is thin.
+
+A tale as a sixth `DiaryKind` would be a new write path nobody uses, which is the
+failure mode P4 avoided by folding what was already stored. The only thing a
+chain genuinely cannot answer today is **why** the old finding stopped being
+true, and that is one field.
+
+**The honest caveat:** two supersessions is thin evidence that anyone wants the
+chain rendered. The argument for building it is that the machinery is already
+there and the increment is one column, not that the corpus is asking for it. If
+`--kind decision` and this both sit unused in a month, the lesson is about write
+paths, not about either feature.
+
+#### Domain experience: deferred, because the names do not hold
+
+- [ ] **deferred.** Reconsider when a name in the edit log resolves to a live
+      session — `store.findByName(agent, now) !== null` for the top edit-log
+      names, which is executable rather than a judgement call
+
+Measured 2026-08-05, top eight edit-log names against `findByName`:
+
+```
+hopper        537 edits  — no session      akira    146  LIVE
+tooling        43 edits  — no session      ambrose   94  LIVE
+terrain-perf   39 edits  — no session      alder     93  LIVE
+ash            22 edits  — no session      adela     41  LIVE
+```
+
+Half resolve, and **the heaviest does not**: `hopper` is this agent's own former
+name, renamed two days ago. The worked example this section used to carry —
+*"383 edits, 21 retained findings, last active 2h ago → extensive current
+context"* — would today render for a name with nobody behind it, and "ask hopper
+about `core/store`" points at no one.
+
+This is the same defect that already deferred **relationship / trust scores** in
+the table below: that entry's trigger is *"lineage holds names steady across
+sessions"*, and domain experience reads the same column. Deferring it is not a
+judgement about the feature's value; the input is not yet trustworthy, and
+`edits.agent` is a denormalised display name captured at write time, not an
+identity. `ActorRef` (P2) is what identity looks like when it is done properly.
+
+**Domain experience, not expertise, still holds when it lands.** An edit log
+proves exposure and context, never skill — this tool's own busiest agent is
+partly busy from getting it wrong repeatedly. Output stays evidence plus
+interpretation, never a score.
 
 ---
 
