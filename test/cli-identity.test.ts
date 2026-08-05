@@ -22,6 +22,7 @@ function session(name: string, handle: string, alias = ""): Session {
     summary: "",
     summaryMs: 0,
     lastSeenMs: 1,
+    lastTurnMs: 0,
     startedMs: 1,
   };
 }

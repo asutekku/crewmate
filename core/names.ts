@@ -174,8 +174,18 @@ export function fullName(name: string, role: string, slug: string): string {
   // must stay typeable and keeps its separator (`Water-Dynamic`).
   const suffix = role.trim() !== "" ? role.trim() : titleCase(slug);
   const given = nameCase(name);
-  if (suffix === "" || suffix.toLowerCase() === given.toLowerCase()) return given;
+  // COMPARED WITHOUT SEPARATORS, because the two halves are cased by different
+  // functions on purpose: an unset role derives from the handle, so the slug
+  // `water-dynamic` becomes the name `Water-Dynamic` and the role `Water
+  // Dynamic`. An exact-match check saw two different strings and printed
+  // `Water-Dynamic — Water Dynamic`, which tells a reader nothing twice.
+  if (suffix === "" || bareName(suffix) === bareName(given)) return given;
   return `${given} — ${suffix}`;
+}
+
+/** For comparing a name to a role: case and separators carry no meaning here. */
+function bareName(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
 /**

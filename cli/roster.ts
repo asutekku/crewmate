@@ -15,6 +15,7 @@ import {
   renderBackgroundProcesses,
   renderContentionWarnings,
   renderRosterHeader,
+  renderRosterLegend,
   renderSessions,
 } from "./roster-renderers.ts";
 import type { CliContext, CommandMap } from "./types.ts";
@@ -66,6 +67,7 @@ function handleWho(context: CliContext, argv: readonly string[]): void {
     ...renderSessions(view, snapshot, now, raw),
     ...renderBackgroundProcesses(view.background, context.projectRoot, now),
     ...renderContentionWarnings(view.contentions, view.layout.width),
+    ...renderRosterLegend(view),
   ];
   for (const line of lines) context.log(line);
 }

@@ -144,30 +144,37 @@ export function calculateRosterLayout(
   };
 }
 
-function groupSessions(sessions: readonly Session[]): {
+/**
+ * Sessions by the tree they work in, EVERY tree named.
+ *
+ * The old rule keyed the most populated tree as `""` and the renderer printed
+ * no header for it, so the majority sat under nothing while a minority tree got
+ * an inline label — a reader could not tell whether that label headed the rows
+ * below it or footed the rows above. The count said "2 trees" and the layout
+ * then refused to say which agent was in which, though `sessions.worktree`
+ * holds it exactly, per session.
+ *
+ * A session with no recorded worktree keys as `""` and renders as `unknown`;
+ * silence is worse than admitting the gap.
+ */
+export function groupSessions(sessions: readonly Session[]): {
   readonly groups: readonly (readonly [string, readonly Session[]])[];
   readonly treeCount: number;
 } {
-  const treeCounts = new Map<string, number>();
-  for (const session of sessions)
-    treeCounts.set(
-      session.worktree,
-      (treeCounts.get(session.worktree) ?? 0) + 1,
-    );
-  const showTree = treeCounts.size > 1;
-  const mainTree = [...treeCounts].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
+  const trees = new Set<string>();
   const grouped = new Map<string, Session[]>();
   for (const session of sessions) {
-    const key =
-      showTree && session.worktree !== mainTree ? session.worktree : "";
-    const group = grouped.get(key);
+    trees.add(session.worktree);
+    const group = grouped.get(session.worktree);
     if (group) group.push(session);
-    else grouped.set(key, [session]);
+    else grouped.set(session.worktree, [session]);
   }
-  const groups = [...grouped].sort(([a], [b]) =>
-    a === "" ? -1 : b === "" ? 1 : a.localeCompare(b),
+  // Busiest tree first, then by path, so the ordering does not shuffle between
+  // reads when two trees hold the same number of agents.
+  const groups = [...grouped].sort(
+    ([a, ga], [b, gb]) => gb.length - ga.length || a.localeCompare(b),
   );
-  return { groups, treeCount: treeCounts.size };
+  return { groups, treeCount: trees.size };
 }
 
 export function buildRosterView(input: {

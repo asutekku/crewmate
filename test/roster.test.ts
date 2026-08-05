@@ -37,6 +37,7 @@ function session(over: Partial<Session> = {}): Session {
     summary: "",
     summaryMs: 0,
     lastSeenMs: 1_000,
+    lastTurnMs: 0,
     startedMs: 0,
     ...over,
   };

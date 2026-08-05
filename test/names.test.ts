@@ -208,3 +208,26 @@ describe("validateRole", () => {
     expect(validateRole("sk_live_0123456789abcdef0123456789abcdef").ok).toBe(false);
   });
 });
+
+describe("a name is never printed twice as its own role", () => {
+  test("the derived role collapses when it is just the name respaced", () => {
+    // MEASURED on the live roster: `Water-Dynamic — Water Dynamic`. With no role
+    // set, the suffix derives from the HANDLE, and the two halves take different
+    // casers on purpose — `water-dynamic` becomes the name `Water-Dynamic` and
+    // the role `Water Dynamic`. An exact-match guard saw two different strings.
+    expect(fullName("water-dynamic", "", "water-dynamic")).toBe("Water-Dynamic");
+  });
+
+  test("case and separators alone never justify a suffix", () => {
+    expect(fullName("terrain-perf", "Terrain Perf", "")).toBe("Terrain-Perf");
+    expect(fullName("hopper", "HOPPER", "")).toBe("Hopper");
+  });
+
+  test("a role that genuinely says something is still kept", () => {
+    // The guard must not swallow a real role that merely starts with the name.
+    expect(fullName("water-dynamic", "Water Dynamics Lead", "")).toBe(
+      "Water-Dynamic — Water Dynamics Lead",
+    );
+    expect(fullName("turing", "", "water-dynamic")).toBe("Turing — Water Dynamic");
+  });
+});

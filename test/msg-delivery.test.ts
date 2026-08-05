@@ -33,6 +33,7 @@ function recipient(silentMinutes: number, status = ""): Session {
     handle: "h",
     name: "traffic-1",
     alias: "alder",
+    role: "",
     status,
     blocked: "",
     worktree: "/tree",
@@ -45,6 +46,7 @@ function recipient(silentMinutes: number, status = ""): Session {
     summary: "",
     summaryMs: 0,
     lastSeenMs: NOW - silentMinutes * MINUTE,
+    lastTurnMs: 0,
     startedMs: NOW - silentMinutes * MINUTE,
   };
 }

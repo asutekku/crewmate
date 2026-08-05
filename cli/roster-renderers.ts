@@ -17,6 +17,7 @@ import {
   summarizeFiles,
 } from "../core/layout.ts";
 import { minionName } from "../core/names.ts";
+import { agentState } from "../core/work.ts";
 import {
   agoText,
   claimName,
@@ -48,13 +49,39 @@ export function renderRosterHeader(
     ),
   ];
   if (view.behind.length > 0) {
+    // NAMED, not counted. "2 running older hooks" of three makes you go and
+    // find out which two, and restarting the wrong session costs its context —
+    // so a warning that hides its subjects is one a reader learns to skip.
+    // `code_version` is stamped at SessionStart, so a genuine restart is the
+    // only thing that clears this; `--resume` is what keeps the conversation.
+    const named = view.behind
+      .map((session) => sanitizeTerminalText(rosterName(session)))
+      .join(", ");
+    lines.push(dim(`  ⟲ ${named} running older hooks`));
     lines.push(
-      dim(
-        `  ⟲ ${view.behind.length === view.orderedSessions.length ? "all" : view.behind.length} running older hooks — restart to pick up changes`,
-      ),
+      dim("    restart each to pick them up — `claude --resume <id>` keeps the conversation"),
     );
   }
   return lines;
+}
+
+/**
+ * What the glyphs mean, permanently.
+ *
+ * Two symbols carrying the roster's primary distinction went unkeyed, so a
+ * reader had to infer `●` from the ages beside it. The `⚠` line is listed only
+ * when one is on screen — a legend for something absent is noise.
+ */
+export function renderRosterLegend(view: RosterView): string[] {
+  const anyOverlap = view.claims.contestedPaths.size > 0;
+  return [
+    "",
+    dim(
+      `  ${green("●")} running   ${red("⏸")} needs you   ○ at a prompt   ✎ files this agent holds${
+        anyOverlap ? `   ${red("⚠")} also held by a peer` : ""
+      }`,
+    ),
+  ];
 }
 
 export function renderSession(
@@ -68,11 +95,20 @@ export function renderSession(
   },
 ): string[] {
   const { layout } = input;
-  const mark = session.blocked
-    ? red("●")
-    : session.status === "busy"
-      ? green("●")
-      : dim("○");
+  // THE SAME DERIVATION THE BOARD USES, so one agent cannot read `busy` here
+  // and `idle` there. `session.status` is Claude Code's own sample, refreshed
+  // only when `who` runs (~950 ms); the heartbeat-vs-turn-boundary comparison
+  // is free and fresher. See `agentState`.
+  const state = agentState(
+    {
+      lastSeenMs: session.lastSeenMs,
+      blocked: session.blocked,
+      lastTurnMs: session.lastTurnMs,
+    },
+    input.now,
+  );
+  const mark =
+    state === "waiting" ? red("⏸") : state === "busy" ? green("●") : dim("○");
   const seen = activityColour(input.now - session.lastSeenMs)(
     pad(shortAge(session.lastSeenMs, input.now), layout.ageWidth),
   );
@@ -124,13 +160,66 @@ export function renderClaims(
   claims: ClaimIndex,
   layout: RosterLayout,
 ): string[] {
-  const paths = (claims.byHandle.get(handle) ?? []).map((claim) => sanitizeTerminalText(claim.path));
+  const mine = claims.byHandle.get(handle) ?? [];
+  const paths = mine.map((claim) => sanitizeTerminalText(claim.path));
   const pieces = summarizeFiles(paths, { contested: claims.contestedPaths });
   const line = renderFileLine(pieces, layout.descriptionWidth - 2, {
     contested: red,
     normal: dim,
   });
-  return line ? [`${" ".repeat(layout.gutter)}${dim("✎")} ${line}`] : [];
+  if (!line) return [];
+  const lines = [`${" ".repeat(layout.gutter)}${dim("✎")} ${line}`];
+  // THE LINE THIS COMMAND EXISTS FOR. A contested path was already painted red,
+  // which says "someone else is in here" without saying WHO — and who is the
+  // part you act on. Two agents about to edit one file is the failure a shared
+  // tree creates, and no other view catches it before the edit lands.
+  const peers = overlapPeers(handle, mine, claims);
+  if (peers.length > 0) {
+    // Counts are FILES SHARED WITH THAT PEER, one unit throughout: "2 shared
+    // with adela" reads the same whether one peer or three are listed.
+    const text = peers
+      .map((peer) => `${peer.count} shared with ${peer.name}`)
+      .join(", ");
+    lines.push(
+      `${" ".repeat(layout.gutter)}${red("⚠")} ${red(fit(text, layout.descriptionWidth - 2))}`,
+    );
+  }
+  return lines;
+}
+
+/** Who else holds a path this agent holds, and how many they share. */
+function overlapPeers(
+  handle: string,
+  mine: readonly Claim[],
+  claims: ClaimIndex,
+): Array<{ name: string; count: number }> {
+  const shared = new Map<string, { name: string; count: number }>();
+  for (const claim of mine) {
+    for (const other of claims.byPath.get(claim.path) ?? []) {
+      if (other.handle === handle) continue;
+      const key = other.handle;
+      const seen = shared.get(key);
+      if (seen) seen.count += 1;
+      else shared.set(key, { name: sanitizeTerminalText(claimName(other)), count: 1 });
+    }
+  }
+  return [...shared.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+}
+
+/**
+ * The heading every group gets, named path first.
+ *
+ * The branch is shown only when every session in the tree agrees on it. A git
+ * worktree has one checkout, so they normally do — but each session records the
+ * branch when IT last looked, so a stale row can disagree, and one row's answer
+ * must not be printed as the tree's.
+ */
+function treeHeading(tree: string, group: readonly Session[]): string {
+  if (tree === "") return "unknown tree";
+  const leaf = sanitizeTerminalText(tree.split("/").pop() ?? tree);
+  const branches = new Set(group.map((s) => s.branch).filter((b) => b !== ""));
+  const branch = branches.size === 1 ? sanitizeTerminalText([...branches][0] ?? "") : "";
+  return `${leaf}${branch ? ` (${branch})` : ""}  ${sanitizeTerminalText(tree)}`;
 }
 
 export function renderSessions(
@@ -143,11 +232,7 @@ export function renderSessions(
   const palette = rosterColours(view.orderedSessions, displayName);
   for (const [tree, group] of view.groups) {
     lines.push("");
-    if (tree) {
-      const leaf = sanitizeTerminalText(tree.split("/").pop() ?? tree);
-      const branch = sanitizeTerminalText(group[0]?.branch ?? "");
-      lines.push(dim(`  worktree ${leaf}${branch ? ` (${branch})` : ""}`));
-    }
+    lines.push(dim(`  ${treeHeading(tree, group)}`));
     for (const session of group) {
       const paint =
         palette.get(displayName(session)) ?? handleColour(session.handle);
