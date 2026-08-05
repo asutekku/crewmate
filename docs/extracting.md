@@ -1,51 +1,42 @@
-# Extracting this into its own repo
+# How this repo was extracted
 
 [← README](../README.md)
 
-Crewmates lives at `.claude/hooks/presence/` inside a game repo. It has no
-dependency on that repo — `install.ts` copies it to `~/.claude/agent-presence/`
-and it runs from there — so moving it out is a history problem, not a code one.
-
-## What is worth preserving
-
-89 commits, 2026-07-30 to 2026-08-05, one author. Most carry the measurement
-that motivated the change, which is the part a fresh `git init` would throw
-away. Extract with history rather than starting clean.
-
-## The command
+Crewmates was developed inside a game repo at `.claude/hooks/presence/` and
+moved out on 2026-08-05 with its history:
 
 ```sh
-git subtree split --prefix=.claude/hooks/presence -b crewmates-main
+git subtree split --prefix=.claude/hooks/presence -b crewmate-export
+git clone --branch crewmate-export --single-branch <game-repo> crewmate
 ```
 
-**It is slow.** Measured 2026-08-05: over two minutes on this repo without
-finishing, because `subtree split` walks every commit in the whole history, not
-only the ones that touched the prefix. Run it detached and let it finish, or use
-`git filter-repo --subdirectory-filter .claude/hooks/presence` on a *clone*,
-which is far faster but needs installing. Do not run `filter-repo` against the
-working repo: it rewrites history in place.
+90 commits came across, back to the first. `subtree split` is slow — several
+minutes here, because it walks every commit in the host history rather than only
+those touching the prefix. `git filter-repo --subdirectory-filter` is much
+faster but must be run against a *clone*: it rewrites history in place.
 
-Then:
+## What the host repo had been providing
 
-```sh
-git clone . ../crewmates -b crewmates-main   # or push the branch to a new remote
-cd ../crewmates
-bun install.ts                                # re-point the installed copy
-bun test                                      # 1076 tests, ~25 s
-```
+Three dependencies were invisible until the tool stood alone. They are recorded
+because each would bite anyone vendoring this back into another repo.
 
-## What must change after the move
+- **Types.** `tsconfig.json` declares `"types": ["bun"]` and had been resolving
+  it from the host's `node_modules`. Now a real devDependency.
+- **Line endings.** `test/court-v2.test.ts` verifies a frozen SHA-256 over
+  `plans/court-audit/rubric-v2.md`. The stored blob is LF; with
+  `core.autocrlf=true` checkout rewrote 242 lines to CRLF and the hash moved.
+  `.gitattributes` now pins `eol=lf`. Any frozen-content check has this exposure.
+- **`node_modules` in the deploy.** `install.ts` walked every directory except
+  `test`, so the first standalone install copied 236 files instead of 74.
 
-- **`README.md` install paths.** They say `bun .claude/hooks/presence/install.ts`,
-  which is correct only from inside the game repo.
-- **`CLAUDE.md` in the game repo** keeps its `crew` coordination section — the
-  tool is still installed user-wide and still used there. Nothing to remove.
-- **The data directory stays `~/.claude/agent-presence/`.** Renaming it to match
-  the project would orphan every existing database, and that store is live state
-  several sessions write to. It is a deliberate mismatch, not an oversight.
+## What did not change
 
-## What does NOT come along
+The store stays at `~/.claude/agent-presence/`. `dbPath` derives from the
+*project's* git-common-dir and that base directory — never from where this
+source lives — so every existing database survived the move untouched. Renaming
+the directory to match the project would orphan them all, which is why the
+mismatch is deliberate.
 
-`plans/` and `ideas/` are working notes tied to this repo's development, and
-`test/tools/` holds one-off generators. Decide per file; nothing in `core/`,
-`cli/` or `hooks/` depends on any of them.
+Hooks in `~/.claude/settings.json` point at `~/.claude/agent-presence/bin/`, so
+running agents were never affected either. Only `install.ts` cares where the
+source is.

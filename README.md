@@ -40,9 +40,9 @@ with **no git repo at all**. Windows, macOS and Linux.
 ## Install
 
 ```sh
-bun .claude/hooks/presence/install.ts           # install / update
-bun .claude/hooks/presence/install.ts --force   # re-register hooks
-bun .claude/hooks/presence/install.ts --remove  # uninstall
+bun install.ts           # install / update
+bun install.ts --force   # re-register hooks
+bun install.ts --remove  # uninstall
 ```
 
 Copies the scripts to `~/.claude/agent-presence/bin/`, installs a `crew` command

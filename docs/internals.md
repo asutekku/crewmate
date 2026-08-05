@@ -128,8 +128,8 @@ history has its own lifetime independent of live suppression state.
 ## Tests
 
 ```sh
-bun test ./.claude/hooks/presence/test/*.test.ts   # the leading ./ is required
-bunx tsc --noEmit -p .claude/hooks/presence/tsconfig.json   # the other gate
+bun test                                          # the whole suite
+bun run typecheck                                 # the other gate
 PRESENCE_TEST_DB=/tmp/x.db bun pre-edit.ts < payload.json   # run a hook safely
 ```
 
