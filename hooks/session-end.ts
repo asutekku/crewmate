@@ -28,7 +28,7 @@ async function main(): Promise<void> {
     const now = Date.now();
     const handle = store.handleFor(sessionId);
     if (handle) store.post(handle, "done", "session ended", now);
-    store.unregister(sessionId);
+    store.unregister(sessionId, now);
   });
 }
 

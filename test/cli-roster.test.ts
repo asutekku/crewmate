@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 
-import type { Claim } from "../core/store.ts";
+import type { Claim, Session } from "../core/store.ts";
 import { calculateRosterLayout, indexClaims } from "../cli/roster-model.ts";
+import { renderSession } from "../cli/roster-renderers.ts";
 
 function claim(handle: string, path: string, worktree: string): Claim {
   return {
@@ -58,5 +59,27 @@ describe("roster layout", () => {
       gutter: 11,
       descriptionWidth: 88,
     });
+  });
+
+  test("renderer sanitizes before fitting and is deterministic", () => {
+    const session: Session = {
+      sessionId: "s1", handle: "ada", name: "ada", alias: "", role: "",
+      status: "busy", blocked: "blocked\nspoof", worktree: "/project", branch: "main",
+      behindBase: 0, baseBranch: "main", lineageFrom: "", intent: "",
+      title: "task\u001b]8;;https://evil.test\u0007", summary: "safe\u001b[31m",
+      summaryMs: 0, lastSeenMs: 1000, startedMs: 0,
+    };
+    const input = {
+      now: 2000,
+      raw: true,
+      layout: calculateRosterLayout([session], 60, () => "ada"),
+      paint: (text: string) => text,
+      taskCounts: new Map(),
+    };
+    const first = renderSession(session, input);
+    expect(first).toEqual(renderSession(session, input));
+    expect(first.join("\n")).not.toContain("https://evil.test");
+    expect(first.join("\n")).not.toContain("\u001b[31m");
+    expect(first.join("\n")).toContain("blocked spoof");
   });
 });

@@ -43,31 +43,31 @@ function handleWho(context: CliContext, argv: readonly string[]): void {
   const width = terminalWidth();
   const agents = listAgents();
 
-  withStore(context.dbPath, (store) => {
-    synchronizeRosterStore(store, agents, now);
-    const snapshot = collectRosterSnapshot(store, now, SUMMARY_TTL_MS);
-    if (snapshot.sessions.length === 0) {
-      context.log(dim(`No active agents in ${context.projectName}.`));
-      return;
-    }
-    refreshStaleSummaries(context, snapshot.staleSummaries);
-    const view = buildRosterView({
-      snapshot,
-      agents,
-      projectRoot: context.projectRoot,
-      currentVersion: installedVersion(),
-      raw,
-      width,
-      shownName: raw ? displayName : rosterName,
-    });
-    const lines = [
-      ...renderRosterHeader(context.projectName, view),
-      ...renderSessions(view, snapshot, now, raw),
-      ...renderBackgroundProcesses(view.background, context.projectRoot, now),
-      ...renderContentionWarnings(view.contentions, view.layout.width),
-    ];
-    for (const line of lines) context.log(line);
+  withStore(context.dbPath, (store) => synchronizeRosterStore(store, agents, now));
+  const snapshot = withStore(context.dbPath, (store) =>
+    collectRosterSnapshot(store, now, SUMMARY_TTL_MS),
+  );
+  if (snapshot.sessions.length === 0) {
+    context.log(dim(`No active agents in ${context.projectName}.`));
+    return;
+  }
+  refreshStaleSummaries(context, snapshot.staleSummaries);
+  const view = buildRosterView({
+    snapshot,
+    agents,
+    projectRoot: context.projectRoot,
+    currentVersion: installedVersion(),
+    raw,
+    width,
+    shownName: raw ? displayName : rosterName,
   });
+  const lines = [
+    ...renderRosterHeader(context.projectName, view),
+    ...renderSessions(view, snapshot, now, raw),
+    ...renderBackgroundProcesses(view.background, context.projectRoot, now),
+    ...renderContentionWarnings(view.contentions, view.layout.width),
+  ];
+  for (const line of lines) context.log(line);
 }
 
 export function createRosterCommands(context: CliContext): CommandMap {

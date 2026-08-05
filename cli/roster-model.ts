@@ -2,6 +2,7 @@ import type { AgentInfo } from "../core/agents.ts";
 import { dirtyFiles } from "../core/dirty.ts";
 import { backgroundProcesses } from "../core/layout.ts";
 import type { Claim, Minion, Session, Store } from "../core/store.ts";
+import { sanitizeTerminalText } from "./terminal.ts";
 
 export const MAX_ROSTER_NAME_WIDTH = 34;
 export const ROSTER_AGE_WIDTH = 4;
@@ -126,7 +127,7 @@ export function calculateRosterLayout(
 ): RosterLayout {
   const longestName = Math.max(
     0,
-    ...sessions.map((session) => [...shownName(session)].length),
+    ...sessions.map((session) => [...sanitizeTerminalText(shownName(session))].length),
   );
   const nameWidth = Math.min(MAX_ROSTER_NAME_WIDTH, longestName);
   const gutter =
@@ -164,7 +165,7 @@ function groupSessions(sessions: readonly Session[]): {
     else grouped.set(key, [session]);
   }
   const groups = [...grouped].sort(([a], [b]) =>
-    a === "" ? -1 : b === "" ? 1 : 0,
+    a === "" ? -1 : b === "" ? 1 : a.localeCompare(b),
   );
   return { groups, treeCount: treeCounts.size };
 }
@@ -188,7 +189,7 @@ export function buildRosterView(input: {
     input.readDirtyFiles,
   );
   const grouped = groupSessions(orderedSessions);
-  const contentions = [...claims.contestedPaths].map((path) => {
+  const contentions = [...claims.contestedPaths].sort((a, b) => a.localeCompare(b)).map((path) => {
     const holders = claims.byPath.get(path) ?? [];
     return {
       path,

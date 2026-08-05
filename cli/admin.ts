@@ -89,7 +89,7 @@ export function createAdminCommands(context: CliContext): CommandMap {
       withStore(context.dbPath, (store) => {
         const now = context.now();
         for (const session of store.liveSessions(now))
-          store.unregister(session.sessionId);
+          store.unregister(session.sessionId, now);
       });
       context.log(
         "Cleared sessions and claims. " +
@@ -186,8 +186,11 @@ export function createAdminCommands(context: CliContext): CommandMap {
         }
         if (mine.length > 0)
           context.log(dim(`  releasing ${mine.length} claim(s)`));
-        store.post(match.handle, "done", "left the roster", now);
-        store.unregister(match.sessionId);
+        if (!store.departSession(match.sessionId, now)) {
+          context.error(`${red("✗")} session disappeared before it could be removed`);
+          context.fail();
+          return;
+        }
         context.log(green("  ✓ deregistered"));
       });
     },

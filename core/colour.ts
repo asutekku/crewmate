@@ -11,7 +11,7 @@
  * support colour loses decoration and no information.
  */
 
-import { HANDLES } from "./store.ts";
+import { GIVEN_NAMES } from "./names.ts";
 
 /**
  * Honours NO_COLOR (informal cross-tool standard) and FORCE_COLOR, then falls
@@ -61,8 +61,8 @@ export const cyan = code("36");
 const HANDLE_COLOURS = [cyan, green, yellow, magenta, blue] as const;
 
 export function handleColour(handle: string): (s: string) => string {
-  // Imported, not duplicated: two lists that must agree will eventually not.
-  const i = (HANDLES as readonly string[]).indexOf(handle);
+  // ORDER IS LOAD-BEARING: reordering the pool reshuffles every agent's colour.
+  const i = (GIVEN_NAMES as readonly string[]).indexOf(handle);
   // A real Claude session name (`traffic-12`) is outside the pool; hash it so it
   // still gets a stable colour rather than defaulting to one already in use.
   if (i < 0) {

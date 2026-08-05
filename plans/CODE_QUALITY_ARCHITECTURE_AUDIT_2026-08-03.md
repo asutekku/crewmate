@@ -323,9 +323,9 @@ older rule could be read more broadly, the revised wording controls.
 | `diagnostics.ts`       | Compliant            | typed inputs, isolated probes/snapshots, named deterministic sanitized renderers    |
 | `diagnostics-renderers.ts` | Compliant         | pure section renderers with display-only sanitization and degraded-state output     |
 | `injection.ts`         | Compliant            | delegated handlers, typed selectors, isolated probes/snapshots, sanitized renderer  |
-| `roster.ts`            | Mostly compliant     | move summary refresh outside the store lifetime and finish output sanitization     |
-| `roster-model.ts`      | Mostly compliant     | add deterministic grouping policy tests and stable probe interfaces                |
-| `roster-renderers.ts`  | Partial              | sanitize every dynamic value and add colour-disabled snapshots                     |
+| `roster.ts`            | Compliant            | short orchestration with isolated sync, snapshot, summary refresh, model, rendering |
+| `roster-model.ts`      | Compliant            | indexed claims, cached probes, deterministic grouping/contention, one layout value  |
+| `roster-renderers.ts`  | Compliant            | independent deterministic renderers with sanitization before fitting and colouring  |
 
 ### Structural metrics checkpoint
 
@@ -345,3 +345,45 @@ still delete the temporary mutation parser, consolidate command metadata, and av
 cohesive 250-line unit into a 1,000-line abstraction maze. Any substantial growth must name
 the reusable capability, safety property, or testable boundary it purchases and compare the
 resulting navigation burden.
+
+## Store refactoring status
+
+`core/store.ts` is now a two-line re-export of `core/store/`, split by state ownership into
+`schema`, `sessions`, `messages`, `activity`, `injection`, `types`, and the `index` facade —
+2,037 lines across seven modules, against 2,157 in the original single file. All ten
+correctness defects recorded in `plans/store-refactor.md` are fixed and covered:
+
+- `setAlias` / `restoreAlias` use immediate transactions and reject a peer's handle, closing
+  the alias-hijack race.
+- `editsBy` uses a window function, so the reported timestamp and its tool/worktree come from
+  the same row.
+- `pruneStale` is one immediate transaction whose three deletes resolve the dead set from
+  `sessions`, deleted last. The temp-table staging the plan proposed was unnecessary: a plain
+  subquery is equivalent and this runs on every `who`.
+- `unregister` is atomic; migration failure now aborts `openDb` with context instead of being
+  swallowed.
+- `withStore` rejects an async callback rather than closing the database under it.
+- `hasUnread` distinguishes a missing database from corruption via a diagnostic sink.
+- `liveMinions` mutates its own accumulator instead of rebuilding the array per row.
+
+Follow-up work landed with this pass:
+
+- The four child stores (`work`, `diary`, `questions`, `obligations`) are constructed once in
+  the facade rather than per getter access, so `store.work` is a field read.
+- `core/colour.ts` imports `GIVEN_NAMES` from `core/names.ts`; the `HANDLES` re-export through
+  the persistence layer is deleted.
+- `Store.recordFeatureEvent` reuses the exported `FeatureEventInput` instead of restating it,
+  and `setCodeVersion` no longer hides a `Date.now()` default.
+- Comment blocks orphaned by the split — several documenting methods that had moved to another
+  module, one describing a `using` statement the code does not contain — are removed or moved
+  to the code they describe.
+
+Two tests were added and mutation-checked: reversing the `pruneStale` delete order strands a
+dead session's tasks and fails the suite, and sub-store reference stability is asserted
+directly. Suite: 1,004 passing, typecheck clean.
+
+Remaining: schema ownership is still central rather than per-domain manifests with an explicit
+schema version, and the facade's compatibility methods still forward for callers that have not
+moved to the owned sub-store. `Store.unregister` keeps a `Date.now()` default because twenty
+test call sites depend on it; `session-end.ts` now passes the clock it already holds, so the
+default has no remaining production caller.

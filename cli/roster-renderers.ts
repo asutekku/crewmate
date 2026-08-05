@@ -34,6 +34,7 @@ import {
   type RosterSnapshot,
   type RosterView,
 } from "./roster-model.ts";
+import { sanitizeTerminalText } from "./terminal.ts";
 
 type Paint = (text: string) => string;
 
@@ -43,7 +44,7 @@ export function renderRosterHeader(
 ): string[] {
   const lines = [
     bold(
-      `${view.orderedSessions.length} agents in ${projectName}${dim(view.treeCount > 1 ? ` · ${view.treeCount} trees` : "")}`,
+      `${view.orderedSessions.length} agents in ${sanitizeTerminalText(projectName)}${dim(view.treeCount > 1 ? ` · ${view.treeCount} trees` : "")}`,
     ),
   ];
   if (view.behind.length > 0) {
@@ -80,21 +81,21 @@ export function renderSession(
     tasks && tasks.open + tasks.done > 0
       ? dim(` [${tasks.done}/${tasks.open + tasks.done}]`)
       : "";
-  const headline = session.title || session.intent;
+  const headline = sanitizeTerminalText(session.title || session.intent);
   const description = headline
     ? fit(headline, layout.descriptionWidth - [...progress].length)
     : dim(fit("(no stated task)", layout.descriptionWidth));
-  const shown = input.raw ? displayName(session) : rosterName(session);
+  const shown = sanitizeTerminalText(input.raw ? displayName(session) : rosterName(session));
   const lines = [
     `  ${mark} ${input.paint(bold(pad(fit(shown, layout.nameWidth), layout.nameWidth)))} ${seen}  ${description}${progress}`,
   ];
   if (session.blocked)
     lines.push(
-      `${" ".repeat(layout.gutter)}${red(fit(session.blocked, layout.descriptionWidth))}`,
+      `${" ".repeat(layout.gutter)}${red(fit(sanitizeTerminalText(session.blocked), layout.descriptionWidth))}`,
     );
   if (session.summary)
     lines.push(
-      `${" ".repeat(layout.gutter)}${cyan(fit(session.summary, layout.descriptionWidth))}`,
+      `${" ".repeat(layout.gutter)}${cyan(fit(sanitizeTerminalText(session.summary), layout.descriptionWidth))}`,
     );
   return lines;
 }
@@ -108,12 +109,12 @@ export function renderMinions(
 ): string[] {
   const labels = minions.map((minion) =>
     raw
-      ? `${displayName(parent)}#${minion.seq}`
-      : minionName(displayName(parent), minion.seq),
+      ? `${sanitizeTerminalText(displayName(parent))}#${minion.seq}`
+      : sanitizeTerminalText(minionName(displayName(parent), minion.seq)),
   );
   const labelWidth = Math.max(0, ...labels.map((label) => [...label].length));
   return minions.map((minion, index) => {
-    const what = minion.task || minion.agentType || "(running)";
+    const what = sanitizeTerminalText(minion.task || minion.agentType || "(running)");
     return `${" ".repeat(layout.gutter - 2)}${dim("↳")} ${paint(pad(labels[index] ?? "", labelWidth))} ${dim(fit(what, Math.max(12, layout.descriptionWidth - labelWidth - 1)))}`;
   });
 }
@@ -123,7 +124,7 @@ export function renderClaims(
   claims: ClaimIndex,
   layout: RosterLayout,
 ): string[] {
-  const paths = (claims.byHandle.get(handle) ?? []).map((claim) => claim.path);
+  const paths = (claims.byHandle.get(handle) ?? []).map((claim) => sanitizeTerminalText(claim.path));
   const pieces = summarizeFiles(paths, { contested: claims.contestedPaths });
   const line = renderFileLine(pieces, layout.descriptionWidth - 2, {
     contested: red,
@@ -143,8 +144,8 @@ export function renderSessions(
   for (const [tree, group] of view.groups) {
     lines.push("");
     if (tree) {
-      const leaf = tree.split("/").pop() ?? tree;
-      const branch = group[0]?.branch ?? "";
+      const leaf = sanitizeTerminalText(tree.split("/").pop() ?? tree);
+      const branch = sanitizeTerminalText(group[0]?.branch ?? "");
       lines.push(dim(`  worktree ${leaf}${branch ? ` (${branch})` : ""}`));
     }
     for (const session of group) {
@@ -190,10 +191,10 @@ export function renderBackgroundProcesses(
     const leaf =
       process.cwd === projectRoot
         ? ""
-        : ` ${process.cwd.split("/").pop() ?? ""}`;
+        : ` ${sanitizeTerminalText(process.cwd.split("/").pop() ?? "")}`;
     lines.push(
       dim(
-        `    pid ${String(process.pid).padEnd(7)} ${process.name || "(unnamed)"}${leaf}  started ${age}`,
+        `    pid ${String(process.pid).padEnd(7)} ${sanitizeTerminalText(process.name || "(unnamed)")}${leaf}  started ${age}`,
       ),
     );
   }
@@ -211,8 +212,8 @@ function renderContentionRows(
   note: string,
 ): string[] {
   return rows.flatMap((row) => [
-    `    ${paint(fit(row.path, width - 6))}`,
-    `      ${row.holders.map((claim: Claim) => handleColour(claim.handle)(claimName(claim))).join(dim(", "))} ${dim(note)}`,
+    `    ${paint(fit(sanitizeTerminalText(row.path), Math.max(8, width - 6)))}`,
+    `      ${row.holders.map((claim: Claim) => handleColour(claim.handle)(sanitizeTerminalText(claimName(claim)))).join(dim(", "))} ${dim(note)}`,
   ]);
 }
 

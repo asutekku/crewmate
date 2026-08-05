@@ -211,6 +211,18 @@ describe("delivery", () => {
 });
 
 describe("identity", () => {
+  test("departure announcement and roster removal commit together", () => {
+    fresh((store) => {
+      store.register("leaver", "/project", "main", 1000);
+      store.register("reader", "/project", "main", 1000);
+      expect(store.departSession("leaver", 2000)).toBe(true);
+      expect(store.findBySession("leaver")).toBeNull();
+      expect(store.drainUnread("reader").map((message) => message.body)).toContain(
+        "left the roster",
+      );
+    });
+  });
+
   test("posting from an unknown caller registers and writes in one operation", () => {
     fresh((store) => {
       const sender = store.postFromCaller({
@@ -425,6 +437,38 @@ describe("claims", () => {
       store.claim("ghost", "src/x.ts", now - STALE_MS - 1000);
       store.pruneStale(now);
       expect(store.allClaims(now)).toEqual([]);
+    });
+  });
+
+  test("pruneStale sweeps a dead session whole and leaves a live one intact", () => {
+    // The three deletes resolve "who is dead" from `sessions`, which is itself
+    // deleted last. Reordering them strands a dead session's claims and tasks,
+    // or takes a live session's — neither is visible from allClaims alone.
+    fresh((store) => {
+      const now = Date.now();
+      store.register("ghost", "/t", "main", now - STALE_MS - 1000);
+      store.claim("ghost", "src/dead.ts", now - STALE_MS - 1000);
+      store.upsertTask("ghost", "t-dead", "gone", now - STALE_MS - 1000);
+      store.register("alive", "/t", "main", now);
+      store.claim("alive", "src/live.ts", now);
+      store.upsertTask("alive", "t-live", "working", now);
+
+      store.pruneStale(now);
+
+      expect(store.handleFor("ghost")).toBeNull();
+      expect(store.taskCounts().get("ghost")).toBeUndefined();
+      expect(store.handleFor("alive")).not.toBeNull();
+      expect(store.allClaims(now).map((c) => c.path)).toEqual(["src/live.ts"]);
+      expect(store.taskCounts().get("alive")?.open).toBe(1);
+    });
+  });
+
+  test("sub-stores are stable references, not rebuilt per access", () => {
+    fresh((store) => {
+      expect(store.work).toBe(store.work);
+      expect(store.diary).toBe(store.diary);
+      expect(store.questions).toBe(store.questions);
+      expect(store.obligations).toBe(store.obligations);
     });
   });
 });
