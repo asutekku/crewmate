@@ -484,6 +484,20 @@ export class Store {
     return this.activity.allClaims(nowMs, CLAIM_TTL_MS);
   }
 
+  /**
+   * Conversation uuids Claude Code still has a transcript for, lowercased.
+   *
+   * Empty when the directory is missing or unreadable, which reads as "none" —
+   * so a caller offering `claude --resume` shows nothing rather than an offer
+   * that would fail. `owners.release` treats the same empty set as "unknown"
+   * and keeps every name; the difference is deliberate, since one direction
+   * loses a hint and the other would lose an identity.
+   */
+  conversationsOnDisk(): Set<string> {
+    if (this.transcriptDirPath === "") return new Set();
+    return liveConversations(this.transcriptDirPath);
+  }
+
   pruneStale(nowMs: number): void {
     const cutoff = nowMs - STALE_MS;
     const editCutoff = nowMs - EDIT_KEEP_MS;

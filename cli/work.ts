@@ -90,6 +90,8 @@ interface WorkItemView {
   readonly item: WorkItem;
   readonly steps: readonly WorkStep[];
   readonly events: readonly WorkEvent[];
+  /** Set when this item's work can be picked up; see `ItemContext`. */
+  readonly resumeId?: string;
 }
 
 function workItemView(
@@ -150,9 +152,22 @@ function renderMine(
   }
   for (const view of views) {
     const fold = foldEvents(view.events);
-    for (const line of itemLines(view.item, view.steps, fold, nowMs, width, BOARD_PAINT))
+    for (const line of itemLines(
+      view.item,
+      view.steps,
+      fold,
+      nowMs,
+      width,
+      BOARD_PAINT,
+      resumeContext(view),
+    ))
       context.log(line);
   }
+}
+
+/** `exactOptionalPropertyTypes` refuses `{ resumeId: undefined }`, so omit it. */
+function resumeContext(view: WorkItemView): { resumeId?: string } {
+  return view.resumeId !== undefined ? { resumeId: view.resumeId } : {};
 }
 
 type AgentResolution =
@@ -232,7 +247,21 @@ export function collectBoardView(
     options.all || options.history
       ? allItems
       : allItems.filter((item) => item.closedMs === 0);
-  const views = visibleItems.map((item) => workItemView(store, item));
+  // Read ONCE for the whole board rather than per item: it is a directory
+  // listing, and a board with thirty items would otherwise do thirty of them.
+  const onDisk = store.conversationsOnDisk();
+  const views = visibleItems.map((item) => {
+    const view = workItemView(store, item);
+    const sessionId = item.agentId.startsWith("session:")
+      ? item.agentId.slice("session:".length)
+      : "";
+    const resumable =
+      item.closedMs === 0 &&
+      sessionId !== "" &&
+      !liveBySession.has(sessionId) &&
+      onDisk.has(sessionId.toLowerCase());
+    return resumable ? { ...view, resumeId: sessionId } : view;
+  });
   const groups = new Map<
     string,
     { name: string; open: number; closed: number; items: WorkItemView[] }
@@ -306,7 +335,15 @@ function renderBoard(
     );
     for (const item of agent.items) {
       const fold = foldEvents(item.events);
-      for (const line of itemLines(item.item, item.steps, fold, nowMs, width, BOARD_PAINT))
+      for (const line of itemLines(
+        item.item,
+        item.steps,
+        fold,
+        nowMs,
+        width,
+        BOARD_PAINT,
+        resumeContext(item),
+      ))
         context.log(line);
     }
     if (agent.hidden > 0) context.log(dim(`    +${agent.hidden} more`));
@@ -599,8 +636,12 @@ export function createWorkCommands(context: CliContext): CommandMap {
       const now = context.now();
       const width = terminalWidth();
       withStore(context.dbPath, (store) => store.work.pruneWork(now));
-      const snapshot = withStore(context.dbPath, (store) =>
-        collectBoardView(store, who, now, { all, history, raw }),
+      // The project root is what resolves the transcript dir, and the board
+      // needs it to tell a resumable conversation from a deleted one.
+      const snapshot = withStore(
+        context.dbPath,
+        (store) => collectBoardView(store, who, now, { all, history, raw }),
+        context.projectRoot,
       );
       if (!snapshot.ok) {
         failCommand(

@@ -92,6 +92,19 @@ export function stepLine(
 }
 
 /**
+ * How to pick an item's work back up, when its agent is not around to.
+ *
+ * `resumeId` is the conversation uuid, present ONLY when the item is open, its
+ * session is not live, and the transcript is still on disk. All three matter:
+ * a live agent needs no hint, and a conversation Claude Code has deleted cannot
+ * be resumed no matter what the board says — an offer that fails is worse than
+ * no offer.
+ */
+export interface ItemContext {
+  readonly resumeId?: string;
+}
+
+/**
  * One work item: its header, checklist, and folded state.
  *
  * `width` is the terminal's, and every line is fitted to it — a board that wraps
@@ -104,6 +117,7 @@ export function itemLines(
   nowMs: number,
   width: number,
   paint: BoardPaint,
+  context: ItemContext = {},
 ): string[] {
   const out: string[] = [];
   const p = progress(steps);
@@ -146,6 +160,11 @@ export function itemLines(
   }
   if (fold.needs !== "") {
     out.push(`      ${paint.red("needs   ")} ${fit(fold.needs, width - 15)}`);
+  }
+  if (context.resumeId !== undefined) {
+    out.push(
+      `      ${paint.dim("resume  ")} ${paint.cyan(`claude --resume ${context.resumeId}`)}`,
+    );
   }
   return out;
 }

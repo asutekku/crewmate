@@ -44,7 +44,15 @@ export function liveConversations(projectDir: string): Set<string> {
  */
 export function projectTranscriptDir(projectRoot: string): string {
   const base = process.env["CLAUDE_CONFIG_DIR"] ?? `${homedir()}/.claude`;
-  const slug = projectRoot.replace(/[^a-zA-Z0-9]+/g, "-");
+  // ONE DASH PER CHARACTER, not one per run. Claude Code replaces each
+  // character it does not keep, so `I:/Projects/Traffic` is
+  // `I--Projects-Traffic` — the `:` and the `/` each get a dash. Collapsing the
+  // run with `+` gave `I-Projects-Traffic`, which matched no directory that has
+  // ever existed: measured 2026-08-05, every folder under `~/.claude/projects`
+  // uses the doubled form, and this function had therefore NEVER resolved. It
+  // fails silently — `liveConversations` reads a missing directory as "none",
+  // which `owners.release` treats as "unknown" and keeps every name.
+  const slug = projectRoot.replace(/[^a-zA-Z0-9]/g, "-");
   return `${base}/projects/${slug}`;
 }
 

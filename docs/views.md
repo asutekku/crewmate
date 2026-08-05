@@ -206,6 +206,26 @@ fix lands in the middle of a core retirement, and collapsing those into one line
 loses both. A bare command means **the most recently touched item**; a subject
 substring picks another (`crew done sliver`).
 
+### Unfinished work whose agent has gone
+
+An open item whose session is no longer live gets the conversation that owns it:
+
+```
+  akira (15ef97)                                                   1 open
+    ▸ R4 step 4: keep-clear moves into net/  0/4    3d · updated 3d
+      ▪ 1  port buildKeepClear into net/lanes/keepClear.ts   ← current
+      resume   claude --resume 1c77a134-1a87-4c1b-8917-c575fdf9473f
+```
+
+The session id **is** the resume handle, so the board can hand you the exact
+command. It appears only when all three hold: the item is open, the session is
+not live, and Claude Code still has the transcript on disk. A live agent can be
+messaged instead, and an offer that would fail is worse than no offer.
+
+A name in parentheses means **two conversations have held that name** — names
+return to the pool when a conversation ends, so this is ordinary, and without
+the suffix the two blocks read as one agent listed twice.
+
 ### The checklist is optional, and that is load-bearing
 
 `--plan` can be omitted. An item with no steps is a legitimate end state, not a

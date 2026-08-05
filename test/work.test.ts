@@ -8,16 +8,18 @@
  * Both are tested here rather than asserted in a commit message.
  */
 
-import { unlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, test } from "bun:test";
 
 import { withStore } from "../core/store.ts";
 import { agentKey, foldEvents, parsePlan, progress, WORK_KEEP_MS } from "../core/work.ts";
 import { collectBoardView } from "../cli/work.ts";
+import { projectTranscriptDir } from "../core/store/ownership.ts";
 
 let n = 0;
 const paths: string[] = [];
+const dirs: string[] = [];
 
 function fresh<T>(fn: (s: Parameters<Parameters<typeof withStore>[1]>[0]) => T): T {
   const path = `${tmpdir().replace(/\\/g, "/")}/presence-work-${process.pid}-${n++}.db`;
@@ -26,6 +28,7 @@ function fresh<T>(fn: (s: Parameters<Parameters<typeof withStore>[1]>[0]) => T):
 }
 
 afterEach(() => {
+  delete process.env["CLAUDE_CONFIG_DIR"];
   for (const p of paths.splice(0)) {
     for (const suffix of ["", "-wal", "-shm"]) {
       try {
@@ -33,6 +36,13 @@ afterEach(() => {
       } catch {
         /* already gone */
       }
+    }
+  }
+  for (const d of dirs.splice(0)) {
+    try {
+      rmSync(d, { recursive: true, force: true });
+    } catch {
+      /* already gone */
     }
   }
 });
@@ -1083,6 +1093,80 @@ describe("the board when a name has been reused", () => {
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.view.agents.map((a) => a.name).sort()).toEqual(["adela", "ash"]);
+    });
+  });
+});
+
+describe("picking up an agent's unfinished work", () => {
+  const DEAD = "1c77a134-1a87-4c1b-8917-c575fdf9473f";
+
+  /** A store whose transcript dir holds exactly the given conversation ids. */
+  function withTranscripts<T>(
+    ids: readonly string[],
+    fn: (s: Parameters<Parameters<typeof withStore>[1]>[0]) => T,
+  ): T {
+    const tmp = tmpdir().replace(/\\/g, "/");
+    const root = mkdtempSync(`${tmp}/presence-resume-`);
+    dirs.push(root);
+    const base = `${tmp}/presence-resume-home-${n}`;
+    process.env["CLAUDE_CONFIG_DIR"] = base;
+    dirs.push(base);
+    const dir = projectTranscriptDir(root);
+    mkdirSync(dir, { recursive: true });
+    for (const id of ids) writeFileSync(`${dir}/${id}.jsonl`, "{}\n");
+    const path = `${tmp}/presence-resume-${process.pid}-${n++}.db`;
+    paths.push(path);
+    return withStore(path, fn, root);
+  }
+
+  function boardOf(store: Parameters<Parameters<typeof withStore>[1]>[0]) {
+    const result = collectBoardView(store, "", Date.now(), {
+      all: false,
+      history: false,
+      raw: false,
+    });
+    if (!result.ok) throw new Error("board did not build");
+    return result.view.agents.flatMap((a) => a.items);
+  }
+
+  test("an item whose agent is gone offers the conversation to resume", () => {
+    // The board showed four agents with unfinished checklists and no way to
+    // reach any of them. The uuid IS the resume handle — `claude --resume <id>`.
+    withTranscripts([DEAD], (store) => {
+      store.work.open(`session:${DEAD}`, "akira", "keep-clear moves", ["port"], 1000);
+      expect(boardOf(store)[0]?.resumeId).toBe(DEAD);
+    });
+  });
+
+  test("a LIVE agent is not offered — it can be messaged instead", () => {
+    withTranscripts([DEAD], (store) => {
+      const now = Date.now();
+      store.register(DEAD, "/tree", "master", now);
+      store.work.open(`session:${DEAD}`, "akira", "keep-clear moves", [], now);
+      expect(boardOf(store)[0]?.resumeId).toBeUndefined();
+    });
+  });
+
+  test("a conversation deleted from disk is NOT offered", () => {
+    // An offer that fails is worse than no offer: `claude --resume` on a uuid
+    // Claude Code no longer has a transcript for cannot work.
+    withTranscripts([], (store) => {
+      store.work.open(`session:${DEAD}`, "akira", "keep-clear moves", [], 1000);
+      expect(boardOf(store)[0]?.resumeId).toBeUndefined();
+    });
+  });
+
+  test("a CLOSED item is not offered, however dead its agent", () => {
+    withTranscripts([DEAD], (store) => {
+      const id = store.work.open(`session:${DEAD}`, "akira", "done work", [], 1000);
+      store.work.close(id, "done", "", 2000);
+      const result = collectBoardView(store, "", Date.now(), {
+        all: true,
+        history: false,
+        raw: false,
+      });
+      if (!result.ok) throw new Error("board did not build");
+      expect(result.view.agents.flatMap((a) => a.items)[0]?.resumeId).toBeUndefined();
     });
   });
 });

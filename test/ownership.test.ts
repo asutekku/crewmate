@@ -10,7 +10,11 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, test } from "bun:test";
 
 import { displayName, withStore } from "../core/store.ts";
-import { liveConversations, transcriptDir } from "../core/store/ownership.ts";
+import {
+  liveConversations,
+  projectTranscriptDir,
+  transcriptDir,
+} from "../core/store/ownership.ts";
 
 let n = 0;
 const paths: string[] = [];
@@ -26,7 +30,11 @@ function fakeProject(conversationIds: readonly string[]): string {
   const base = process.env["CLAUDE_CONFIG_DIR"] ?? `${tmpdir().replace(/\\/g, "/")}/presence-home`;
   process.env["CLAUDE_CONFIG_DIR"] = base;
   dirs.push(base);
-  const dir = `${base}/projects/${root.replace(/[^a-zA-Z0-9]+/g, "-")}`;
+  // THROUGH `projectTranscriptDir`, never a re-implemented slug. These helpers
+  // used to hand-build `root.replace(/[^a-zA-Z0-9]+/g, "-")` — the same wrong
+  // expression the function had — so every test here wrote to and read from the
+  // same wrong directory and passed while the shipped path resolved to nothing.
+  const dir = projectTranscriptDir(root);
   mkdirSync(dir, { recursive: true });
   for (const id of conversationIds) writeFileSync(`${dir}/${id}.jsonl`, "{}\n");
   return root;
@@ -34,8 +42,7 @@ function fakeProject(conversationIds: readonly string[]): string {
 
 /** Deletes one conversation's transcript — the only thing that frees a name. */
 function deleteConversation(root: string, id: string): void {
-  const base = process.env["CLAUDE_CONFIG_DIR"] ?? "";
-  rmSync(`${base}/projects/${root.replace(/[^a-zA-Z0-9]+/g, "-")}/${id}.jsonl`, { force: true });
+  rmSync(`${projectTranscriptDir(root)}/${id}.jsonl`, { force: true });
 }
 
 /** One db reused across calls, so a "returning" session hits the same store. */
@@ -288,6 +295,22 @@ describe("name ownership", () => {
       ]);
       expect(store.owners.dedupe()).toBe(0);
     });
+  });
+
+  // MEASURED 2026-08-05 against `~/.claude/projects` on this machine: EVERY
+  // directory uses one dash per replaced character, so a Windows root doubles
+  // at the drive colon and a POSIX root leads with a dash. The shipped slug
+  // collapsed each run to a single dash and therefore matched NOTHING, on any
+  // platform — and failed silently, because a missing directory reads as "no
+  // conversations", which `owners.release` treats as "unknown" and keeps every
+  // name. Nothing tested this function before.
+  test.each([
+    ["a windows root doubles at the drive colon", "I:/Projects/Traffic", "I--Projects-Traffic"],
+    ["a posix root leads with a dash", "/home/u/code/app", "-home-u-code-app"],
+    ["backslashes count too", "C:\\Users\\akU\\x", "C--Users-akU-x"],
+    ["a dot is replaced, not dropped", "/srv/my.app", "-srv-my-app"],
+  ])("%s", (_label, root, slug) => {
+    expect(projectTranscriptDir(root).endsWith(`/projects/${slug}`)).toBe(true);
   });
 
   test("transcriptDir strips the filename on both separators", () => {
