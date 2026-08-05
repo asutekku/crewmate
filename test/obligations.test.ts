@@ -190,3 +190,57 @@ describe("P2 exhaustive gate",()=>{
   test("priority ordering is exact and deterministic at equal priority",()=>fresh(path=>withStore(path,s=>{for(const [id,priority] of [["z","normal"],["a","important"],["u","urgent"]] as const)s.obligations.create(input({id,sourceActId:`act-${id}`,priority,idempotencyKey:`create-${id}`}));const cs=s.obligations.candidates("ada");expect(cs.map(x=>x.priority).sort((a,b)=>b-a)).toEqual([110,105,100]);const tied=pack({mandatoryHeader:[],peerFraming:[],candidates:cs.filter(x=>x.priority===105).concat([{...cs.find(x=>x.priority===105)!,key:"obligation:00",dedupeKey:"obligation:00"}]),targetChars:10_000});expect(tied.selected.map(x=>x.candidate.key)).toEqual([...tied.selected.map(x=>x.candidate.key)].sort());})));
   test("injected failure at every batch write boundary leaves no fragment",()=>{for(const [i,table] of ["messages","obligations","obligation_events","clearances","clearance_events","message_acts","hazard_notices","message_deliveries","obligation_dependencies","feature_events","semantic_batches"].entries())fresh(path=>withStore(path,s=>{const raw=new Database(path);raw.exec(`CREATE TRIGGER fail_p2 BEFORE INSERT ON ${table} BEGIN SELECT RAISE(ABORT,'injected'); END`);raw.close();const acts:any[]=[{key:"q",type:"question",text:"Q"},{key:"p",type:"promise",text:"P",mode:"perform",condition:{text:"after Q",handling:"manual"}},{key:"g",type:"grant",text:"G",scopeText:"scope"},{key:"h",type:"hazard",text:"H",subject:"file"}];throws(()=>s.obligations.createBatch({senderSessionId:"ada",senderName:"Ada",recipientSessionId:"bob",recipientName:"Bob",acts,dependencies:[{sourceKey:"q",targetKey:"p",effect:"activate"}],idempotencyKey:`fault-${i}`,nowMs:1}),"storage");expect(s.recent(10)).toEqual([]);expect(s.obligations.all()).toEqual([]);expect(s.obligations.clearanceSnapshot("missing")).toBeNull();}));});
 });
+
+describe("decisions are a view over the events, never a table",()=>{
+  // A `countered` event IS a decision: this obligation is the rejected option
+  // and `replacementId` names the chosen one. Nothing is written to produce it.
+  const counter=(over:Partial<ObligationEventRecord>={}):ObligationEventRecord=>({id:"e-counter",obligationId:"o1",actor:bob,occurredAt:500,expectedVersion:1,idempotencyKey:"counter",payload:{type:"countered",replacementId:"o2"},...over});
+  const proposed=(over:Partial<CreateObligationInput>={})=>input({kind:"request",mode:undefined,initial:{authority:"proposed",activation:"active",responsible:{kind:"assigned",actor:bob}},...over});
+
+  test("a counter names what was rejected AND what replaced it",()=>fresh(path=>withStore(path,s=>{
+    s.obligations.create(proposed({text:"rewrite the allocator"}));
+    s.obligations.create(input({id:"o2",sourceActId:"a2",text:"patch the guard instead",idempotencyKey:"create2"}));
+    s.obligations.append(counter());
+    const d=s.obligations.decisions();
+    expect(d).toHaveLength(1);
+    expect(d[0]).toMatchObject({obligationId:"o1",rejected:"rewrite the allocator",chosen:"patch the guard instead",chosenObligationId:"o2"});
+    expect(d[0]?.decidedBy).toEqual(bob);
+  })));
+
+  test("a decline with a reason is a decision with no replacement",()=>fresh(path=>withStore(path,s=>{
+    s.obligations.create(proposed({text:"move the water files"}));
+    s.obligations.append({...counter(),id:"e-decline",idempotencyKey:"decline",payload:{type:"declined",reason:"they are not mine to move"}});
+    const d=s.obligations.decisions();
+    expect(d).toHaveLength(1);
+    expect(d[0]).toMatchObject({rejected:"move the water files",chosen:"",chosenObligationId:"",rationale:"they are not mine to move"});
+  })));
+
+  test("a counter whose replacement is missing still records the rejection",()=>fresh(path=>withStore(path,s=>{
+    // A dangling id would be worse than saying only what was turned down.
+    s.obligations.create(proposed({text:"rewrite the allocator"}));
+    s.obligations.append(counter({payload:{type:"countered",replacementId:"never-created"}}));
+    expect(s.obligations.decisions()[0]).toMatchObject({rejected:"rewrite the allocator",chosen:"",chosenObligationId:"never-created"});
+  })));
+
+  test("an obligation nobody turned down produces NO decision",()=>fresh(path=>withStore(path,s=>{
+    s.obligations.create(input());
+    s.obligations.append(event(1,{type:"fulfilled"}));
+    expect(s.obligations.decisions()).toEqual([]);
+  })));
+
+  test("the view appends nothing — the event count is unchanged by reading it",()=>fresh(path=>withStore(path,s=>{
+    s.obligations.create(proposed());
+    s.obligations.append(counter());
+    const before=s.obligations.events("o1").length;
+    s.obligations.decisions();s.obligations.decisions();
+    expect(s.obligations.events("o1")).toHaveLength(before);
+  })));
+
+  test("decisions read back in the order they were made",()=>fresh(path=>withStore(path,s=>{
+    s.obligations.create(proposed({text:"first"}));
+    s.obligations.create(proposed({id:"o2",sourceActId:"a2",text:"second",idempotencyKey:"create2"}));
+    s.obligations.append({...counter(),id:"e-early",idempotencyKey:"early",obligationId:"o2",occurredAt:100,payload:{type:"declined",reason:"early"}});
+    s.obligations.append({...counter(),id:"e-late",idempotencyKey:"late",occurredAt:900,payload:{type:"declined",reason:"late"}});
+    expect(s.obligations.decisions().map(d=>d.rationale)).toEqual(["early","late"]);
+  })));
+});

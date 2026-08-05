@@ -315,20 +315,23 @@ subsystem and noise in every other session.
 
 ## The phases
 
-### P0 — Injection envelope, allocator, manifest [ ]
+### P0 — Injection envelope, allocator, manifest [x]
 
 Unblocked; nothing here depends on the taxonomy.
 
-- [ ] `InjectionEnvelope` with the mandatory header outside the budget, and a
+Shipped as `50aa1d3`. The boxes below sat unticked while the code was already in
+the tree — verified against the source 2026-08-05, not against this document.
+
+- [x] `InjectionEnvelope` with the mandatory header outside the budget, and a
       test that fails if identity can be evicted by any candidate arrangement
-- [ ] the **peer trust framing** subtracted from the budget too, whenever any
+- [x] the **peer trust framing** subtracted from the budget too, whenever any
       peer-authored text is selected — with a test that no arrangement of
       candidates can inject peer prose without it
-- [ ] one allocator: deterministic order, stable tie-breaks, dedupe before
+- [x] one allocator: deterministic order, stable tie-breaks, dedupe before
       budgeting, omission count preserved, no model call on the path
-- [ ] suppression by `stateVersion` across lifecycle hooks — an obligation shown
+- [x] suppression by `stateVersion` across lifecycle hooks — an obligation shown
       at session start is not re-injected at the next prompt unless it changed
-- [ ] **an oversized candidate degrades, it does not vanish.** Candidates are
+- [x] **an oversized candidate degrades, it does not vanish.** Candidates are
       atomic and never cut mid-line; every producer supplies a bounded compact
       rendering; an actionable item too large for the remaining budget leaves a
       pointer rather than silence:
@@ -339,12 +342,12 @@ Unblocked; nothing here depends on the taxonomy.
 
       Otherwise one verbose obligation either monopolises the block or disappears
       from it, and both failures are invisible
-- [ ] selected/omitted recorded **per recipient and `stateVersion`**, so what an
+- [x] selected/omitted recorded **per recipient and `stateVersion`**, so what an
       agent was actually shown is reconstructable after the fact
-- [ ] `cli.ts injection [--session <name>]` — mandatory / selected / omitted with
+- [x] `cli.ts injection [--session <name>]` — mandatory / selected / omitted with
       the budget line. Prioritisation *will* be wrong; debugging a rendered
       paragraph after an agent behaves oddly is the hard way
-- [ ] install manifest in the installed dir: `installedAt`, `sourceRevision`,
+- [x] install manifest in the installed dir: `installedAt`, `sourceRevision`,
       `schemaVersion`, `featureSetVersion`. The installed copy at
       `~/.claude/agent-presence/bin/` genuinely diverges from source — sessions
       run whatever was installed when they started, so without this "did this
@@ -1234,12 +1237,67 @@ requires:
 
 ### P4 — Decisions [ ]
 
-- [ ] `chosen · rationale · revisitWhen`, plus optional alternatives and
-      concerns, plus source refs. A single agent choosing between two approaches
-      still has an alternative, and *"we rejected X because Y"* is what a later
-      agent needs
-- [ ] a finding records what is true; a decision records what was chosen; an
-      obligation records what someone agreed to do. Three different objects
+*Scoped 2026-08-05, against the corpus and the shipped P2 code.*
+
+A finding records what is true; a decision records what was chosen; an obligation
+records what someone agreed to do. Three different things — but only one of them
+needs a new table, and it is not this one.
+
+**No new object.** A `decision` diary kind, plus a rendering of what P2 already
+stores. That is the whole phase.
+
+#### Why this is smaller than it looks
+
+The corpus has 19 `proposal` acts, and messages 285–291 are one live argument
+with the rejected option stated out loud — *"Two ways out, your call"*,
+*"you own emit.ts, I back out entirely"*, *"If seed 1 goes green on the loop fix
+alone I would rather ship that"*. That is exactly the P4 target.
+
+But an earlier draft of this section proposed folding decisions out of
+`proposal` acts, and **P2 has no `proposal` act type** — it was deliberately
+excluded, and the code agrees: seven types, no proposal. There was nothing to
+fold.
+
+The material is in the obligation events instead:
+
+```ts
+| { type: "declined"; reason?: string }
+| { type: "countered"; replacementId: string }
+```
+
+A `countered` event *is* a decision in event form — the rejected option is the
+original obligation, the chosen one is `replacementId`, and `declined.reason`
+carries the why. Version-checked and durable already. So the fold reads what P2
+wrote rather than asking anyone to retype an argument they just finished having.
+
+#### The three rulings
+
+- [ ] **`decision` as a fifth `DiaryKind`**, beside `finding · warning · error ·
+      optimization`. The manual path, for a choice made without a P2 obligation
+      behind it — one enum member and a validator line, not a table
+- [ ] **a decision view folded from `countered` / `declined`**, so an argument
+      settled through structured acts produces a decision nobody had to write
+      down. Rendering only; it appends nothing
+- [ ] **`revisitWhen` is prose.** `TriggerSpec` names commits, work ids and
+      obligation ids; *"revisit when we have more than 3 agents"* has no trigger
+      in that vocabulary, and P2's own rule is that extending it needs new
+      evidence. Inert but honest — and `note-deprecate` already covers "this
+      stopped being true"
+- [ ] **no session-start candidate.** A decision matters when someone is about to
+      redo the rejected thing, which is the scope-matched pre-edit path findings
+      already use. It therefore costs nothing from the budget P0 exists to
+      protect, and *"session start restores continuity, it does not preload the
+      database"* stays true
+- [ ] **decisions stay out of `LOUD_KINDS`.** Interrupting an edit is this tool's
+      most intrusive surface and it currently costs `warning | error`. A decision
+      is not an error; it rides the quiet path
+
+#### What is deliberately not built
+
+No `concerns` field, no `alternatives[]` array, no source-ref object. The
+rejected alternative comes from the counter chain; anything else goes in the
+body. This phase adds one enum value and one renderer — if it grows a schema,
+it has stopped being P4 and should be argued for on its own evidence.
 
 ### P5 — Tales, domain experience [ ]
 
@@ -1283,6 +1341,17 @@ labels with confidence and reason, aggregates derived from them. Any figure in
 this plan traces to a message id. Disagree with an aggregate and you can find
 the message that produced it.
 
-**Nothing here has been built.** Every box is `[ ]`, and this file has no
-authority to say otherwise: the plan next to it carried four `[x] IMPLEMENTED`
-markers for code that was never written.
+**A tick here is a claim about the tree, and the tree is the authority.** The
+plan next to this one carried four `[x] IMPLEMENTED` markers for code that was
+never written. This file has since had the opposite defect: P0 shipped as
+`50aa1d3` and sat unticked for two days, which is the same failure wearing the
+other sign — a status column nobody re-derives drifts in whichever direction the
+last edit left it. Re-verify against the code before trusting a box either way.
+
+**Diary 40 and 41 remain open, and that is correct.** P2 required them closed
+*for new writes*, which `obligations.ts` satisfies: an act's actor is
+`{ kind: 'agent', agentId: senderSessionId }` from the authenticated session, and
+`senderName` comes from `displayName(self)` — never from `from_name`. The two
+defective historical rows stay uncorrected on purpose, per the precedence rule
+above. The findings stay open because the legacy data is still wrong, not because
+work is missing.

@@ -1,5 +1,5 @@
 import { briefAgo } from "../core/board.ts";
-import { bold, cyan, dim, green, red, yellow } from "../core/colour.ts";
+import { blue, bold, cyan, dim, green, red, yellow } from "../core/colour.ts";
 import {
   checkNote,
   DIARY_KINDS,
@@ -63,7 +63,9 @@ function entryLines(entry: DiaryEntry, nowMs: number, width: number): string[] {
         ? yellow
         : entry.kind === "optimization"
           ? green
-          : dim;
+          : entry.kind === "decision"
+            ? blue
+            : dim;
   const prefix = `#${entry.id} ${entry.kind.padEnd(12)} ${pad(age, 4)}  `;
   const head = `${dim(`#${entry.id}`)} ${paint(entry.kind.padEnd(12))} ${dim(pad(age, 4))}  `;
   const lines = wrap(entry.title, Math.max(20, width - prefix.length)).map(
@@ -177,11 +179,11 @@ export function createDiaryCommands(context: CliContext): CommandMap {
           'usage: cli.ts note "<title>" --topic <t> [--body "<detail>"]',
         );
         context.error(
-          dim(
-            "             [--tags a,b] [--kind finding|warning|error|optimization]",
-          ),
+          dim(`             [--tags a,b] [--kind ${DIARY_KINDS.join("|")}]`),
         );
-        context.error(dim("             [--scope src/sim/water]"));
+        context.error(
+          dim("             [--scope src/sim/water] [--fixes <id>]"),
+        );
         context.error(
           dim("       cli.ts note <id>     # read one, body included"),
         );

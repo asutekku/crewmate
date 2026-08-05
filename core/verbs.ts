@@ -101,15 +101,25 @@ export const VERBS: readonly Verb[] = [
   { verb: "needs", args: '"<what>" [--item <match>]', blurb: "record what you are blocked on, and tell them", group: "work" },
 
   // ---- diary
-  // The flag list is deliberately partial -- `--tags` and `--kind` are on the
-  // verb's own usage line, which prints on an argument error and has the room.
-  // A spec wide enough to name every flag is one that wraps on an 80-column
-  // terminal, and a wrapped spec is harder to read than a short one plus a
-  // pointer to the full form.
-  // `--kind` earns its place in the spec despite the width: it is what makes a
-  // note a BUG rather than a fact, and a flag missing from `help` is a feature
-  // agents never reach. `--tags` and `--body` stay on the verb's own usage line.
-  { verb: "note", args: '"<title>" --topic <t> [--scope <dir>] [--kind error] [--fixes <id>]', blurb: "file a finding, or a bug; `note <id>` reads one", group: "diary" },
+  // The flag list is deliberately partial -- `--tags`, `--body` and `--fixes`
+  // are on the verb's own usage line, which prints on an argument error and has
+  // the room. A spec wide enough to name every flag is one that wraps on an
+  // 80-column terminal, and a wrapped spec is harder to read than a short one
+  // plus a pointer to the full form.
+  // `--kind` earns its place despite the width: it is what makes a note a BUG
+  // or a DECISION rather than a fact, and a flag missing from `help` is a
+  // feature agents never reach.
+  //
+  // WHAT THE SPEC COSTS THE TABLE, measured 2026-08-05 by counting rows that
+  // share the two-column form at widths 80/100/120/140. `note` sets the column
+  // for all 33 verbs, so its width is not a local choice:
+  //   [--kind error] [--fixes <id>]      1 /  7 / 29 / 51   (was)
+  //   [--kind error|decision] [--fixes]  1 /  3 / 14 / 46   (naive widening)
+  //   [--kind error|decision]            1 / 11 / 41 / 51   (this, blurb included)
+  // Naming the second kind and moving `--fixes` to the usage line is therefore
+  // not a trade -- it costs nothing and buys 12 rows back at 120 columns. The
+  // blurb feeds the same column, so it is measured with the spec, not after.
+  { verb: "note", args: '"<title>" --topic <t> [--scope <dir>] [--kind error|decision]', blurb: "file a finding, a bug, or a decision; `note <id>` reads one", group: "diary" },
   { verb: "recall", args: "<words> [--scope <dir>] [--limit n]", blurb: "search findings", group: "diary" },
   { verb: "bugs", args: "[--scope <dir>] [--limit n]", blurb: "errors nobody has fixed yet", group: "diary" },
   { verb: "topics", args: "", blurb: "every topic, with how much is under it", group: "diary" },

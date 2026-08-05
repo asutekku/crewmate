@@ -23,15 +23,33 @@ import type { Database } from "bun:sqlite";
 import { loadConfig } from "./config.ts";
 
 /**
- * What kind of thing an entry is. Deliberately four, not a free string: a
+ * What kind of thing an entry is. Deliberately closed, not a free string: a
  * `warning` interrupts an edit and a `finding` does not, so the set has to be
  * closed for the reader to mean anything by it.
+ *
+ * `decision` records what was CHOSEN, which is a different claim from a
+ * `finding`'s what is TRUE — "we use pipes over cellular automata" is not
+ * falsifiable the way "waterSurface is -Infinity when dry" is. It is the manual
+ * path; a choice settled through structured acts is folded from the obligation
+ * events instead (see `decisionsFrom` in core/obligations.ts).
  */
-export type DiaryKind = "finding" | "warning" | "error" | "optimization";
+export type DiaryKind = "finding" | "warning" | "error" | "optimization" | "decision";
 
-export const DIARY_KINDS: readonly DiaryKind[] = ["finding", "warning", "error", "optimization"];
+export const DIARY_KINDS: readonly DiaryKind[] = [
+  "finding",
+  "warning",
+  "error",
+  "optimization",
+  "decision",
+];
 
-/** The kinds worth interrupting an edit for; see `hooks/pre-edit.ts`. */
+/**
+ * The kinds worth interrupting an edit for; see `hooks/pre-edit.ts`.
+ *
+ * A decision is NOT here on purpose. Interrupting an edit is the most intrusive
+ * surface this tool has, and a decision is not an error — it rides the quiet
+ * scope-matched path with findings.
+ */
 export const LOUD_KINDS: readonly DiaryKind[] = ["warning", "error"];
 
 /**

@@ -68,6 +68,23 @@ export const STRUCTURED_ACT_TYPES = [
 ] as const;
 export const DEPENDENCY_EFFECTS = ["activate", "release"] as const;
 
+/**
+ * What was chosen over what, read out of the obligation events rather than
+ * stored. There is no `decisions` table and no write path — a decision is a
+ * VIEW, so it cannot drift from the events it describes.
+ *
+ * `chosen` is empty for a plain decline: an option was turned down and nothing
+ * replaced it, which is still worth knowing.
+ */
+export interface Decision {
+  obligationId: string;
+  decidedBy: ActorRef;
+  decidedAtMs: number;
+  rejected: string;
+  chosen: string;
+  chosenObligationId: string;
+  rationale: string;
+}
 export interface ObligationDefinition {
   id: string;
   sourceActId: string;
@@ -648,6 +665,46 @@ export class ObligationStore {
       summary: String(r.summary),
       subject: String(r.subject),
     }));
+  }
+  /**
+   * Decisions already recorded, folded out of the events that turned a proposal
+   * down. Reads only; appends nothing.
+   *
+   * A `countered` event IS a decision: the rejected option is this obligation,
+   * the chosen one is `replacementId`. A `declined` with a reason is the same
+   * shape without a replacement — an option considered and dropped. Nobody
+   * retypes an argument they just finished having, which is the whole point:
+   * the manual path (`--kind decision` in the diary) exists for choices made
+   * without an obligation behind them, not for these.
+   */
+  decisions(): Decision[] {
+    const byId = new Map(this.all().map((o) => [o.definition.id, o]));
+    const out: Decision[] = [];
+    for (const { definition } of byId.values()) {
+      for (const record of this.events(definition.id)) {
+        const e = record.payload;
+        if (e.type !== "countered" && e.type !== "declined") continue;
+        // The replacement may be missing: an obligation can be countered by one
+        // that was later deleted, and a decision naming a dangling id is worse
+        // than one that says only what was turned down.
+        const chosen =
+          e.type === "countered"
+            ? (byId.get(e.replacementId)?.definition.text ?? "")
+            : "";
+        out.push({
+          obligationId: definition.id,
+          decidedBy: record.actor,
+          decidedAtMs: record.occurredAt,
+          rejected: definition.text,
+          chosen,
+          chosenObligationId: e.type === "countered" ? e.replacementId : "",
+          // `declined` carries an optional reason and `countered` carries none:
+          // the replacement's own text is the argument in that case.
+          rationale: e.type === "declined" ? (e.reason ?? "") : "",
+        });
+      }
+    }
+    return out.sort((a, b) => a.decidedAtMs - b.decidedAtMs);
   }
   /** P0 candidates for one authenticated conversation id. */
   candidates(agentId: string, operator = false): InjectionCandidate[] {
