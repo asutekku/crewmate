@@ -1,0 +1,8 @@
+# Text files are stored and checked out with LF, on every platform.
+#
+# WHY THIS IS NOT COSMETIC: `test/court-v2.test.ts` verifies a frozen SHA-256
+# over `plans/court-audit/rubric-v2.md`. With `core.autocrlf=true` — the Windows
+# default — checkout rewrote 242 LF bytes to CRLF and the hash moved, so a fresh
+# clone failed a test the repository content satisfies. Any frozen-content check
+# has the same exposure.
+* text=auto eol=lf

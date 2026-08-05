@@ -37,13 +37,26 @@ const HERE = `${dirname(fileURLToPath(import.meta.url)).replace(/\\/g, "/")}/`;
  * and the failure lands at hook-run time as "Cannot find module" rather than at
  * install time. `test/` is skipped wholesale.
  */
+/**
+ * Directories the deploy never walks.
+ *
+ * `node_modules` matters as much as `test`: the standalone repo has a real
+ * dev dependency (`@types/bun`), and the first install from it copied 236 files
+ * instead of 74 — 162 type declarations deployed as if they were hooks, and
+ * folded into the content hash that identifies the build.
+ */
+const SKIPPED_DIRS = new Set(["test", "node_modules", ".git"]);
+
 async function scriptNames(): Promise<string[]> {
   const { readdirSync } = await import("node:fs");
   const walk = (rel: string): string[] =>
     readdirSync(`${HERE}${rel}`, { withFileTypes: true }).flatMap((e) => {
       const path = rel === "" ? e.name : `${rel}/${e.name}`;
-      if (e.isDirectory()) return e.name === "test" ? [] : walk(path);
+      if (e.isDirectory()) return SKIPPED_DIRS.has(e.name) ? [] : walk(path);
+      // `.d.ts` is a type declaration, never something a hook runs. They arrive
+      // in bulk from `node_modules` and would otherwise be deployed as code.
       if (!e.name.endsWith(".ts") || e.name.endsWith(".test.ts")) return [];
+      if (e.name.endsWith(".d.ts")) return [];
       return path === "install.ts" ? [] : [path];
     });
   return walk("").sort();
