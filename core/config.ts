@@ -27,8 +27,6 @@ export interface PresenceConfig {
   readonly claimTtlMs: number;
   /** How long an overlap announcement stays "already said". */
   readonly claimReannounceMs: number;
-  /** How long a given name is held after its agent was last seen. */
-  readonly nameReuseMs: number;
   /** How long a CLOSED work record is kept. Open ones never expire. */
   readonly workKeepMs: number;
   /**
@@ -114,7 +112,6 @@ export const DEFAULTS: PresenceConfig = {
   staleMs: 90 * 60 * 1000, // 90 min
   claimTtlMs: 2 * 60 * 60 * 1000, // 2 h
   claimReannounceMs: 30 * 60 * 1000, // 30 min
-  nameReuseMs: 60 * 60 * 60 * 1000, // 60 h
   workKeepMs: 7 * DAY,
   editKeepMs: 30 * DAY,
   minionStaleMs: 60 * 60 * 1000, // 1 h
@@ -180,7 +177,6 @@ function readConfig(): PresenceConfig {
     staleMs: pick("staleMs"),
     claimTtlMs: pick("claimTtlMs"),
     claimReannounceMs: pick("claimReannounceMs"),
-    nameReuseMs: pick("nameReuseMs"),
     workKeepMs: pick("workKeepMs"),
     editKeepMs: pick("editKeepMs"),
     minionStaleMs: pick("minionStaleMs"),

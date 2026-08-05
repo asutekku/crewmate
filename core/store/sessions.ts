@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { Session } from "./types.ts";
-import { loadConfig } from "../config.ts";
 import { pickName } from "../names.ts";
+import { liveConversations, OwnershipStore } from "./ownership.ts";
 
 export const SESSION_COLUMNS = `session_id, handle, name, alias, role, status, blocked, worktree, branch,
   behind_base, base_branch, lineage_from, intent, title, summary, summary_ms, last_seen_ms, started_ms`;
@@ -22,9 +22,21 @@ export function rowToSession(row: Record<string, string | number>): Session {
 
 /** Session identity, liveness, aliases, and roster metadata. */
 export class SessionStore {
-  constructor(private readonly db: Database, private readonly staleMs: number) {}
+  private readonly owners: OwnershipStore;
+
+  constructor(
+    private readonly db: Database,
+    private readonly staleMs: number,
+    /** Transcript dir for the ownership check; empty keeps every name held. */
+    private readonly transcriptDirPath = "",
+  ) {
+    this.owners = new OwnershipStore(db);
+  }
 
   register(sessionId: string, worktree: string, branch: string, nowMs: number): string {
+    // Outside the transaction: a readdir over hundreds of files does not belong
+    // inside a write lock several starting sessions contend for.
+    const liveIds = liveConversations(this.transcriptDirPath);
     const claim = this.db.transaction((): string => {
       const existing = this.db
         .query(`SELECT handle FROM sessions WHERE session_id = ?`)
@@ -38,66 +50,35 @@ export class SessionStore {
         return existing.handle;
       }
 
-      // A name is held for far longer than a session lives, and FOUR sources are
-      // needed to make that true. The fourth — `edits` — is the one that
-      // actually holds, and it was missing: an agent that edited files and left
-      // lost its reservation immediately, because `sessions` deletes its row on
-      // exit, `aliases` is empty unless a name was chosen by hand, and
-      // `messages` self-prunes at MAX_MESSAGES, which on a busy day evicts a
-      // name within hours rather than the 60 the comment promised.
-      //
-      // The consequence was not cosmetic. A fresh conversation took a departed
-      // agent's name, and `operatorNames` then mapped that agent's frozen log
-      // lines onto the LIVE holder — so `files adela` listed a stranger's files
-      // under the name an overlap warning had just given you, and `msg adela`
-      // reached somebody else. `edits` is append-only and pruned on its own
-      // 30-day clock, so it is the only source that survives the hold.
+      // What a stranger may not take: names owned by a surviving conversation,
+      // plus names in use right now (covering rows with no ledger entry). The
+      // old activity windows measured how recently an agent had TYPED.
       const taken = new Set<string>();
-      const heldSince = nowMs - loadConfig().nameReuseMs;
-      for (const r of this.db.query(`SELECT handle FROM sessions`).all() as Array<{
+      for (const r of this.db.query(`SELECT handle, alias FROM sessions`).all() as Array<{
         handle: string;
+        alias: string;
       }>) {
-        taken.add(r.handle);
-      }
-      for (const r of this.db
-        .query(`SELECT alias FROM aliases WHERE ts_ms > ?`)
-        .all(heldSince) as Array<{ alias: string }>) {
+        taken.add(r.handle.toLowerCase());
         if (r.alias !== "") taken.add(r.alias.toLowerCase());
       }
-      for (const r of this.db
-        .query(`SELECT DISTINCT agent FROM edits WHERE ts_ms > ? AND agent != ''`)
-        .all(heldSince) as Array<{ agent: string }>) {
-        taken.add(r.agent.toLowerCase());
-      }
-      for (const r of this.db
-        .query(`SELECT handle FROM messages WHERE ts_ms > ?`)
-        .all(heldSince) as Array<{ handle: string }>) {
-        taken.add(r.handle);
-      }
-      // A CONVERSATION COMING BACK KEEPS ITS NAME. `SessionEnd` deletes the row
-      // on a clean exit, so `--continue` and a relaunch arrive here as if new —
-      // and handing out a fresh name is exactly the moving label the given name
-      // exists to replace. Observed live: `adela` returned as `akira` mid-work.
-      //
-      // Taken by another LIVE session wins over the reservation: two agents on
-      // one name makes every `msg` to it ambiguous, and the newcomer having a
-      // prior claim to it does not change that.
-      // Bounded by the SAME hold as everything else: a conversation resumed
-      // within `nameReuseMs` keeps its name, one resumed next week takes a
-      // fresh one. Unbounded, a name could never return to the pool, which is
-      // the failure the hold exists to prevent from the other direction.
-      const remembered = this.db
-        .query(`SELECT alias FROM aliases WHERE session_id = ?`)
-        .get(sessionId) as { alias: string } | null;
-      const mine = taken.has((remembered?.alias ?? "").toLowerCase()) ? remembered!.alias : "";
-      const stillFree =
+      for (const name of this.owners.reserved(liveIds)) taken.add(name);
+
+      // A returning conversation keeps its name permanently: the roster row is
+      // always gone by now (clean exit deletes it, pruneStale reaps it), so the
+      // ledger is what remembers, keyed on the uuid. See ownership.ts.
+      const mine = this.owners.nameFor(sessionId);
+      // Should be unreachable now that `taken` holds every reserved name, but
+      // two agents on one name makes `msg` ambiguous — and a restored backup
+      // can genuinely disagree with the ledger.
+      const heldByPeer =
         mine !== "" &&
-        (this.db
+        this.db
           .query(
-            `SELECT 1 AS hit FROM sessions WHERE LOWER(handle) = LOWER(?) OR LOWER(alias) = LOWER(?)`,
+            `SELECT 1 FROM sessions WHERE session_id != ?
+              AND (LOWER(handle) = LOWER(?) OR LOWER(alias) = LOWER(?)) LIMIT 1`,
           )
-          .get(mine, mine) as { hit: number } | null) === null;
-      const handle = stillFree ? mine : pickName(taken);
+          .get(sessionId, mine, mine) !== null;
+      const handle = mine !== "" && !heldByPeer ? mine : pickName(taken);
       this.db
         .query(
           `INSERT INTO sessions
@@ -105,6 +86,9 @@ export class SessionStore {
            VALUES (?, ?, ?, ?, '', ?, ?, (SELECT COALESCE(MAX(id), 0) FROM messages))`,
         )
         .run(sessionId, handle, worktree, branch, nowMs, nowMs);
+      // Every assignment, not just hand-picked names — the half `aliases` never
+      // did, and why it cannot answer "who was this conversation?".
+      this.owners.claim(sessionId, handle, nowMs);
       return handle;
     });
     // IMMEDIATE, not DEFERRED: a deferred transaction still starts read-only and
@@ -181,6 +165,10 @@ export class SessionStore {
       this.db.query(
         `INSERT OR REPLACE INTO aliases (session_id, alias, ts_ms) VALUES (?, ?, ?)`,
       ).run(sessionId, normalized, nowMs);
+      // A name chosen by hand is the STRONGEST ownership claim there is, so the
+      // ledger follows it. Without this the conversation would come back under
+      // the handle it was assigned rather than the name it picked.
+      this.owners.claim(sessionId, normalized, nowMs);
       return normalized;
     });
     return set.immediate();

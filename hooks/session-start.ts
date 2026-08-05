@@ -50,6 +50,9 @@ async function main(): Promise<void> {
   // is rare and already slow, and this is the moment the roster is read.
   const agents = listAgents();
 
+  // `project.root` because this is where a name is ASSIGNED, and both halves of
+  // that — who this conversation is, and what is free — are answered from the
+  // transcripts on disk. See `core/store/ownership.ts`.
   const report = withStore(project.dbPath, (store) => {
     const now = Date.now();
     store.pruneStale(now);
@@ -96,7 +99,7 @@ async function main(): Promise<void> {
     // roster line survived the budget.
     const peerCount = store.liveSessions(now).filter((s) => s.sessionId !== sessionId).length;
     return { text: renderBlock(packed.lines), name: me, peerCount, packed, continuing, now };
-  });
+  }, project.root);
 
   emit(
     "SessionStart",

@@ -30,6 +30,7 @@ import { ObligationStore } from "../obligations.ts";
 import { collectStats } from "../stats.ts";
 import type { Stats } from "../stats.ts";
 import { openDb } from "./schema.ts";
+import { liveConversations, OwnershipStore, projectTranscriptDir } from "./ownership.ts";
 import { ActivityStore } from "./activity.ts";
 import { hasUnreadMessages, MessageStore, type StoreDiagnostic } from "./messages.ts";
 import { InjectionStore, type FeatureEventInput } from "./injection.ts";
@@ -75,10 +76,16 @@ export function hasUnread(
  * Every hook is a short-lived process: open, do one unit of work, close. The
  * `finally` matters because a leaked WAL handle stops -wal checkpointing.
  */
-export function withStore<T>(dbPath: string, fn: (s: Store) => T): T {
+export function withStore<T>(
+  dbPath: string,
+  fn: (s: Store) => T,
+  /** Repo root, for the transcript dir that decides name ownership. Omitted
+   * by read-only callers, where the readdir would answer nothing. */
+  projectRoot = "",
+): T {
   const db = openDb(dbPath);
   try {
-    const result = fn(new Store(db));
+    const result = fn(new Store(db, projectRoot));
     if (result !== null && (typeof result === "object" || typeof result === "function") && "then" in result) {
       throw new TypeError("withStore callback must be synchronous");
     }
@@ -101,13 +108,19 @@ export class Store {
   readonly questions: QuestionStore;
   readonly obligations: ObligationStore;
 
+  /** Which conversation owns which name. See `ownership.ts`. */
+  readonly owners: OwnershipStore;
+  private readonly transcriptDirPath: string;
+
   // Sub-stores are stateless wrappers over the one connection: built once, not
   // per access, so `store.work` is a field read rather than an allocation.
-  constructor(private readonly db: Database) {
+  constructor(private readonly db: Database, projectRoot = "") {
     this.activity = new ActivityStore(db, MINION_STALE_MS, STALE_MS);
     this.injection = new InjectionStore(db);
     this.messages = new MessageStore(db, MAX_MESSAGES, CLAIM_REANNOUNCE_MS);
-    this.sessions = new SessionStore(db, STALE_MS);
+    this.transcriptDirPath = projectRoot === "" ? "" : projectTranscriptDir(projectRoot);
+    this.sessions = new SessionStore(db, STALE_MS, this.transcriptDirPath);
+    this.owners = new OwnershipStore(db);
     this.work = new WorkStore(db);
     this.diary = new DiaryStore(db);
     this.questions = new QuestionStore(db);
@@ -474,6 +487,12 @@ export class Store {
   pruneStale(nowMs: number): void {
     const cutoff = nowMs - STALE_MS;
     const editCutoff = nowMs - EDIT_KEEP_MS;
+    // Names are released by DELETION, never by this sweep: reaping means "not
+    // at the keyboard" (90 min), owning a name means "this conversation
+    // exists". Conflating them is what renamed hopper to akari, 2026-08-05.
+    if (this.transcriptDirPath !== "") {
+      this.owners.release(liveConversations(this.transcriptDirPath));
+    }
     const prune = this.db.transaction(() => {
       // `sessions` is deleted LAST so the subqueries above still see every dead
       // row; deleting it first strands the claims and tasks it just removed.

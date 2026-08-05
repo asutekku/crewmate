@@ -233,6 +233,35 @@ export class PersonalStore {
     return rows.map(toMemory);
   }
 
+  /**
+   * What THIS CONVERSATION learned, by uuid, falling back to its lineage.
+   *
+   * The uuid is the durable key (user ruling, 2026-08-05): knowledge belongs to
+   * the conversation, so a rename cannot orphan it. MEASURED: hopper's memory
+   * was keyed `lineage = 'hopper'` and vanished when it returned as `akari`.
+   *
+   * The lineage arm is not legacy support — a disciple inherits by NAME
+   * (`cli.ts inherit hopper`), which the uuid alone could not express.
+   */
+  forConversation(
+    sessionId: string,
+    lineage: string,
+    project: string,
+    opts: { allProjects?: boolean } = {},
+  ): Memory[] {
+    const scope = opts.allProjects ? `` : ` AND (is_global = 1 OR project = ?)`;
+    const args: Array<string> = opts.allProjects
+      ? [sessionId, lineage]
+      : [sessionId, lineage, project];
+    const rows = this.db
+      .query(
+        `SELECT * FROM memories WHERE (session_id = ? OR (lineage != '' AND lineage = ?))${scope}
+          ORDER BY id`,
+      )
+      .all(...args) as Array<Record<string, string | number>>;
+    return rows.map(toMemory);
+  }
+
   /** Lineages with anything recorded, newest first — what `inherit` picks from. */
   lineages(): Array<{ lineage: string; agents: string[]; count: number; lastMs: number }> {
     const rows = this.db

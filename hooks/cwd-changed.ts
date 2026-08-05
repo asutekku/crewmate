@@ -44,7 +44,7 @@ async function main(): Promise<void> {
     // creating a row, so this is the same path SessionStart uses.
     store.register(sessionId, tree, branch, now);
     store.setBaseDistance(sessionId, distance?.behind ?? -1, base);
-  });
+  }, project.root);
 }
 
 await runHook(import.meta.file, main);

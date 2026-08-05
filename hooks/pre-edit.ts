@@ -465,7 +465,7 @@ async function main(): Promise<void> {
     // diary is background about the folder. A reader skimming gets the urgent
     // half without having to pass the reference half.
     return [...lines, ...(diary.length > 0 ? ["", ...diary] : [])].join("\n");
-  });
+  }, project.root);
 
   if (!notice) return;
   // The status line names the OVERLAP only when there is one — a diary pointer

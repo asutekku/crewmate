@@ -203,6 +203,6 @@ describe("config", () => {
     // shorter than the work board's would make blame the first thing to expire.
     expect(DEFAULTS.editKeepMs).toBeGreaterThan(DEFAULTS.workKeepMs);
     expect(DEFAULTS.editKeepMs).toBeGreaterThan(DEFAULTS.staleMs);
-    expect(DEFAULTS.editKeepMs).toBeGreaterThan(DEFAULTS.nameReuseMs);
+    expect(DEFAULTS.editKeepMs).toBeGreaterThan(DEFAULTS.claimTtlMs);
   });
 });

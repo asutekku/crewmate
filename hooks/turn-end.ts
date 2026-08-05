@@ -38,7 +38,10 @@ async function main(): Promise<void> {
   // Present from v2.1.145; absent on older versions, which read as "not paused".
   const background = payload.background_tasks ?? [];
 
-  const report = withStore(resolveProject(cwd).dbPath, (store) => {
+  // Bound to a local because the root is needed twice: once for the db, once so
+  // a re-registering session can be recognised by name (see `ownership.ts`).
+  const project = resolveProject(cwd);
+  const report = withStore(project.dbPath, (store) => {
     const now = Date.now();
     store.touch(sessionId, now);
     // Re-registers a reaped session: a turn ending proves it is alive, and a
@@ -80,7 +83,7 @@ async function main(): Promise<void> {
     lines.push(...formatMessages(unread, now));
     lines.push("", TRUST_NOTE);
     return { text: lines.join("\n"), count: unread.length };
-  });
+  }, project.root);
 
   if (!report) return;
   emit("Stop", report.text, `presence: ${report.count} message(s) for you`);

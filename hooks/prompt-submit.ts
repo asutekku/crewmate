@@ -223,7 +223,7 @@ async function main(): Promise<void> {
     if (stale.length > 0) lines.push("", ...stale);
     if (questionText.length > 0) lines.push("", ...questionText);
     return { text: lines.join("\n"), count: unread.length, stale: stale.length };
-  });
+  }, project.root);
 
   if (!report) return;
   const what =

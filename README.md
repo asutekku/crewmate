@@ -324,7 +324,6 @@ and defaults apply **per field** so one bad line cannot revert the rest.
 | `staleMs`           | 90 min  | a session with no heartbeat is treated as gone        |
 | `claimTtlMs`        | 2 h     | how long a claim means "I am working on this"         |
 | `claimReannounceMs` | 30 min  | how long an overlap announcement stays "already said" |
-| `nameReuseMs`       | 60 h    | how long a given name is held after last use          |
 | `workKeepMs`        | 7 days  | how long a **closed** work record is kept             |
 | `editKeepMs`        | 30 days | how long edit history is kept                         |
 
@@ -448,9 +447,25 @@ one is kept 7 days (`board --all`) and then pruned with its steps and events.
 ## Naming an agent
 
 Every agent gets a **given name** at registration — `luna`, `vega`, `rowan` —
-drawn from a pool of 280 and held for 60 hours after it was last seen. That is
-what peers type (`msg luna`), and it is stated to the agent at session start,
-because a name nobody is told is just a database column.
+drawn from a pool of 280. That is what peers type (`msg luna`), and it is stated
+to the agent at session start, because a name nobody is told is just a database
+column.
+
+**A name belongs to the conversation, for as long as the conversation exists.**
+Resume a discussion after a month and the same agent answers: the name is keyed
+on the conversation uuid in `name_owners`, and the only thing that returns it to
+the pool is deleting the conversation itself. Nothing expires on a timer — an
+agent that went quiet for a week is still who it was, and a new session can
+never be handed a name a surviving conversation owns.
+
+That is a deliberate reversal. The name used to be held for 60 hours after last
+use, which answered a *pool* question ("may a stranger take this yet?") with the
+same number as an *identity* one ("is this still hopper?"). Identity lost:
+session `c5ce05bc` was reaped after 90 idle minutes and came back 68 hours later
+as `akari`, mid-conversation. Worse, it had never really been the reservation
+deciding — a name survived only while its agent's `edits` rows stayed inside the
+window, so a conversation kept its identity by *editing files recently* and a
+quieter one lost it sooner.
 
 Beside it sits a **role**: what the agent is _for_.
 

@@ -335,12 +335,14 @@ export function sessionEnvelope(store: Store, input: EnvelopeInputs): Envelope {
   // room), and the whole difference between an agent that remembers how you
   // work and one that does not.
   //
-  // Titles only, and only this LINEAGE's — Hopper's read of the operator is not
-  // Luna's, deliberately. Keyed on the lineage rather than the uuid so a
-  // successor arrives already knowing what its predecessor learned.
+  // Titles only, and only this agent's. Keyed on the CONVERSATION first so a
+  // rename cannot orphan it, its lineage second so a disciple still inherits —
+  // keying on the name alone lost hopper's memory. See `forConversation`.
   const inherited = input.lineageFrom;
   const lineage = inherited !== "" ? inherited : lineageKey(me, sessionId);
-  const mine = withPersonal((personal) => personal.forLineage(lineage, projectName));
+  const mine = withPersonal((personal) =>
+    personal.forConversation(sessionId, lineage, projectName),
+  );
   if (mine.length > 0) {
     // WHOSE knowledge, when it is not your own. An inherited belief is by
     // construction unverified by its inheritor, and a reader who cannot tell

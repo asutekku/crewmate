@@ -103,24 +103,19 @@ describe("a departed agent's name is not handed to a stranger", () => {
     });
   });
 
-  test("the hold expires, so a long-running machine cannot exhaust the pool", () => {
-    // A name must come back eventually. Every source of the reservation is
-    // bounded by `nameReuseMs`, including the `aliases` row — which had NO
-    // timestamp at all until this audit, so a remembered name was held against
-    // the pool forever. That is the same failure the hold prevents, from the
-    // other direction.
+  test("distinct sessions never share a name, however many arrive", () => {
+    // THE POOL IS NO LONGER FREED BY A CLOCK (user ruling, 2026-08-05): a name
+    // is held for as long as its conversation exists on disk, so the old
+    // "the hold expires" guarantee is deliberately gone — see
+    // `core/store/ownership.ts`. What must still hold is the invariant that
+    // made the hold worth having: no two sessions answering to one name, which
+    // would make every `msg` to it ambiguous.
     //
-    // Asserted by asking the store directly rather than through `unregister`,
-    // which stamps the alias row with the real clock and so cannot be backdated.
+    // Exhaustion is handled rather than prevented — `pickName` falls through to
+    // suffixed names — so this asserts distinctness past the point where a
+    // 280-name pool would have to start suffixing, not that the pool is free.
     fresh((store) => {
       const now = Date.now();
-      const ancient = now - 100 * 60 * 60 * 1000; // 100 h — past the 60 h hold
-      store.register("old", MAIN, "master", ancient);
-      store.setAlias("old", "vega", ancient);
-      store.unregister("old");
-
-      // The alias row exists but its age is what decides; a fresh session may
-      // take a name whose hold has run out.
       const names = new Set<string>();
       for (let i = 0; i < 40; i++) names.add(store.register(`s${i}`, MAIN, "master", now));
       expect(names.size).toBe(40);

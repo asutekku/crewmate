@@ -5,6 +5,7 @@ import { createWorkTables } from "../work.ts";
 import { createDiaryTables } from "../diary.ts";
 import { createQuestionTables } from "../questions.ts";
 import { createObligationTables } from "../obligations.ts";
+import { OwnershipStore } from "./ownership.ts";
 
 interface ColumnMigration {
   readonly table: string;
@@ -259,12 +260,20 @@ export function openDb(dbPath: string): Database {
     CREATE TABLE IF NOT EXISTS aliases (
       session_id TEXT PRIMARY KEY,
       alias      TEXT NOT NULL,
-      -- When the name was last in use. Without it the reservation was
-      -- UNBOUNDED: a name remembered here was held against the pool forever,
-      -- which is the same failure the 60 h hold exists to prevent, from the
-      -- other direction.
+      -- When the name was last chosen. NO LONGER BOUNDS THE RESERVATION --
+      -- name_owners decides that against the transcripts on disk.
       ts_ms      INTEGER NOT NULL DEFAULT 0
     );
+    -- WHO OWNS A NAME. One row per named conversation, written on EVERY
+    -- assignment -- unlike aliases, which records only hand-picked names.
+    -- Released when the transcript leaves disk, never on a timer: see
+    -- ownership.ts.
+    CREATE TABLE IF NOT EXISTS name_owners (
+      session_id TEXT PRIMARY KEY,
+      name       TEXT NOT NULL,
+      claimed_ms INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS name_owners_name ON name_owners (name);
     -- Subagents. NOT roster rows, and the distinction is the whole design: a
     -- minion never registers, never takes a name from the pool, and cannot be
     -- addressed -- only its parent can spawn or reach one, so msg resolving a
@@ -312,5 +321,8 @@ export function openDb(dbPath: string): Database {
        ON injection_ledger (session_id, delivery_id DESC)`,
   ).run();
   db.exec(`CREATE INDEX IF NOT EXISTS work_plan ON work (plan_doc) WHERE plan_doc != ''`);
+  // AFTER the migrations, since it reads columns they may have just added.
+  // Idempotent, so it runs on every open rather than needing a version flag.
+  new OwnershipStore(db).backfill(Date.now());
   return db;
 }
