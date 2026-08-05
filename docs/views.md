@@ -206,6 +206,32 @@ fix lands in the middle of a core retirement, and collapsing those into one line
 loses both. A bare command means **the most recently touched item**; a subject
 substring picks another (`crew done sliver`).
 
+### What each agent is doing
+
+Rows are grouped by state, so "who needs me" is answered by position rather than
+by comparing timestamps:
+
+| Glyph | State | Means |
+| ----- | ----- | ----- |
+| `⏸` | needs you | a permission prompt is open |
+| `●` | running | heartbeat newer than the last turn end |
+| `◐` | at a prompt | the turn ended and nothing followed |
+| `○` | gone | no live session row |
+
+**Derived, never sampled.** Claude Code's own `idle`/`busy` costs ~950 ms, so it
+is refreshed only when `who` runs — measured 2026-08-05, a session read
+`status = busy` while its heartbeat and last turn end were both 127 s old. The
+heartbeat updates on *every* hook, so comparing it to the turn boundary is both
+free and fresher.
+
+**There is no "stalled".** A crashed session and an abandoned one both simply
+stop firing hooks, and nothing records an exit code or a failing test. A fourth
+state would be invented, and an invented alarm is worse than none.
+
+A running agent whose *item* is old is a real combination, not a contradiction:
+the state describes the session, the age describes the checklist. An agent can
+work for days without touching its plan.
+
 ### Unfinished work whose agent has gone
 
 An open item whose session is no longer live gets the conversation that owns it:

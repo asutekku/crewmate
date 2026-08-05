@@ -261,6 +261,9 @@ export class Store {
   setBlocked(sessionId: string, blocked: string): void {
     this.sessions.setBlocked(sessionId, blocked);
   }
+  endTurn(sessionId: string, nowMs: number): void {
+    this.sessions.endTurn(sessionId, nowMs);
+  }
   syncAgents(agents: ReadonlyArray<{ sessionId: string; name: string; status: string }>): void {
     this.sessions.syncAgents(agents);
   }

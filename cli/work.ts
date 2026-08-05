@@ -19,6 +19,7 @@ import {
 } from "../core/store.ts";
 import {
   agentKey,
+  agentState,
   BOARD_OPEN_SHOWN,
   foldEvents,
   normalisePlanPath,
@@ -26,6 +27,7 @@ import {
   progress,
   type WorkEvent,
   type WorkItem,
+  type AgentState,
   type WorkStep,
 } from "../core/work.ts";
 import { briefAgo } from "../core/board.ts";
@@ -123,7 +125,26 @@ interface BoardAgentView {
   readonly tally: string;
   readonly items: readonly WorkItemView[];
   readonly hidden: number;
+  readonly state: AgentState;
 }
+
+/**
+ * Section order, and what each glyph claims.
+ *
+ * `waiting` leads because it is the only state that asks something OF YOU. Then
+ * running, then the two that need a decision. There is no `stalled`: see
+ * `agentState` for why the tool cannot honestly report one.
+ */
+const STATE_SECTIONS: ReadonlyArray<{
+  readonly state: AgentState;
+  readonly title: string;
+  readonly glyph: string;
+}> = [
+  { state: "waiting", title: "NEEDS YOU", glyph: "⏸" },
+  { state: "busy", title: "RUNNING", glyph: "●" },
+  { state: "idle", title: "IDLE — at a prompt", glyph: "◐" },
+  { state: "gone", title: "GONE — pick up or drop", glyph: "○" },
+];
 
 interface BoardView {
   readonly agents: readonly BoardAgentView[];
@@ -264,7 +285,13 @@ export function collectBoardView(
   });
   const groups = new Map<
     string,
-    { name: string; open: number; closed: number; items: WorkItemView[] }
+    {
+      name: string;
+      open: number;
+      closed: number;
+      items: WorkItemView[];
+      state: AgentState;
+    }
   >();
   for (const view of views) {
     const { item } = view;
@@ -282,6 +309,16 @@ export function collectBoardView(
         open: 0,
         closed: 0,
         items: [],
+        state: agentState(
+          live
+            ? {
+                lastSeenMs: live.lastSeenMs,
+                blocked: live.blocked,
+                lastTurnMs: live.lastTurnMs,
+              }
+            : {},
+          nowMs,
+        ),
       };
       groups.set(item.agentId, group);
     }
@@ -305,11 +342,18 @@ export function collectBoardView(
       agents: [...groups.entries()].map(([agentId, group]) => {
         const shown = group.items.slice(0, BOARD_OPEN_SHOWN + group.closed);
         const shared = (timesUsed.get(group.name) ?? 0) > 1;
+        // `1 open` was on all seven rows and told a reader nothing while taking
+        // the right margin. A tally earns its place only when the count is not
+        // the one the section already implies.
+        const worthSaying = group.open !== 1 || group.closed > 0;
         return {
-          name: shared ? `${group.name} (${agentId.slice(-6)})` : group.name,
-          tally: agentTally(group.open, options.all || options.history ? group.closed : 0),
+          name: shared ? `${group.name}·${agentId.slice(-6)}` : group.name,
+          tally: worthSaying
+            ? agentTally(group.open, options.all || options.history ? group.closed : 0)
+            : "",
           items: shown,
           hidden: group.items.length - shown.length,
+          state: group.state,
         };
       }),
     },
@@ -327,28 +371,53 @@ function renderBoard(
     context.log(dim('  Agents open one with `crew doing "<subject>"`.'));
     return;
   }
-  for (const agent of view.agents) {
-    const gap = Math.max(1, width - 2 - [...agent.name].length - agent.tally.length);
+  // GROUPED BY STATE, so the question "who needs me" is answered by position
+  // rather than by comparing seven timestamps. `1 open` was on every row and
+  // carried no information; the tally now only appears when it says something.
+  const counts = STATE_SECTIONS.map(
+    (section) => view.agents.filter((a) => a.state === section.state).length,
+  );
+  const summary = STATE_SECTIONS.map((section, i) => ({ section, n: counts[i] ?? 0 }))
+    .filter((s) => s.n > 0)
+    .map((s) => `${s.n} ${s.section.state}`)
+    .join(" · ");
+  context.log(dim(`  ${summary}`));
+  for (const section of STATE_SECTIONS) {
+    const agents = view.agents.filter((agent) => agent.state === section.state);
+    if (agents.length === 0) continue;
     context.log("");
-    context.log(
-      `  ${bold(handleColour(agent.name)(agent.name))}${" ".repeat(gap)}${dim(agent.tally)}`,
-    );
-    for (const item of agent.items) {
-      const fold = foldEvents(item.events);
-      for (const line of itemLines(
-        item.item,
-        item.steps,
-        fold,
-        nowMs,
-        width,
-        BOARD_PAINT,
-        resumeContext(item),
-      ))
-        context.log(line);
+    context.log(dim(section.title));
+    for (const agent of agents) {
+      const label = bold(handleColour(agent.name)(`${section.glyph} ${agent.name}`));
+      // No tally means no padding either — a run of spaces to the right margin
+      // is invisible until it lands in a diff or a paste.
+      const line =
+        agent.tally === ""
+          ? `  ${label}`
+          : `  ${label}${" ".repeat(
+              Math.max(1, width - 2 - [...`${section.glyph} ${agent.name}`].length - agent.tally.length),
+            )}${dim(agent.tally)}`;
+      context.log(line);
+      for (const item of agent.items) {
+        const fold = foldEvents(item.events);
+        for (const line of itemLines(
+          item.item,
+          item.steps,
+          fold,
+          nowMs,
+          width,
+          BOARD_PAINT,
+          resumeContext(item),
+        ))
+          context.log(line);
+      }
+      if (agent.hidden > 0) context.log(dim(`    +${agent.hidden} more`));
     }
-    if (agent.hidden > 0) context.log(dim(`    +${agent.hidden} more`));
   }
   context.log("");
+  context.log(
+    dim("  ● running   ⏸ needs you   ◐ at a prompt   ○ gone   — no plan recorded"),
+  );
   if (view.closedHidden > 0)
     context.log(dim(`  ${view.closedHidden} closed — \`board --all\` to include them`));
 }

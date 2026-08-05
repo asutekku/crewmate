@@ -142,6 +142,15 @@ export interface Session {
   readonly summary: string;
   readonly summaryMs: number;
   readonly lastSeenMs: number;
+  /**
+   * When this conversation last ENDED a turn; 0 if it never has.
+   *
+   * Compared against `lastSeenMs` it separates mid-turn from sat-at-a-prompt.
+   * Keyed by session rather than read off the `done` messages, which carry only
+   * a handle — and handles are reused, so a session would inherit the turn ends
+   * of whoever held its name before it. See `agentState`.
+   */
+  readonly lastTurnMs: number;
   readonly startedMs: number;
 }
 

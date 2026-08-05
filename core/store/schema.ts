@@ -24,6 +24,10 @@ const COLUMN_MIGRATIONS = [
   ["sessions", "behind_base", "INTEGER NOT NULL DEFAULT -1"],
   ["sessions", "base_branch", "TEXT NOT NULL DEFAULT ''"],
   ["sessions", "lineage_from", "TEXT NOT NULL DEFAULT ''"],
+  // When this CONVERSATION last ended a turn. The `done` message says the same
+  // thing but is keyed by handle, and handles are reused — a session inherits
+  // the turn ends of whoever held its name before. Keyed here, it cannot.
+  ["sessions", "last_turn_ms", "INTEGER NOT NULL DEFAULT 0"],
   ["aliases", "ts_ms", "INTEGER NOT NULL DEFAULT 0"],
   ["injection_omissions", "state_ver", "TEXT NOT NULL DEFAULT ''"],
   ["feature_events", "delivery_id", "INTEGER NOT NULL DEFAULT 0"],

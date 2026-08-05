@@ -48,6 +48,10 @@ async function main(): Promise<void> {
     // long turn that ran no Edit/Write heartbeats only once, at its start.
     const handle = store.handleForOrRegister(sessionId, worktreeRoot(cwd), currentBranch(cwd), now);
     if (!handle) return null;
+    // SAME `now` as the heartbeat above, and after the register so the row is
+    // certain to exist. Equal timestamps are what make `agentState` read this
+    // as "the turn is over" rather than "mid-turn".
+    store.endTurn(sessionId, now);
 
     // What this turn actually touched, from the claims it recorded. The
     // assistant's own words are NOT republished — same leak class as user

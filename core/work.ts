@@ -765,6 +765,68 @@ export interface WorkFold {
   readonly status: string;
 }
 
+/**
+ * What an agent is doing, so far as rows this tool WROTE can say.
+ *
+ * THREE STATES, NOT FOUR. There is deliberately no "stalled": a session that
+ * crashed and one abandoned at a prompt both simply stop firing hooks, and
+ * nothing captures an exit code or a failing test. A fourth state would be a
+ * promise the data cannot keep, and a board is worse than useless if you act
+ * on its most alarming cell and it was invented.
+ */
+export type AgentState = "waiting" | "busy" | "idle" | "gone";
+
+/**
+ * Heartbeat age past which a session with NO recorded turn end reads as idle.
+ *
+ * Only the fallback path uses it; once a session ends one turn the comparison
+ * against `lastTurnMs` is exact and this stops mattering. MEASURED 2026-08-05
+ * over 307 intra-session hook gaps in this repo: p50 21 s, p90 134 s, p95
+ * 324 s. Five minutes sits just above p95, so a genuinely working agent is
+ * rarely mislabelled, and the error direction is the safe one — an idle mark
+ * invites a look, a busy mark discourages one.
+ */
+const BUSY_HEARTBEAT_MS = 5 * 60 * 1000;
+
+/** The facts a state is read off. All three are written by hooks. */
+export interface StateEvidence {
+  /** Absent when no live session row exists — the agent has left. */
+  readonly lastSeenMs?: number;
+  /** Non-empty only while a permission prompt is open; `touch` clears it. */
+  readonly blocked?: string;
+  /** `Session.lastTurnMs` — when this CONVERSATION last ended a turn. */
+  readonly lastTurnMs?: number;
+}
+
+/**
+ * DERIVED, NEVER SAMPLED. `sessions.status` holds Claude Code's own idle/busy,
+ * but it is only refreshed when `who` runs (~950 ms), so the board would either
+ * pay that per read or print a stale glyph. Measured 2026-08-05: a session read
+ * `status = busy` while its heartbeat and its last `done` were both 127 s old —
+ * it had finished a turn. The heartbeat updates on EVERY hook, so comparing it
+ * to the turn boundary is both free and fresher.
+ *
+ * A heartbeat is "recently firing hooks", not "definitely computing": an agent
+ * thinking for minutes with no tool call reads as idle. `PostToolBatch` makes
+ * that rare, and over-reporting idle is the safe direction — it invites a look
+ * rather than discouraging one.
+ */
+export function agentState(evidence: StateEvidence, nowMs: number): AgentState {
+  if (evidence.lastSeenMs === undefined) return "gone";
+  if ((evidence.blocked ?? "") !== "") return "waiting";
+  const turn = evidence.lastTurnMs ?? 0;
+  // NO TURN EVER RECORDED falls back to the heartbeat's own age. `last_turn_ms`
+  // is written at `Stop`, so it is 0 for every session that has not ended a
+  // turn since the column landed — and reading 0 as "no turn end yet" made
+  // every live agent, including one silent for 16 minutes, render as running.
+  // A heartbeat this old cannot be a turn in progress: hooks fire far oftener.
+  if (turn === 0) return nowMs - evidence.lastSeenMs > BUSY_HEARTBEAT_MS ? "idle" : "busy";
+  // A turn end AT OR AFTER the last heartbeat means the turn is over. Equal
+  // timestamps are the ordinary case, not an edge one: `turn-end.ts` touches
+  // the session and records the turn in the same run, with one `now`.
+  return turn >= evidence.lastSeenMs ? "idle" : "busy";
+}
+
 export function foldEvents(events: readonly WorkEvent[]): WorkFold {
   const landed: string[] = [];
   let breaks: string[] = [];

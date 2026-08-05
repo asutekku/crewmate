@@ -4,7 +4,8 @@ import { pickName } from "../names.ts";
 import { liveConversations, OwnershipStore } from "./ownership.ts";
 
 export const SESSION_COLUMNS = `session_id, handle, name, alias, role, status, blocked, worktree, branch,
-  behind_base, base_branch, lineage_from, intent, title, summary, summary_ms, last_seen_ms, started_ms`;
+  behind_base, base_branch, lineage_from, intent, title, summary, summary_ms, last_seen_ms, started_ms,
+  last_turn_ms`;
 
 export function rowToSession(row: Record<string, string | number>): Session {
   return {
@@ -17,6 +18,7 @@ export function rowToSession(row: Record<string, string | number>): Session {
     intent: String(row["intent"]), title: String(row["title"] ?? ""),
     summary: String(row["summary"] ?? ""), summaryMs: Number(row["summary_ms"] ?? 0),
     lastSeenMs: Number(row["last_seen_ms"]), startedMs: Number(row["started_ms"]),
+    lastTurnMs: Number(row["last_turn_ms"] ?? 0),
   };
 }
 
@@ -128,6 +130,18 @@ export class SessionStore {
   /** Heartbeat. Clears `blocked` too: a session doing something is not stuck. */
   touch(sessionId: string, nowMs: number): void {
     this.db.query(`UPDATE sessions SET last_seen_ms = ?, blocked = '' WHERE session_id = ?`)
+      .run(nowMs, sessionId);
+  }
+
+  /**
+   * Records that this conversation just ended a turn.
+   *
+   * Written beside the heartbeat at `Stop`, with the SAME timestamp, so the two
+   * compare exactly: `last_turn_ms >= last_seen_ms` is "the turn is over" and
+   * anything newer on the heartbeat is "mid-turn". See `agentState`.
+   */
+  endTurn(sessionId: string, nowMs: number): void {
+    this.db.query(`UPDATE sessions SET last_turn_ms = ? WHERE session_id = ?`)
       .run(nowMs, sessionId);
   }
 

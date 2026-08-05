@@ -13,7 +13,14 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, test } from "bun:test";
 
 import { withStore } from "../core/store.ts";
-import { agentKey, foldEvents, parsePlan, progress, WORK_KEEP_MS } from "../core/work.ts";
+import {
+  agentKey,
+  agentState,
+  foldEvents,
+  parsePlan,
+  progress,
+  WORK_KEEP_MS,
+} from "../core/work.ts";
 import { collectBoardView } from "../cli/work.ts";
 import { projectTranscriptDir } from "../core/store/ownership.ts";
 
@@ -1071,8 +1078,8 @@ describe("the board when a name has been reused", () => {
       expect(names).toEqual(
         [
           "adela",
-          `akira (${older.slice(-6)})`,
-          `akira (${newer.slice(-6)})`,
+          `akira·${older.slice(-6)}`,
+          `akira·${newer.slice(-6)}`,
         ].sort(),
       );
     });
@@ -1168,5 +1175,60 @@ describe("picking up an agent's unfinished work", () => {
       if (!result.ok) throw new Error("board did not build");
       expect(result.view.agents.flatMap((a) => a.items)[0]?.resumeId).toBeUndefined();
     });
+  });
+});
+
+describe("what an agent is doing, read off rows the tool wrote", () => {
+  const NOW = 1_700_000_000_000;
+  const MIN = 60_000;
+
+  test("no session row at all is gone", () => {
+    // The state that earns the resume line: the conversation is not running.
+    expect(agentState({}, NOW)).toBe("gone");
+  });
+
+  test("a permission prompt outranks everything else", () => {
+    // The only state that asks something OF the operator, so it leads the board
+    // even when the heartbeat says the session is otherwise mid-turn.
+    expect(
+      agentState({ lastSeenMs: NOW, blocked: "waiting for permission approval" }, NOW),
+    ).toBe("waiting");
+  });
+
+  test("a heartbeat NEWER than the last turn end is mid-turn", () => {
+    expect(agentState({ lastSeenMs: NOW, lastTurnMs: NOW - MIN }, NOW)).toBe("busy");
+  });
+
+  test("a turn end at the SAME instant as the heartbeat is idle", () => {
+    // Not an edge case: turn-end.ts touches the session and records the turn in
+    // one run with one `now`, so equality is the ordinary turn boundary. Read
+    // as busy, every agent sitting at a prompt would look like it was working.
+    expect(agentState({ lastSeenMs: NOW, lastTurnMs: NOW }, NOW)).toBe("idle");
+  });
+
+  test("with NO turn ever recorded, a stale heartbeat still reads idle", () => {
+    // `last_turn_ms` is 0 for every session that has not ended a turn since the
+    // column landed. Trusting 0 as "no turn yet, so it must be working" put a
+    // session silent for 16 minutes in RUNNING on the live board.
+    expect(agentState({ lastSeenMs: NOW - 3 * 24 * 60 * MIN, lastTurnMs: 0 }, NOW)).toBe("idle");
+    expect(agentState({ lastSeenMs: NOW - 10_000, lastTurnMs: 0 }, NOW)).toBe("busy");
+  });
+
+  test("blocked is transient, so answering the prompt returns it to busy", () => {
+    // `touch` clears `blocked` on the next hook — the flag cannot latch.
+    expect(agentState({ lastSeenMs: NOW, blocked: "", lastTurnMs: NOW - MIN }, NOW)).toBe("busy");
+  });
+
+  test("there is no state for a crashed agent, deliberately", () => {
+    // A crash and an abandonment are INDISTINGUISHABLE here: both stop firing
+    // hooks and neither writes an exit code. A "stalled" row would be invented,
+    // and a board is worse than useless if you act on its most alarming cell.
+    const states = new Set([
+      agentState({}, NOW),
+      agentState({ lastSeenMs: NOW, lastTurnMs: NOW }, NOW),
+      agentState({ lastSeenMs: NOW, lastTurnMs: NOW - MIN }, NOW),
+      agentState({ lastSeenMs: NOW, blocked: "x" }, NOW),
+    ]);
+    expect([...states].sort()).toEqual(["busy", "gone", "idle", "waiting"]);
   });
 });
