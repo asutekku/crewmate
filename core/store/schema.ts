@@ -322,7 +322,12 @@ export function openDb(dbPath: string): Database {
   ).run();
   db.exec(`CREATE INDEX IF NOT EXISTS work_plan ON work (plan_doc) WHERE plan_doc != ''`);
   // AFTER the migrations, since it reads columns they may have just added.
-  // Idempotent, so it runs on every open rather than needing a version flag.
-  new OwnershipStore(db).backfill(Date.now());
+  // Idempotent, so they run on every open rather than needing a version flag.
+  // `dedupe` FIRST: it repairs ledgers seeded before `backfill` enforced one
+  // owner per name, and backfilling onto a ledger that still holds duplicates
+  // would read a `claimed` map that disagrees with itself.
+  const owners = new OwnershipStore(db);
+  owners.dedupe();
+  owners.backfill(Date.now());
   return db;
 }

@@ -14,6 +14,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 
 import { withStore } from "../core/store.ts";
 import { agentKey, foldEvents, parsePlan, progress, WORK_KEEP_MS } from "../core/work.ts";
+import { collectBoardView } from "../cli/work.ts";
 
 let n = 0;
 const paths: string[] = [];
@@ -67,6 +68,24 @@ describe("agent identity", () => {
       );
       const found = w.target(agentKey("Something the model renamed it to later", id));
       expect(found?.workId).toBe(opened);
+    });
+  });
+
+  test("a renamed agent is credited under its name after its session row goes", () => {
+    // MEASURED 2026-08-05: `crew clear` empties `sessions`, and the board
+    // immediately re-rendered this agent's own open item as `akari` — a name
+    // it had been renamed away from two days earlier. The live-session
+    // subquery had been the ONLY resolution, so anything it could not answer
+    // fell straight back to the name frozen when the item was opened.
+    fresh((store) => {
+      const id = "c5ce05bc-4024-45ef-8cb0-67c0c08d323d";
+      const key = agentKey("", id);
+      store.work.open(key, "akari", "explore agent communication", [], 1000);
+      store.owners.claim(id, "hopper", 2000);
+
+      // The session row is gone; the ledger is not.
+      store.db.query(`DELETE FROM sessions`).run();
+      expect(store.work.items({ agentId: key })[0]?.agentName).toBe("hopper");
     });
   });
 
@@ -412,15 +431,34 @@ describe("who the board credits", () => {
     });
   });
 
-  test("an agent that has EXITED keeps the name it had", () => {
-    // The other half: with no live row to resolve against, the frozen copy is
-    // the only thing that can still say who did the work — which is the whole
-    // point of keeping closed records for a week.
+  test("an agent that has EXITED is still credited, from the ledger", () => {
+    // The other half: with no live row to resolve against, the work must still
+    // say who did it — the whole point of keeping closed records for a week.
+    //
+    // It resolves through `name_owners`, NOT the copy frozen at creation. This
+    // assertion used to demand `traffic-7c`, the disposable label passed in at
+    // `open`, and passed because the ledger was never consulted; the same gap
+    // made `crew clear` re-render a live agent under a name it had abandoned
+    // two days earlier. `register` ledgers the given name, so that is what an
+    // exited agent is owed.
+    fresh((store) => {
+      const now = Date.now();
+      const given = store.register(ID, "/tree", "master", now);
+      store.work.open(KEY, "traffic-7c", "some work", [], now);
+      store.unregister(ID);
+      expect(store.work.items({ agentId: KEY })[0]?.agentName).toBe(given);
+    });
+  });
+
+  test("a record whose conversation left the ledger keeps its frozen name", () => {
+    // The LAST fallback, and the reason the frozen column still exists: once
+    // `release` drops a conversation gone from disk, nothing else can name it.
     fresh((store) => {
       const now = Date.now();
       store.register(ID, "/tree", "master", now);
       store.work.open(KEY, "traffic-7c", "some work", [], now);
       store.unregister(ID);
+      store.db.query(`DELETE FROM name_owners`).run();
       expect(store.work.items({ agentId: KEY })[0]?.agentName).toBe("traffic-7c");
     });
   });
@@ -994,6 +1032,57 @@ describe("two processes, one db", () => {
       expect(open[0]?.subject).toBe("title-3");
       // One 'started' event, so `--history` cannot claim the work began 4 times.
       expect(w.events(open[0]?.workId ?? 0).filter((e) => e.kind === "started").length).toBe(1);
+    });
+  });
+});
+
+describe("the board when a name has been reused", () => {
+  test("two conversations that both used one name are told apart", () => {
+    // MEASURED LIVE 2026-08-05: `crew board` printed two `akira` headers, each
+    // with its own open item. Names return to the pool when a conversation
+    // ends, so two blocks under one name is a legitimate state of the data —
+    // and unreadable, because it looks like one agent listed twice.
+    fresh((store) => {
+      const now = Date.now();
+      const older = "session:1f4b2f83-3d6c-4636-940d-c6000c15ef97";
+      const newer = "session:1c77a134-1a87-4c1b-8917-c575fdf9473f";
+      store.work.open(older, "akira", "keep-clear moves into net/", [], now - 9000);
+      store.work.open(newer, "akira", "debug agent identity change", [], now);
+      store.work.open("session:solo-1", "adela", "refactor with KISS", [], now);
+
+      const result = collectBoardView(store, "", now, {
+        all: false,
+        history: false,
+        raw: false,
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const names = result.view.agents.map((a) => a.name).sort();
+      expect(names).toEqual(
+        [
+          "adela",
+          `akira (${older.slice(-6)})`,
+          `akira (${newer.slice(-6)})`,
+        ].sort(),
+      );
+    });
+  });
+
+  test("a name only one conversation holds is left plain", () => {
+    // The suffix is disambiguation, not decoration: paying it on every row
+    // would make the common case noisier to fix a case that is not present.
+    fresh((store) => {
+      const now = Date.now();
+      store.work.open("session:solo-1", "adela", "one", [], now);
+      store.work.open("session:solo-2", "ash", "two", [], now);
+      const result = collectBoardView(store, "", now, {
+        all: false,
+        history: false,
+        raw: false,
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.view.agents.map((a) => a.name).sort()).toEqual(["adela", "ash"]);
     });
   });
 });

@@ -209,6 +209,14 @@ export function createWorkTables(db: Database): void {
  *
  * The join is on the agent key, which is `session:<uuid>` — the conversation
  * uuid, so it still matches after a restart.
+ *
+ * THE LEDGER OUTRANKS THE FROZEN COPY, and both outrank nothing. `sessions`
+ * holds only LIVE rows, so resolving through it alone means an agent that has
+ * exited — or whose row was cleared — falls back to whatever name was frozen
+ * when the item was opened. Measured 2026-08-05: `crew clear` emptied
+ * `sessions` and one agent's own open item immediately re-rendered under a name
+ * it had been renamed away from two days earlier. `name_owners` is the durable
+ * answer to "what is this conversation called", so it sits between them.
  */
 const WORK_COLUMNS = `work.work_id, work.agent_id, work.subject, work.started_ms,
      work.closed_ms, work.outcome, work.updated_ms, work.asked_turn_ms, work.auto,
@@ -216,6 +224,8 @@ const WORK_COLUMNS = `work.work_id, work.agent_id, work.subject, work.started_ms
      COALESCE(NULLIF((SELECT COALESCE(NULLIF(s.alias, ''), NULLIF(s.handle, ''), s.name)
                         FROM sessions s
                        WHERE 'session:' || s.session_id = work.agent_id), ''),
+              NULLIF((SELECT o.name FROM name_owners o
+                       WHERE 'session:' || o.session_id = work.agent_id), ''),
               NULLIF(work.agent_name, ''), '') AS agent_name`;
 
 function rowToItem(r: Record<string, string | number>): WorkItem {

@@ -240,6 +240,56 @@ describe("name ownership", () => {
     expect(other).not.toBe(held);
   });
 
+  // MEASURED ON THE LIVE DB, 2026-08-05: `name_owners` held `akira` for two
+  // different sessions, so `crew board` printed two `akira` blocks — two agents
+  // as far as any reader could tell, each with its own open work. The schema
+  // cannot prevent it: `session_id` is the primary key and `name` carries only
+  // a non-unique index, and `INSERT OR IGNORE` deduplicates SESSIONS.
+  test("backfill will not give one name to two conversations", () => {
+    const path = dbPath();
+    const now = Date.now();
+    withStore(path, (store) => {
+      const insert = store.db.query(
+        `INSERT INTO aliases (session_id, alias, ts_ms) VALUES (?, ?, ?)`,
+      );
+      insert.run("older", "akira", now - 9000);
+      insert.run("newer", "akira", now - 100);
+      store.db.query(`DELETE FROM name_owners`).run();
+      store.owners.backfill(now);
+
+      const holders = store.db
+        .query(`SELECT session_id FROM name_owners WHERE name = 'akira'`)
+        .all() as Array<{ session_id: string }>;
+      expect(holders).toHaveLength(1);
+    });
+  });
+
+  test("dedupe keeps the newest claim and leaves single owners alone", () => {
+    const path = dbPath();
+    withStore(path, (store) => {
+      store.db.query(`DELETE FROM name_owners`).run();
+      const insert = store.db.query(
+        `INSERT INTO name_owners (session_id, name, claimed_ms) VALUES (?, ?, ?)`,
+      );
+      insert.run("old", "akira", 1000);
+      insert.run("new", "akira", 2000);
+      insert.run("solo", "adela", 1500);
+
+      expect(store.owners.dedupe()).toBe(1);
+      const rows = store.db
+        .query(`SELECT session_id, name FROM name_owners ORDER BY name`)
+        .all() as Array<{ session_id: string; name: string }>;
+      // `adela` must SURVIVE. The first draft used a correlated subquery whose
+      // inner `name` rebound to the inner scope, matching every row — it
+      // deleted the uncontested name too and left `akira` with no owner at all.
+      expect(rows).toEqual([
+        { session_id: "solo", name: "adela" },
+        { session_id: "new", name: "akira" },
+      ]);
+      expect(store.owners.dedupe()).toBe(0);
+    });
+  });
+
   test("transcriptDir strips the filename on both separators", () => {
     expect(transcriptDir("/home/u/.claude/projects/P/abc.jsonl")).toBe(
       "/home/u/.claude/projects/P",

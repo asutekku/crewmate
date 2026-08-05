@@ -84,6 +84,17 @@ export class OwnershipStore {
    *
    * Without it every conversation predating the ledger loses its name once —
    * the bug, reintroduced by the fix. Idempotent, so it runs on every open.
+   *
+   * ONE NAME, ONE OWNER — enforced HERE, because the table cannot. `session_id`
+   * is the primary key and `name` carries only a non-unique index, so nothing
+   * in the schema stops two conversations holding one name; `INSERT OR IGNORE`
+   * deduplicates SESSIONS and is blind to that. History is full of reused
+   * names: measured 2026-08-05 on this repo's live db, one backfill seeded 11
+   * rows in a single millisecond and gave `akira` to two different sessions,
+   * which rendered as two separate agents on the board, each with its own work.
+   *
+   * Newest claim wins, matching `claim()` — a name belongs to the conversation
+   * that answered to it most recently, and the older one has moved on.
    */
   backfill(nowMs: number): number {
     const seed = this.db.transaction((): number => {
@@ -99,13 +110,53 @@ export class OwnershipStore {
            FROM sessions
           ORDER BY ts_ms ASC`,
       ).all() as Array<{ session_id: string; name: string }>;
+      const claimed = new Map<string, string>();
+      for (const row of this.db
+        .query(`SELECT session_id, name FROM name_owners`)
+        .all() as Array<{ session_id: string; name: string }>) {
+        claimed.set(row.name, row.session_id);
+      }
       for (const row of rows) {
         if (row.session_id === "" || row.name === "") continue;
-        added += insert.run(row.session_id, row.name.toLowerCase(), nowMs).changes;
+        const name = row.name.toLowerCase();
+        const holder = claimed.get(name);
+        if (holder !== undefined && holder !== row.session_id) continue;
+        const changes = insert.run(row.session_id, name, nowMs).changes;
+        if (changes > 0) claimed.set(name, row.session_id);
+        added += changes;
       }
       return added;
     });
     return seed.immediate();
+  }
+
+  /**
+   * Drops all but the newest owner of any name held more than once.
+   *
+   * Repairs ledgers seeded before `backfill` enforced the invariant. Runs on
+   * open beside `backfill`, and is a no-op on a healthy ledger.
+   */
+  dedupe(): number {
+    const fix = this.db.transaction((): number => {
+      // ROW_NUMBER over each name, newest first; everything after the first
+      // goes. Written as a window function rather than a correlated subquery
+      // because the obvious `WHERE inner.name = outer.name` form rebinds `name`
+      // to the inner scope and matched EVERY row — it deleted a name that had
+      // only one owner, which a two-name fixture caught immediately.
+      const dropped = this.db
+        .query(
+          `DELETE FROM name_owners WHERE rowid IN (
+             SELECT rowid FROM (
+               SELECT rowid, ROW_NUMBER() OVER (
+                        PARTITION BY name ORDER BY claimed_ms DESC, rowid DESC
+                      ) AS rank
+                 FROM name_owners
+             ) WHERE rank > 1)`,
+        )
+        .run();
+      return dropped.changes;
+    });
+    return fix.immediate();
   }
 
   /** The name this conversation last answered to, or "" if it never had one. */

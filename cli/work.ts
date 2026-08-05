@@ -212,7 +212,7 @@ function renderHistory(
   context.log("");
 }
 
-function collectBoardView(
+export function collectBoardView(
   store: Store,
   who: string,
   nowMs: number,
@@ -260,15 +260,24 @@ function collectBoardView(
     else group.closed += 1;
     group.items.push(view);
   }
+  // A NAME CAN BE REUSED, so it cannot be the label on its own. Names return to
+  // the pool when a conversation ends, and two blocks headed `akira` read as one
+  // agent listed twice rather than the two different conversations they are.
+  // Seen live 2026-08-05. `resolveAgent` already disambiguates this way.
+  const timesUsed = new Map<string, number>();
+  for (const group of groups.values()) {
+    timesUsed.set(group.name, (timesUsed.get(group.name) ?? 0) + 1);
+  }
   return {
     ok: true,
     view: {
       history: views,
       closedHidden: options.all || options.history ? 0 : allItems.length - views.length,
-      agents: [...groups.values()].map((group) => {
+      agents: [...groups.entries()].map(([agentId, group]) => {
         const shown = group.items.slice(0, BOARD_OPEN_SHOWN + group.closed);
+        const shared = (timesUsed.get(group.name) ?? 0) > 1;
         return {
-          name: group.name,
+          name: shared ? `${group.name} (${agentId.slice(-6)})` : group.name,
           tally: agentTally(group.open, options.all || options.history ? group.closed : 0),
           items: shown,
           hidden: group.items.length - shown.length,
