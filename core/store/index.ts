@@ -488,6 +488,19 @@ export class Store {
   }
 
   /**
+   * The raw connection, for tests that must read a TABLE rather than a view.
+   *
+   * Named rather than left as a private field three test files reach into: the
+   * need is real — `allClaims` inner-joins `sessions`, so an orphaned claim row
+   * vanishes from it whether or not the sweep deleted it, and a leak has to be
+   * asserted where it would accumulate. Production code has the sub-stores and
+   * must not come here.
+   */
+  get rawDb(): Database {
+    return this.db;
+  }
+
+  /**
    * Conversation uuids Claude Code still has a transcript for, lowercased.
    *
    * Empty when the directory is missing or unreadable, which reads as "none" —

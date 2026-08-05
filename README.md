@@ -35,6 +35,7 @@ with **no git repo at all**. Windows, macOS and Linux.
 | [Operating](docs/operating.md)         | configuration, measured cost, known limits, planned work    |
 | [Internals](docs/internals.md)         | every file and its role, tests, how failures surface        |
 | [Design notes](docs/design-notes.md)   | why the awkward parts are the way they are                  |
+| [Extracting](docs/extracting.md)       | moving this into its own repo, with its history             |
 
 ## Install
 

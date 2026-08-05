@@ -101,7 +101,7 @@ describe("agent identity", () => {
       store.owners.claim(id, "hopper", 2000);
 
       // The session row is gone; the ledger is not.
-      store.db.query(`DELETE FROM sessions`).run();
+      store.rawDb.query(`DELETE FROM sessions`).run();
       expect(store.work.items({ agentId: key })[0]?.agentName).toBe("hopper");
     });
   });
@@ -475,7 +475,7 @@ describe("who the board credits", () => {
       store.register(ID, "/tree", "master", now);
       store.work.open(KEY, "traffic-7c", "some work", [], now);
       store.unregister(ID);
-      store.db.query(`DELETE FROM name_owners`).run();
+      store.rawDb.query(`DELETE FROM name_owners`).run();
       expect(store.work.items({ agentId: KEY })[0]?.agentName).toBe("traffic-7c");
     });
   });

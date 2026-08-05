@@ -199,7 +199,7 @@ describe("a multi-table lifecycle change is all-or-nothing", () => {
       // was deleted — asserting through it passed happily with the claims
       // cleanup commented out. A leak this sweep exists to prevent has to be
       // read where it would actually accumulate.
-      const rows = store.db
+      const rows = store.rawDb
         .query(`SELECT path FROM claims`)
         .all() as Array<{ path: string }>;
       expect(rows.map((r) => r.path)).toEqual(["src/alive.ts"]);

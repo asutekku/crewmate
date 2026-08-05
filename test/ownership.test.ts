@@ -256,15 +256,15 @@ describe("name ownership", () => {
     const path = dbPath();
     const now = Date.now();
     withStore(path, (store) => {
-      const insert = store.db.query(
+      const insert = store.rawDb.query(
         `INSERT INTO aliases (session_id, alias, ts_ms) VALUES (?, ?, ?)`,
       );
       insert.run("older", "akira", now - 9000);
       insert.run("newer", "akira", now - 100);
-      store.db.query(`DELETE FROM name_owners`).run();
+      store.rawDb.query(`DELETE FROM name_owners`).run();
       store.owners.backfill(now);
 
-      const holders = store.db
+      const holders = store.rawDb
         .query(`SELECT session_id FROM name_owners WHERE name = 'akira'`)
         .all() as Array<{ session_id: string }>;
       expect(holders).toHaveLength(1);
@@ -274,8 +274,8 @@ describe("name ownership", () => {
   test("dedupe keeps the newest claim and leaves single owners alone", () => {
     const path = dbPath();
     withStore(path, (store) => {
-      store.db.query(`DELETE FROM name_owners`).run();
-      const insert = store.db.query(
+      store.rawDb.query(`DELETE FROM name_owners`).run();
+      const insert = store.rawDb.query(
         `INSERT INTO name_owners (session_id, name, claimed_ms) VALUES (?, ?, ?)`,
       );
       insert.run("old", "akira", 1000);
@@ -283,7 +283,7 @@ describe("name ownership", () => {
       insert.run("solo", "adela", 1500);
 
       expect(store.owners.dedupe()).toBe(1);
-      const rows = store.db
+      const rows = store.rawDb
         .query(`SELECT session_id, name FROM name_owners ORDER BY name`)
         .all() as Array<{ session_id: string; name: string }>;
       // `adela` must SURVIVE. The first draft used a correlated subquery whose

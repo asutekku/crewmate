@@ -1,0 +1,17 @@
+{
+  "name": "crewmates",
+  "version": "0.1.0",
+  "description": "Lets the Claude Code sessions working on one project see each other: who is active, what each is doing, which files they have touched.",
+  "keywords": ["claude-code", "agents", "coordination", "hooks", "bun"],
+  "license": "MIT",
+  "author": "Aku Mäkelä",
+  "type": "module",
+  "bin": { "crew": "./cli.ts" },
+  "files": ["cli.ts", "install.ts", "cli/", "core/", "hooks/", "docs/", "README.md", "LICENSE"],
+  "scripts": {
+    "install-hooks": "bun install.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": { "bun": ">=1.2.0" }
+}
