@@ -10,6 +10,7 @@ import { describe, expect, test } from "bun:test";
 
 import { fullName, GIVEN_NAMES, nameCase, pickName, titleCase } from "../core/names.ts";
 import { validateAlias, validateRole } from "../core/topic.ts";
+import { rosterName } from "../core/store.ts";
 
 describe("the name pool", () => {
   test("every name is unique", () => {
@@ -229,5 +230,42 @@ describe("a name is never printed twice as its own role", () => {
       "Water-Dynamic — Water Dynamics Lead",
     );
     expect(fullName("turing", "", "water-dynamic")).toBe("Turing — Water Dynamic");
+  });
+});
+
+describe("a rename does not leave the old name as a job title", () => {
+  test("an aliased session derives no role from its superseded handle", () => {
+    // MEASURED 2026-08-05: `crew call-me hopper` on a session handled `adela`
+    // rendered `Hopper — Adela`. `call-me` writes the alias and leaves the
+    // handle, so the handle-as-topic fallback printed the name just abandoned.
+    const s = {
+      sessionId: "s", handle: "adela", name: "traffic-1", alias: "hopper",
+      role: "", status: "", blocked: "", worktree: "/t", branch: "main",
+      behindBase: -1, baseBranch: "", lineageFrom: "", intent: "", title: "",
+      summary: "", summaryMs: 0, lastSeenMs: 0, lastTurnMs: 0, startedMs: 0,
+    };
+    expect(rosterName(s)).toBe("Hopper");
+  });
+
+  test("an UNALIASED handle still says what the agent works on", () => {
+    // The fallback earns its place in the ordinary case and must survive.
+    const s = {
+      sessionId: "s", handle: "water-dynamic", name: "traffic-2", alias: "",
+      role: "", status: "", blocked: "", worktree: "/t", branch: "main",
+      behindBase: -1, baseBranch: "", lineageFrom: "", intent: "", title: "",
+      summary: "", summaryMs: 0, lastSeenMs: 0, lastTurnMs: 0, startedMs: 0,
+    };
+    expect(rosterName(s)).toBe("Water-Dynamic");
+  });
+
+  test("an explicit role always wins, aliased or not", () => {
+    const s = {
+      sessionId: "s", handle: "adela", name: "traffic-3", alias: "hopper",
+      role: "Tooling Master", status: "", blocked: "", worktree: "/t",
+      branch: "main", behindBase: -1, baseBranch: "", lineageFrom: "",
+      intent: "", title: "", summary: "", summaryMs: 0, lastSeenMs: 0,
+      lastTurnMs: 0, startedMs: 0,
+    };
+    expect(rosterName(s)).toBe("Hopper — Tooling Master");
   });
 });

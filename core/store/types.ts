@@ -245,7 +245,14 @@ export function rosterName(s: Session): string {
   // wants to say. It is never Claude Code's `traffic-a9`; that label is the
   // unstable thing this design moved away from, and using it produced "Traffic
   // A9 Terrain Perf", a role nobody chose.
-  return fullName(displayName(s), s.role, s.handle);
+  //
+  // BUT ONLY WHILE THE HANDLE IS STILL THE NAME. Once an alias supersedes it,
+  // the handle is a FORMER NAME rather than a topic, and deriving a role from
+  // it prints the name the agent just left: `crew call-me hopper` on a session
+  // handled `adela` rendered `Hopper — Adela`. A rename must not leave its
+  // predecessor on the roster as a job title.
+  const slug = s.alias.trim() !== "" ? "" : s.handle;
+  return fullName(displayName(s), s.role, slug);
 }
 
 export interface Message {
