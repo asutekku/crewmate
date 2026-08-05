@@ -304,11 +304,9 @@ export interface Claim {
   readonly sessionId: string;
   readonly handle: string;
   /**
-   * The claimant's Claude session name (`traffic-07`), or "" before one is
-   * known. Carried alongside the handle because a handle is an internal
-   * allocation detail: showing `knuth` to someone whose terminals are all
-   * called `traffic-NN` forces them to map the two by hand, and the roster
-   * already resolves it everywhere else.
+   * The claimant's DISPLAY name, resolved alias -> handle -> `traffic-07` by
+   * `claimRows` — the same order as `displayName`, so an overlap warning names
+   * the agent the roster names.
    */
   readonly name: string;
   readonly path: string;

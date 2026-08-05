@@ -211,10 +211,17 @@ export class ActivityStore {
     );
   }
 
+  /**
+   * `name` resolves alias -> handle -> Claude's traffic-NN, matching
+   * `displayName`. The last is a fallback, never a preference: it is not stable
+   * and Claude Code never shows it to the operator, so an overlap warning that
+   * led with it named nobody either party could look up.
+   */
   private claimRows(where: string, parameters: Array<string | number>): Claim[] {
     const rows = this.db.query(
       `SELECT c.session_id, s.handle,
-              CASE WHEN s.alias != '' THEN s.alias ELSE s.name END AS name,
+              CASE WHEN s.alias != '' THEN s.alias
+                   WHEN s.handle != '' THEN s.handle ELSE s.name END AS name,
               s.worktree, c.path, c.ts_ms
          FROM claims c JOIN sessions s ON s.session_id = c.session_id
         WHERE ${where} ORDER BY c.ts_ms ASC`,

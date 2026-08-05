@@ -515,7 +515,7 @@ export class Store {
   }
 }
 
-/** The name a human should see for a claim: the session's, else its handle. */
+/** The name a human should see for a claim; `claimRows` resolves the order. */
 export function claimName(c: Claim): string {
   return c.name !== "" ? c.name : c.handle;
 }

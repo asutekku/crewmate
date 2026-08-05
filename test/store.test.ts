@@ -377,13 +377,22 @@ describe("claims", () => {
     });
   });
 
-  test("claims carry the session name, not just the internal handle", () => {
+  // An overlap warning must name the agent the ROSTER names. It used to prefer
+  // Claude Code's traffic-NN, which the operator is never shown and which one
+  // conversation can carry three of in an afternoon — so a real collision read
+  // "traffic-b3 and traffic-f5" when the two agents were adela and akira.
+  test("claims name the agent the roster names, not Claude's traffic-NN", () => {
     fresh((store) => {
       const now = Date.now();
-      store.register("me", "/t", "main", now);
+      const handle = store.register("me", "/t", "main", now);
       store.syncAgents([{ sessionId: "me", name: "traffic-07", status: "busy" }]);
       store.claim("me", "src/x.ts", now);
-      expect(store.allClaims(now)[0]?.name).toBe("traffic-07");
+      expect(store.allClaims(now)[0]?.name).toBe(handle);
+
+      // A chosen name still outranks the handle, as on the roster.
+      store.setAlias("me", "tooling", now);
+      store.claim("me", "src/y.ts", now);
+      expect(store.allClaims(now)[0]?.name).toBe("tooling");
     });
   });
 
