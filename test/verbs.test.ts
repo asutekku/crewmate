@@ -67,7 +67,27 @@ describe("the README documents what ships", () => {
   // and 12 of 14 hooks -- `diary.ts`, `personal.ts` and `commit-landed.ts` had
   // shipped and appeared nowhere, in the very README that explains why the
   // usage string must not drift.
-  const README = Bun.file(new URL("../README.md", import.meta.url));
+  /**
+   * README PLUS `docs/`, because the guarantee is that a shipped module is
+   * documented SOMEWHERE a reader will reach — not that it sits in one file.
+   * The reference tables moved to `docs/internals.md` when the README was split
+   * (2026-08-05); pinning them to `README.md` would have made this test fail for
+   * prose that had simply moved, and the fix for that is to widen the haystack,
+   * never to drop the check.
+   */
+  async function documentation(): Promise<string> {
+    const dir = new URL("../docs", import.meta.url).pathname.replace(
+      /^\/(?=[A-Za-z]:)/,
+      "",
+    );
+    const docs = [...new Bun.Glob("*.md").scanSync(dir)];
+    expect(docs.length).toBeGreaterThanOrEqual(3);
+    const parts = await Promise.all([
+      Bun.file(new URL("../README.md", import.meta.url)).text(),
+      ...docs.map((d) => Bun.file(`${dir}/${d}`).text()),
+    ]);
+    return parts.join("\n");
+  }
 
   /**
    * Modules in a sibling folder.
@@ -88,21 +108,31 @@ describe("the README documents what ships", () => {
   }
 
   test("every core module is in the module table", async () => {
-    const text = await README.text();
+    const text = await documentation();
     expect(
       modulesIn("core", 15).filter((f) => !text.includes(`\`${f}\``)),
     ).toEqual([]);
   });
 
+  test("every store module is in the module table", async () => {
+    // The `core/store/` split shipped undocumented: the table still described
+    // `store.ts` as "the only file that knows SQL" after it had become a
+    // two-line re-export. A folder with no check is a folder that drifts.
+    const text = await documentation();
+    expect(
+      modulesIn("core/store", 5).filter((f) => !text.includes(`store/${f}\``)),
+    ).toEqual([]);
+  });
+
   test("every hook is in the hook table", async () => {
-    const text = await README.text();
+    const text = await documentation();
     expect(
       modulesIn("hooks", 12).filter((f) => !text.includes(`\`${f}\``)),
     ).toEqual([]);
   });
 
-  test("every verb reaches the README, not just --help", async () => {
-    const text = await README.text();
+  test("every verb reaches the documentation, not just --help", async () => {
+    const text = await documentation();
     expect(
       VERBS.filter((v) => v.hidden !== true && !text.includes(`\`${v.verb}`)),
     ).toEqual([]);

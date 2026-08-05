@@ -181,11 +181,33 @@ function handleMessage(context: CliContext, argv: readonly string[]): void {
   context.log(
     `${cyan(from)} ${dim("→")} ${bold(to)}: ${sanitizeTerminalText(text)}`,
   );
-  context.log(
-    dim(
-      `Delivered on their next turn${result.value.to.status === "busy" ? " (busy — will see it after this turn)" : ""}.`,
-    ),
-  );
+  context.log(dim(deliveryNote(result.value.to, now)));
+}
+
+/**
+ * Silence after which the recipient is reported as away rather than reachable.
+ *
+ * MEASURED, 2026-08-05, over this repo's own 56 directed messages: recipients
+ * were either active within 30 min (16) or silent for over 90 (40). The
+ * 30–90 min bucket was EMPTY, so the threshold sits in a gap rather than
+ * splitting a real population.
+ */
+const AWAY_MS = 30 * 60 * 1000;
+
+/**
+ * What actually happens to the message, which is not always "delivered".
+ *
+ * `msg` resolves through `liveSessions`, whose horizon is `staleMs` (90 min) —
+ * right for a roster, too generous for a send gate. It accepted a target dark
+ * for an hour and a half and still printed "Delivered on their next turn": true,
+ * and useless, because the next turn may never come. The recipient's silence is
+ * already on the row, so say it instead of implying freshness.
+ */
+export function deliveryNote(to: Session, nowMs: number): string {
+  if (to.status === "busy") return "Delivered after their current turn ends.";
+  const silent = nowMs - to.lastSeenMs;
+  if (silent < AWAY_MS) return "Delivered on their next turn.";
+  return `Queued — ${displayName(to)} was last active ${agoText(to.lastSeenMs, nowMs)}, so this waits until they next act.`;
 }
 
 export function createMessagingCommands(context: CliContext): CommandMap {
