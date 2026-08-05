@@ -9,7 +9,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, test } from "bun:test";
 
-import { withStore } from "../core/store.ts";
+import { displayName, withStore } from "../core/store.ts";
 import { liveConversations, transcriptDir } from "../core/store/ownership.ts";
 
 let n = 0;
@@ -116,6 +116,40 @@ describe("name ownership", () => {
       store.registerAndRestore(conversation, "/tree", "master", later),
     );
     expect(second).toBe(first);
+  });
+
+  // A LIVE ROW THAT DISAGREES WITH THE LEDGER IS REPAIRED, not trusted.
+  // register() returns early when a session row exists, so a row written under
+  // the old rule re-confirmed its wrong name on every heartbeat and the ledger
+  // was never consulted. MEASURED 2026-08-05: c5ce05bc read `hopper` in the
+  // ledger and `akari` on the roster for hours, with the fix already deployed.
+  test("a stale roster row is corrected from the ledger", () => {
+    const conversation = "99999999-0000-0000-0000-000000000000";
+    const root = fakeProject([conversation]);
+    const path = dbPath();
+    const now = Date.now();
+
+    const first = reopen(path, root, (store) =>
+      store.registerAndRestore(conversation, "/tree", "master", now),
+    );
+    // The row the old code left behind: right uuid, wrong name. `setAlias`
+    // also updates the ledger, so the ledger is put back to what it owned --
+    // which is precisely the disagreement the repair has to resolve.
+    reopen(path, root, (store) => {
+      store.sessions.setAlias(conversation, "wrongname", now);
+      store.owners.claim(conversation, first, now);
+    });
+    reopen(path, root, (store) =>
+      store.registerAndRestore(conversation, "/tree", "master", now + 1000),
+    );
+    // ASSERTED THROUGH displayName, not the return value: `registerAndRestore`
+    // puts the alias back afterwards, so the handle it returns looks correct
+    // either way. What the operator and every peer actually read is the roster.
+    const shown = reopen(path, root, (store) => {
+      const self = store.sessions.findBySession(conversation);
+      return self ? displayName(self) : "";
+    });
+    expect(shown).toBe(first);
   });
 
   // The reservation half: a new conversation must never be handed a name a

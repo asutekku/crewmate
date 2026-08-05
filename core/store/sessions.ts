@@ -39,15 +39,31 @@ export class SessionStore {
     const liveIds = liveConversations(this.transcriptDirPath);
     const claim = this.db.transaction((): string => {
       const existing = this.db
-        .query(`SELECT handle FROM sessions WHERE session_id = ?`)
-        .get(sessionId) as { handle: string } | null;
+        .query(`SELECT handle, alias FROM sessions WHERE session_id = ?`)
+        .get(sessionId) as { handle: string; alias: string } | null;
       if (existing) {
+        // The ledger OUTRANKS a live row that disagrees with it. A row written
+        // before this conversation's name was known -- or by the old rule that
+        // renamed on return -- otherwise re-confirms itself on every heartbeat,
+        // and the correct name is never consulted again. Measured 2026-08-05:
+        // c5ce05bc was hopper in the ledger and akari on the roster for hours.
+        const owned = this.owners.nameFor(sessionId);
+        const keep = existing.alias !== "" ? existing.alias : existing.handle;
+        const repair = owned !== "" && owned !== keep.toLowerCase() && !this.nameHeldBy(owned, sessionId);
+        if (repair) {
+          this.db.query(`UPDATE sessions SET handle = ?, alias = '' WHERE session_id = ?`)
+            .run(owned, sessionId);
+          // The `aliases` row goes with it, or `restoreAlias` -- which runs
+          // moments later in `registerAndRestore` and reads that table, not the
+          // ledger -- puts the wrong name straight back.
+          this.db.query(`DELETE FROM aliases WHERE session_id = ?`).run(sessionId);
+        }
         this.db
           .query(
             `UPDATE sessions SET last_seen_ms = ?, worktree = ?, branch = ? WHERE session_id = ?`,
           )
           .run(nowMs, worktree, branch, sessionId);
-        return existing.handle;
+        return repair ? owned : existing.handle;
       }
 
       // What a stranger may not take: names owned by a surviving conversation,
@@ -71,13 +87,7 @@ export class SessionStore {
       // two agents on one name makes `msg` ambiguous — and a restored backup
       // can genuinely disagree with the ledger.
       const heldByPeer =
-        mine !== "" &&
-        this.db
-          .query(
-            `SELECT 1 FROM sessions WHERE session_id != ?
-              AND (LOWER(handle) = LOWER(?) OR LOWER(alias) = LOWER(?)) LIMIT 1`,
-          )
-          .get(sessionId, mine, mine) !== null;
+        mine !== "" && this.nameHeldBy(mine, sessionId);
       const handle = mine !== "" && !heldByPeer ? mine : pickName(taken);
       this.db
         .query(
@@ -94,6 +104,19 @@ export class SessionStore {
     // IMMEDIATE, not DEFERRED: a deferred transaction still starts read-only and
     // upgrades at the INSERT, which is exactly the window this must close.
     return claim.immediate();
+  }
+
+  /**
+   * Is another session -- live or not -- already answering to this name?
+   *
+   * Not bounded by staleness: a reaped row still holds its handle under the
+   * UNIQUE index, so a repair that ignored it would fail the write.
+   */
+  private nameHeldBy(name: string, exceptSessionId: string): boolean {
+    return this.db.query(
+      `SELECT 1 FROM sessions WHERE session_id != ?
+        AND (LOWER(handle) = LOWER(?) OR LOWER(alias) = LOWER(?)) LIMIT 1`,
+    ).get(exceptSessionId, name, name) !== null;
   }
 
   live(nowMs: number): Session[] {
