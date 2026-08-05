@@ -103,7 +103,7 @@ describe("validateAlias", () => {
   });
 
   test("refuses names that would break the line a peer copies to reply", () => {
-    // Quotes and backticks end up inside `cli.ts msg <name> "…"`.
+    // Quotes and backticks end up inside `crew msg <name> "…"`.
     for (const bad of ['say "hi', "back`tick", "semi;colon", "pipe|it", "$(whoami)", "a'b"]) {
       expect(validateAlias(bad).ok).toBe(false);
     }

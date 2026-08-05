@@ -3,7 +3,7 @@
  *
  * WHY IT MATTERS MORE THAN ITS SIZE. `--plan-doc` and `link` shipped and
  * nothing pointed at them, which is exactly how `breaks` and `needs` ended up
- * used by nobody but their author. `cli.ts plans` is only as good as the links
+ * used by nobody but their author. `crew plans` is only as good as the links
  * it has: one plan out of 82, until this hook started asking.
  *
  * SO MOST OF THIS FILE IS ABOUT STAYING QUIET. A hook that speaks on every plan
@@ -118,7 +118,7 @@ describe("when it speaks", () => {
       // THE COMMAND MUST BE RUNNABLE AS PRINTED. A hook that names a command
       // returning nothing has shipped here twice; the path in the advice is the
       // normalised one `link` will store.
-      expect(lines.join("\n")).toContain(`cli.ts link ${PLAN}`);
+      expect(lines.join("\n")).toContain(`crew link ${PLAN}`);
     });
   });
 
@@ -153,7 +153,7 @@ describe("when it speaks", () => {
       s.work.open(AGENT, "hopper", "water", [], 1000);
       const win = "i:\\Projects\\Traffic\\audit_reports\\terrain-water\\WATER_PLAN.md";
       expect(planLinkLine(s, SESSION, win).join("\n")).toContain(
-        "cli.ts link audit_reports/terrain-water/WATER_PLAN.md",
+        "crew link audit_reports/terrain-water/WATER_PLAN.md",
       );
     });
   });

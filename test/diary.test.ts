@@ -750,7 +750,7 @@ describe("diary check", () => {
       // ONE problem, not two — a pair reported from both ends is the same pair.
       expect(dupes.length).toBe(1);
       // And it merges the SMALLER into the larger, which is the cheaper edit.
-      expect(dupes[0]?.fix).toBe("cli.ts topic merge water-sim water");
+      expect(dupes[0]?.fix).toBe("crew topic merge water-sim water");
     });
   });
 
@@ -876,7 +876,7 @@ describe("what pre-edit actually prints", () => {
     // with two repo-wide entries and no scoped ones, `pre-edit` printed
     //
     //   The diary has 2 entries about this folder:
-    //   - 2 more diary entries cover this folder — `cli.ts recall --scope <file>`
+    //   - 2 more diary entries cover this folder — `crew recall --scope <file>`
     //
     // and that command returned ZERO rows. `countForPath` counts repo-wide
     // entries (scope ""), `recall --scope` deliberately excludes them, and the
@@ -1060,7 +1060,7 @@ describe("deprecation interacts with everything else", () => {
 
   test("a supersede CYCLE is storable and cannot hang a reader", () => {
     // Two entries can point at each other. It is only survivable because
-    // nothing WALKS the chain — `cli.ts note` prints one hop ("→ see #n") and
+    // nothing WALKS the chain — `crew note` prints one hop ("→ see #n") and
     // stops. Pinned so that anyone who later adds chain-following knows a cycle
     // is reachable and has to bound the walk.
     fresh((store) => {

@@ -14,11 +14,11 @@ import { topicOf } from "../core/topic.ts";
 
 describe("topicOf rejects", () => {
   test.each([
-    // Pasting a `cli.ts log` transcript to ask about it set the roster's
+    // Pasting a `crew log` transcript to ask about it set the roster's
     // headline field to "Now it looks like this $ bun ~/.claude/agent-…".
     [
       "a pasted terminal transcript",
-      "Now it looks like this\n\n$ bun ~/.claude/agent-presence/bin/cli.ts log\n  40m ago traffic-74 done: reached a stopping point\n\nDoes who have redundancy?",
+      "Now it looks like this\n\n$ crew log\n  40m ago traffic-74 done: reached a stopping point\n\nDoes who have redundancy?",
     ],
     ["a windows prompt", "look at this\r\nPS C:\\Users\\akU> bun test\r\nok"],
     ["a stack frame", "it crashes\n    at Object.<anonymous> (/app/x.ts:12:9)\n  more"],

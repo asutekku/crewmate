@@ -218,7 +218,7 @@ export function normaliseScope(raw: string, looksLikeFile = /[^/.]\.[a-z0-9]+$/i
   // A TOP-LEVEL DOTTED NAME REDUCES TO REPO-WIDE, and that is correct for the
   // common case (`README.md`, `package.json`) and wrong for the rare one (a
   // folder actually named `my.module`). The text cannot tell them apart, so
-  // `cli.ts note` REPORTS the reduction rather than resolving it — see the
+  // `crew note` REPORTS the reduction rather than resolving it — see the
   // "no --scope" line there. Scoping `README.md` to a folder named `README.md`
   // would match no file at all, which is strictly worse than repo-wide.
   return looksLikeFile.test(s) ? s.split("/").slice(0, -1).join("/") : s;
@@ -770,7 +770,7 @@ export class DiaryStore {
         problems.push({
           kind: "near-duplicate-topic",
           detail: `\`${a.topic}\` (${a.count}) and \`${b.topic}\` (${b.count}) look like one topic`,
-          fix: `cli.ts topic merge ${a.count <= b.count ? `${a.topic} ${b.topic}` : `${b.topic} ${a.topic}`}`,
+          fix: `crew topic merge ${a.count <= b.count ? `${a.topic} ${b.topic}` : `${b.topic} ${a.topic}`}`,
         });
       }
     }
@@ -789,7 +789,7 @@ export class DiaryStore {
       problems.push({
         kind: "dangling-reference",
         detail: `#${r["id"]} says it was superseded by #${r["target"]}, which does not exist`,
-        fix: `cli.ts note ${r["id"]}`,
+        fix: `crew note ${r["id"]}`,
       });
     }
 
@@ -805,7 +805,7 @@ export class DiaryStore {
         detail: `${n} live ${n === 1 ? "entry has" : "entries have"} no --scope, so nothing surfaces them at edit time`,
         // No single command repairs these — each needs a human decision about
         // which folder it is about. Listing them is the honest next step.
-        fix: "cli.ts recall --limit 100",
+        fix: "crew recall --limit 100",
       });
     }
 
@@ -818,7 +818,7 @@ export class DiaryStore {
       problems.push({
         kind: "deprecated-without-reason",
         detail: `#${r.id} is marked no-longer-true but does not say why`,
-        fix: `cli.ts note ${r.id}`,
+        fix: `crew note ${r.id}`,
       });
     }
 
@@ -832,7 +832,7 @@ export class DiaryStore {
       problems.push({
         kind: "unverified",
         detail: `${stale.n} live ${Number(stale.n) === 1 ? "entry is" : "entries are"} over ${Math.round(STALE_ENTRY_MS / (24 * 60 * 60 * 1000))} days old — not wrong, but unverified against the code as it is now`,
-        fix: "cli.ts recall --all",
+        fix: "crew recall --all",
       });
     }
     return problems;

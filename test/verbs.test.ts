@@ -15,6 +15,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
   allVerbSpellings,
+  CLI,
   findVerb,
   usage,
   usageFor,
@@ -139,6 +140,67 @@ describe("the README documents what ships", () => {
   });
 });
 
+describe("agents are told an invocation that works", () => {
+  /**
+   * WHAT THIS CATCHES. Every hint an agent reads said `cli.ts note "..."`,
+   * which was never runnable: the real invocation was a 45-character path to a
+   * `.ts` file, and now it is `crew`. 85 literals across 10 files had to change
+   * for the rename, and nothing would have failed if one had been missed —
+   * the agent reading that one hint just gets a command that does not exist.
+   */
+  const SOURCE = ["core", "cli", "hooks"];
+
+  function sourceFiles(): string[] {
+    const root = new URL("..", import.meta.url).pathname.replace(
+      /^\/(?=[A-Za-z]:)/,
+      "",
+    );
+    const files = SOURCE.flatMap((dir) =>
+      [...new Bun.Glob("**/*.ts").scanSync(`${root}/${dir}`)].map(
+        (f) => `${root}/${dir}/${f}`,
+      ),
+    );
+    expect(files.length).toBeGreaterThan(30);
+    return files;
+  }
+
+  test("no hint tells an agent to type anything but the installed command", async () => {
+    // TWO WAYS THIS BREAKS, both seen for real during the `crew` rename:
+    //
+    //   `cli.ts note "..."`                    — the old name, never runnable
+    //   `bun ~/.claude/.../bin/crew msg ...`   — a path-prefixed sed casualty,
+    //                                            a command that does not exist
+    //
+    // So the guard is not "no `cli.ts`" but "a verb is only ever preceded by
+    // the bare command". Prose ABOUT the source file ("cli.ts had 21 separate
+    // literals") carries no verb after it and stays legitimate.
+    const verbs = allVerbSpellings().join("|");
+    const wrong = new RegExp(`(cli\\.ts|bin/${CLI}|/${CLI}) (${verbs})\\b`);
+    const offenders: string[] = [];
+    for (const path of sourceFiles()) {
+      const text = await Bun.file(path).text();
+      if (wrong.test(text)) offenders.push(path.split("/").pop() ?? path);
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  test("the invocation an agent is told is the one the shim installs", async () => {
+    // Both halves of the rename in one assertion: if `CLI` changes without the
+    // installer, or the installer without `CLI`, agents learn a name that is
+    // not on PATH.
+    const installer = await Bun.file(
+      new URL("../install.ts", import.meta.url).pathname.replace(
+        /^\/(?=[A-Za-z]:)/,
+        "",
+      ),
+    ).text();
+    expect(installer).toContain(`${SHIM_DIR_MARKER}/${CLI}\``);
+  });
+});
+
+/** The template literal the installer writes the POSIX shim with. */
+const SHIM_DIR_MARKER = "${SHIM_DIR}";
+
 describe("the table is well formed", () => {
   test("no verb is listed twice, including as an alias", () => {
     const all = allVerbSpellings();
@@ -168,18 +230,18 @@ describe("the table is well formed", () => {
 describe("usageFor", () => {
   test("states a verb's arguments once, for both help and argument errors", () => {
     expect(usageFor("msg")).toBe(
-      'usage: cli.ts msg <name> "<text>" [--from <name>]',
+      'usage: crew msg <name> "<text>" [--from <name>]',
     );
   });
 
   test("omits the space when a verb takes no arguments", () => {
-    expect(usageFor("mine")).toBe("usage: cli.ts mine");
+    expect(usageFor("mine")).toBe("usage: crew mine");
   });
 
   test("an unknown verb degrades instead of throwing", () => {
     // Reached only from an error path, so throwing here would replace a bad
     // -arguments message with a crash.
-    expect(usageFor("nonsense")).toBe("usage: cli.ts nonsense");
+    expect(usageFor("nonsense")).toBe("usage: crew nonsense");
   });
 });
 

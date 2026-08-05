@@ -10,6 +10,7 @@ import {
   yellow,
 } from "../core/colour.ts";
 import { fit, terminalWidth } from "../core/layout.ts";
+import { CLI } from "../core/verbs.ts";
 import {
   operatorNames,
   rosterName,
@@ -62,7 +63,7 @@ function noOpenItem(context: CliContext, match: string): void {
       : "no open work item.",
   );
   context.error(
-    dim('  Open one with `cli.ts doing "<subject>" --plan "a; b; c"`.'),
+    dim('  Open one with `crew doing "<subject>" --plan "a; b; c"`.'),
   );
   context.fail();
 }
@@ -82,7 +83,7 @@ function printProgress(
       `  ${dim("next")}  ${state.current.idx}  ${state.current.text}`,
     );
   else if (state.total > 0)
-    context.log(dim("  every step ticked — `cli.ts done` to close it"));
+    context.log(dim("  every step ticked — `crew done` to close it"));
 }
 
 interface WorkItemView {
@@ -144,7 +145,7 @@ function renderMine(
 ): void {
   if (views.length === 0) {
     context.log(dim("No open work items."));
-    context.log(dim('  `cli.ts doing "<subject>" --plan "a; b; c"` opens one.'));
+    context.log(dim('  `crew doing "<subject>" --plan "a; b; c"` opens one.'));
     return;
   }
   for (const view of views) {
@@ -285,7 +286,7 @@ function renderBoard(
 ): void {
   if (view.agents.length === 0) {
     context.log(dim(`No work records in ${context.projectName}.`));
-    context.log(dim('  Agents open one with `cli.ts doing "<subject>"`.'));
+    context.log(dim('  Agents open one with `crew doing "<subject>"`.'));
     return;
   }
   for (const agent of view.agents) {
@@ -341,12 +342,12 @@ export function createWorkCommands(context: CliContext): CommandMap {
           context.log(`    ${dim(String(index + 1))}  ${step}`);
         if (steps.length === 0)
           context.log(
-            dim('    no checklist — `cli.ts add "<step>"` if phases appear'),
+            dim('    no checklist — `crew add "<step>"` if phases appear'),
           );
         if (linkPath !== "") context.log(dim(`    executing ${linkPath}`));
         context.log(
           dim(
-            "  Peers see it with `cli.ts board`. Close it with `cli.ts done`.",
+            "  Peers see it with `crew board`. Close it with `crew done`.",
           ),
         );
       });
@@ -380,7 +381,7 @@ export function createWorkCommands(context: CliContext): CommandMap {
           for (const step of steps)
             context.error(dim(`  ${step.idx}  ${step.text}`));
           if (steps.length === 0)
-            context.error(dim('  (no checklist — `cli.ts add "<step>"`)'));
+            context.error(dim('  (no checklist — `crew add "<step>"`)'));
           context.fail();
           return;
         }
@@ -505,7 +506,7 @@ export function createWorkCommands(context: CliContext): CommandMap {
         context.log(`${green("✓")} ${bold(item.subject)} ${dim("→")} ${path}`);
         context.log(
           dim(
-            "  `cli.ts plans` shows what each plan's work has actually shipped.",
+            "  `crew plans` shows what each plan's work has actually shipped.",
           ),
         );
       });
@@ -522,12 +523,12 @@ export function createWorkCommands(context: CliContext): CommandMap {
           context.log(dim("No work item names a plan document yet."));
           context.log(
             dim(
-              '  `cli.ts doing "<subject>" --plan-doc <path>` opens one against a plan,',
+              '  `crew doing "<subject>" --plan-doc <path>` opens one against a plan,',
             ),
           );
           context.log(
             dim(
-              "  `cli.ts link <path>` points an item that is already open at one.",
+              "  `crew link <path>` points an item that is already open at one.",
             ),
           );
           return;
@@ -622,7 +623,7 @@ function flag(
   const match = stringFlag(input, "--item") ?? "";
   const text = input.positionals.join(" ").trim();
   if (!text) {
-    context.error(`usage: cli.ts ${kind} "<what>" [--item <subject match>]`);
+    context.error(`usage: ${CLI} ${kind} "<what>" [--item <subject match>]`);
     context.error(
       dim(
         kind === "breaks"
@@ -640,7 +641,7 @@ function flag(
     const item = store.work.target(me.agentId, match);
     if (!item) {
       context.error(`${red("✗")} no open work item to attach this to`);
-      context.error(dim('  `cli.ts doing "<subject>"` opens one.'));
+      context.error(dim('  `crew doing "<subject>"` opens one.'));
       context.fail();
       return;
     }

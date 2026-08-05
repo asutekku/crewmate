@@ -140,7 +140,7 @@ export function createPersonalCommands(context: CliContext): CommandMap {
               ? lineage.lineage.slice(8, 16)
               : lineage.lineage;
             context.log(
-              `  ${cyan(who)} ${dim(`— ${lineage.count}`)}  ${dim(`cli.ts about-me --agent ${who}`)}`,
+              `  ${cyan(who)} ${dim(`— ${lineage.count}`)}  ${dim(`crew about-me --agent ${who}`)}`,
             );
           }
           return;
@@ -187,7 +187,7 @@ export function createPersonalCommands(context: CliContext): CommandMap {
             ))
               context.log(dim(" ".repeat(headLength) + line));
         }
-        context.log(dim("  `cli.ts forget <id>` removes one."));
+        context.log(dim("  `crew forget <id>` removes one."));
       });
     },
 
@@ -219,7 +219,7 @@ export function createPersonalCommands(context: CliContext): CommandMap {
               context.log(
                 `  ${cyan(lineage.lineage)} ${dim(`${lineage.count} ${lineage.count === 1 ? "memory" : "memories"}`)} ${dim(`· last active ${shortAge(lineage.lastMs, now)}`)}`,
               );
-            context.log(dim("  `cli.ts inherit <name>` takes one up."));
+            context.log(dim("  `crew inherit <name>` takes one up."));
           } else context.log(dim("no lineage is free to take up right now."));
           if (busy.length > 0) {
             context.log(bold("\nstill held — ask them instead of inheriting"));
@@ -260,7 +260,7 @@ export function createPersonalCommands(context: CliContext): CommandMap {
         dim(
           count === 0
             ? `  ${key} left no memories in ${context.projectName} — you start clean, under its name`
-            : `  ${count} ${count === 1 ? "memory" : "memories"} from ${key}, unverified by you — \`cli.ts about-me\` reads them`,
+            : `  ${count} ${count === 1 ? "memory" : "memories"} from ${key}, unverified by you — \`crew about-me\` reads them`,
         ),
       );
     },

@@ -1,5 +1,5 @@
 /**
- * The aggregates behind `cli.ts stats`, against a real (throwaway) db.
+ * The aggregates behind `crew stats`, against a real (throwaway) db.
  *
  * WHY THESE ARE WORTH PINNING. This command exists because the same numbers
  * were previously gathered by hand-written SQL, and two of six such attempts

@@ -207,7 +207,7 @@ describe("ordinary commands are untouched", () => {
     for (const cmd of [
       "bun test test/prebash.test.ts",
       "git commit -F msg.txt -o -- a.ts b.ts",
-      "bun ~/.claude/agent-presence/bin/cli.ts who",
+      "crew who",
       "for i in 1 2 3; do bun test; done",
     ]) {
       expect(denied(cmd)).toBe(false);

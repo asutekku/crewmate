@@ -20,6 +20,20 @@
  * the same text `--help` shows you.
  */
 
+/**
+ * How an agent is told to invoke this tool, in ONE place.
+ *
+ * The same drift as the usage string, one layer out: 85 hint strings across 10
+ * files hardcoded `cli.ts <verb>`, which was never what anyone typed — the real
+ * invocation was `bun ~/.claude/agent-presence/bin/cli.ts`. Renaming the binary
+ * to `crew` meant editing all 85, and the next rename would too.
+ *
+ * Hints read `${CLI} note "..."`. `verbs.test.ts` asserts no bare `cli.ts`
+ * literal comes back, because the table is not what keeps this true — the test
+ * is.
+ */
+export const CLI = "crew";
+
 /** Which section of the help a verb belongs under. Order here is display order. */
 export type VerbGroup = "presence" | "work" | "diary" | "memory" | "identity";
 
@@ -151,16 +165,16 @@ export function findVerb(verb: string): Verb | undefined {
 }
 
 /**
- * The `usage: cli.ts …` line for one verb, for argument errors.
+ * The `usage: crew …` line for one verb, for argument errors.
  *
- * Returns a bare `usage: cli.ts <verb>` for anything absent from the table
+ * Returns a bare `usage: crew <verb>` for anything absent from the table
  * rather than throwing: a mistyped verb name in an error path should not turn a
  * bad-arguments message into a crash.
  */
 export function usageFor(verb: string): string {
   const found = findVerb(verb);
   const args = found?.args ?? "";
-  return `usage: cli.ts ${verb}${args === "" ? "" : ` ${args}`}`;
+  return `usage: ${CLI} ${verb}${args === "" ? "" : ` ${args}`}`;
 }
 
 /**
@@ -201,7 +215,7 @@ export function usage(width = 100): string {
   const inTable = new Set(shared.map((v) => v.verb));
   const twoColumn = column > 0;
 
-  const lines: string[] = ["usage: cli.ts <command> [args]", ""];
+  const lines: string[] = [`usage: ${CLI} <command> [args]`, ""];
   for (const { group, title } of VERB_GROUPS) {
     const rows = rendered.filter((v) => v.group === group);
     if (rows.length === 0) continue;

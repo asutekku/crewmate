@@ -174,7 +174,7 @@ function handleFiles(context: CliContext, args: readonly string[]): void {
   });
   if (!parsedHours.ok) return failCommand(context, `files: ${parsedHours.error}`);
   const target = parsed.value.positionals.join(" ").trim();
-  if (!target) return failCommand(context, "usage: cli.ts files <agent> [--hours n]");
+  if (!target) return failCommand(context, "usage: crew files <agent> [--hours n]");
   const now = context.now();
   const width = terminalWidth();
   const view = withStore(context.dbPath, (store) =>
@@ -188,7 +188,7 @@ function handleBlame(context: CliContext, args: readonly string[]): void {
   const parsed = parseArguments(args, {});
   if (!parsed.ok) return failCommand(context, `blame: ${parsed.error}`);
   const path = parsed.value.positionals.join(" ").trim();
-  if (!path) return failCommand(context, "usage: cli.ts blame <path>");
+  if (!path) return failCommand(context, "usage: crew blame <path>");
   const resolved = resolveTrustedPath(path, context.projectRoot);
   if (!resolved.ok) return failCommand(context, resolved.error);
   const now = context.now();

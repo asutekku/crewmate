@@ -11,7 +11,7 @@
  * is the one combination with a security shape rather than a tidiness shape.
  *
  * THE REST IS DETERMINISM. Two sessions with identical state must produce an
- * identical block, or `cli.ts injection` cannot explain a surprise — hence the
+ * identical block, or `crew injection` cannot explain a surprise — hence the
  * tie-break test, which fails if ordering is ever left to insertion order.
  */
 
@@ -217,7 +217,7 @@ describe("nothing actionable vanishes silently", () => {
     const c = cand({
       key: "ob",
       text: "z".repeat(400),
-      compact: "1 review request — `cli.ts obligation 42`",
+      compact: "1 review request — `crew obligation 42`",
       actionable: true,
     });
     const r = pack(env({ targetChars: renderBlock([...HEADER, c.compact ?? ""]).length, candidates: [c] }));
@@ -236,7 +236,7 @@ describe("nothing actionable vanishes silently", () => {
     const r = pack(env({ targetChars: 50, candidates: [c] }));
     const tail = r.lines[r.lines.length - 1] ?? "";
     expect(tail).toContain("1 actionable item(s) omitted");
-    expect(tail).toContain("cli.ts inbox");
+    expect(tail).toContain("crew inbox");
   });
 
   test("the fallback survives even when the header alone overflows", () => {
@@ -244,14 +244,14 @@ describe("nothing actionable vanishes silently", () => {
     // item, but it always learns that one exists.
     const c = cand({ key: "ob", text: "z".repeat(999), actionable: true });
     const r = pack(env({ targetChars: 0, candidates: [c] }));
-    expect(r.lines.some((l) => l.includes("cli.ts inbox"))).toBe(true);
+    expect(r.lines.some((l) => l.includes("crew inbox"))).toBe(true);
   });
 
   test("a non-actionable omission produces no line", () => {
     // Only work the agent is expected to DO earns space it did not fit in.
     const c = cand({ key: "chatter", text: "z".repeat(999), actionable: false });
     const r = pack(env({ targetChars: 50, candidates: [c] }));
-    expect(r.lines.some((l) => l.includes("cli.ts inbox"))).toBe(false);
+    expect(r.lines.some((l) => l.includes("crew inbox"))).toBe(false);
   });
 
   test("a suppressed item is NOT counted as lost", () => {
@@ -262,7 +262,7 @@ describe("nothing actionable vanishes silently", () => {
       env({ candidates: [cand({ key: "roster", stateVersion: "v1", actionable: true })] }),
       seen,
     );
-    expect(r.lines.some((l) => l.includes("cli.ts inbox"))).toBe(false);
+    expect(r.lines.some((l) => l.includes("crew inbox"))).toBe(false);
   });
 });
 

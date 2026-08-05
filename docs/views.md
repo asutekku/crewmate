@@ -7,14 +7,14 @@
 Run from anywhere inside a project; it resolves the same roster the hooks use.
 
 ```sh
-bun ~/.claude/agent-presence/bin/cli.ts who        # roster + claims
-bun ~/.claude/agent-presence/bin/cli.ts log 20     # recent messages
-bun ~/.claude/agent-presence/bin/cli.ts msg <name> "..." # send to ONE agent
-bun ~/.claude/agent-presence/bin/cli.ts say "..."       # broadcast to every agent
-bun ~/.claude/agent-presence/bin/cli.ts quit <name> # drop an agent from the roster
-bun ~/.claude/agent-presence/bin/cli.ts where      # which project/db this dir maps to
-bun ~/.claude/agent-presence/bin/cli.ts clear      # wipe roster (log self-prunes)
-bun ~/.claude/agent-presence/bin/cli.ts board      # the work board — see below
+crew who        # roster + claims
+crew log 20     # recent messages
+crew msg <name> "..." # send to ONE agent
+crew say "..."       # broadcast to every agent
+crew quit <name> # drop an agent from the roster
+crew where      # which project/db this dir maps to
+crew clear      # wipe roster (log self-prunes)
+crew board      # the work board — see below
 ```
 
 ### Ending an agent
@@ -33,7 +33,7 @@ Before it drops a row, `quit` names what that row was protecting — a path two
 agents both hold loses its collision warning when one of them leaves:
 
 ```
-$ cli.ts quit ada
+$ crew quit ada
 ada — just now
   process 8520 is still running; this only clears the roster row
   ⚠ holds src/shared.ts, also held by turing
@@ -103,12 +103,12 @@ where escape codes cost tokens and buy nothing.
 ## Who touched what
 
 ```sh
-cli.ts files terrain-perf          # every file that agent has touched  [--hours 24]
-cli.ts blame src/gen/terrain.ts    # who has been in this file, newest first
+crew files terrain-perf          # every file that agent has touched  [--hours 24]
+crew blame src/gen/terrain.ts    # who has been in this file, newest first
 ```
 
 ```
-$ cli.ts files terrain-perf
+$ crew files terrain-perf
 terrain-perf — 6 file(s) in 24h  (session ended — this is history)
   ▸ terrain gen perf: dedup shore field, fix erode wrap  1/3
     now  fix the horizontal wrap in erode
@@ -116,7 +116,7 @@ terrain-perf — 6 file(s) in 24h  (session ended — this is history)
     12m ago  test/unit/gen/terrain.test.ts
     15m ago  docs/systems/terrain-water.md
 
-$ cli.ts blame src/gen/terrain.ts
+$ crew blame src/gen/terrain.ts
 src/gen/terrain.ts
      9m ago  terrain-perf   Edit [Traffic]
     19m ago  water-dynamic  Edit [water-sim-timberborn]
@@ -158,15 +158,15 @@ and scrolled away. An agent joining an hour later could not ask what a peer was
 doing without reading backwards through the log.
 
 ```sh
-cli.ts doing "<subject>" --plan "a; b; c"    # open an item, with a checklist
-cli.ts did   <n> ["<what changed>"]          # tick step n off
-cli.ts step  <n> "<status>"                  # working on n, not finished
-cli.ts add   "<step>"                        # a phase the plan missed
-cli.ts breaks "<what>" [--item <match>]      # …and message the peers it affects
-cli.ts needs  "<what>" [--item <match>]      # a blocker, for whoever reads the board
-cli.ts done  ["<match>"] [--abandoned]       # close ONE item
-cli.ts board [<agent>] [--history] [--all]   # read the board
-cli.ts mine                                  # my open items
+crew doing "<subject>" --plan "a; b; c"    # open an item, with a checklist
+crew did   <n> ["<what changed>"]          # tick step n off
+crew step  <n> "<status>"                  # working on n, not finished
+crew add   "<step>"                        # a phase the plan missed
+crew breaks "<what>" [--item <match>]      # …and message the peers it affects
+crew needs  "<what>" [--item <match>]      # a blocker, for whoever reads the board
+crew done  ["<match>"] [--abandoned]       # close ONE item
+crew board [<agent>] [--history] [--all]   # read the board
+crew mine                                  # my open items
 ```
 
 **Two things fill themselves in.** A commit attaches to your current item — the
@@ -190,7 +190,7 @@ finished, abandoned or still live — once per item, and never closed for you,
 because only you know which of the three it is.
 
 ```
-$ cli.ts board
+$ crew board
 
   ada                                                              2 open
     ▸ retiring the old net core  1/4              2h · updated 4m
@@ -204,7 +204,7 @@ $ cli.ts board
 **Several items open at once**, because agents genuinely multitask — a junction
 fix lands in the middle of a core retirement, and collapsing those into one line
 loses both. A bare command means **the most recently touched item**; a subject
-substring picks another (`cli.ts done sliver`).
+substring picks another (`crew done sliver`).
 
 ### The checklist is optional, and that is load-bearing
 
@@ -225,7 +225,7 @@ state is a **fold** over those events, so `board` and `board --history` read the
 same rows and cannot disagree:
 
 ```
-$ cli.ts board ada --history
+$ crew board ada --history
 
   retiring the old net core started 2h ago
       2h  started   delete buildGraph → migrate callers → re-record

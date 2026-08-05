@@ -214,7 +214,7 @@ describe("the pre-edit offer", () => {
     const { me } = ground();
     withStore(`${base}.db`, (store) => {
       const lines = lineageLines(store, VEGA_UUID, "src/sim/water/flow.ts", new Set(["ambrose"]));
-      expect(lines.join("\n")).toContain("cli.ts inherit ambrose");
+      expect(lines.join("\n")).toContain("crew inherit ambrose");
       // The command must be runnable AS PRINTED, and the offer must say what
       // taking it makes you — a hook naming a command that returns nothing has
       // shipped here twice.

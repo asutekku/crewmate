@@ -216,6 +216,43 @@ async function copyScripts(): Promise<void> {
   await Bun.write(`${BIN}/manifest.json`, JSON.stringify(manifest(version, scripts), null, 1));
   console.log(`Copied ${scripts.length} scripts to ${BIN} (build ${version})`);
   console.log(`  ${scripts.join(", ")}`);
+  await installShim();
+}
+
+/**
+ * Where a user-installed binary goes without touching PATH.
+ *
+ * `~/.local/bin` rather than `~/bin`: it is the XDG-ish convention every
+ * platform's tooling already adds, and on Windows it is on the USER path that
+ * both PowerShell and Git Bash inherit.
+ */
+const SHIM_DIR = `${HOME}/.local/bin`;
+
+/**
+ * A `crew` command on PATH, so agents type `crew who` and not a 45-character
+ * absolute path to a `.ts` file.
+ *
+ * TWO FILES ON WINDOWS, and both are needed: `crew.cmd` is what PowerShell and
+ * cmd.exe resolve, `crew` (extensionless, shebang) is what Git Bash resolves.
+ * Writing only one leaves the tool missing from whichever shell the agent
+ * happens to be in — and this repo's agents use both.
+ *
+ * The shim finds `bun` on PATH rather than pinning an absolute path, because a
+ * bun upgrade that moves the binary would otherwise break every hook silently.
+ */
+async function installShim(): Promise<void> {
+  mkdirSync(SHIM_DIR, { recursive: true });
+  const target = `${BIN}/cli.ts`;
+  await Bun.write(`${SHIM_DIR}/crew`, `#!/bin/sh\nexec bun "${target}" "$@"\n`);
+  if (process.platform === "win32") {
+    await Bun.write(`${SHIM_DIR}/crew.cmd`, `@echo off\r\nbun "${target}" %*\r\n`);
+  } else {
+    await Bun.spawnSync(["chmod", "+x", `${SHIM_DIR}/crew`]);
+  }
+  console.log(`Installed \`crew\` to ${SHIM_DIR}`);
+  if (!(process.env["PATH"] ?? "").split(process.platform === "win32" ? ";" : ":").some((p) => p.replace(/\\/g, "/").replace(/\/$/, "").toLowerCase() === SHIM_DIR.toLowerCase())) {
+    console.log(`  NOTE: ${SHIM_DIR} is not on PATH — add it, or call cli.ts directly.`);
+  }
 }
 
 async function install(force: boolean): Promise<void> {
@@ -274,6 +311,11 @@ async function remove(): Promise<void> {
   if (Object.keys(hooks).length > 0) settings["hooks"] = hooks;
   else delete settings["hooks"];
   await writeSettings(settings, before);
+  // The shim goes even though the scripts stay: a `crew` on PATH that points
+  // at an uninstalled tool is worse than no `crew` at all.
+  for (const name of ["crew", "crew.cmd"]) {
+    rmSync(`${SHIM_DIR}/${name}`, { force: true });
+  }
   console.log(`Removed ${removed} hook registration(s). Scripts left in ${BIN}.`);
 }
 

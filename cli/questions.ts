@@ -58,7 +58,7 @@ export function renderQuestionReport(report: QuestionReport): string[] {
       Math.max(40, report.width - 6),
     ))
       lines.push(`    ${line}`);
-    lines.push(dim(`    cli.ts answer ${question.id} "<your answer>"`));
+    lines.push(dim(`    crew answer ${question.id} "<your answer>"`));
   }
   for (const question of report.waiting)
     lines.push(

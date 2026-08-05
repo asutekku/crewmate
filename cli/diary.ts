@@ -75,7 +75,7 @@ function entryLines(entry: DiaryEntry, nowMs: number, width: number): string[] {
   const bits = [cyan(entry.topic), ...entry.tags.map((tag) => dim(`#${tag}`))];
   if (entry.scope !== "") bits.push(dim(entry.scope));
   bits.push(dim(`— ${entry.agent}`));
-  if (entry.body !== "") bits.push(dim(`(body: cli.ts note ${entry.id})`));
+  if (entry.body !== "") bits.push(dim(`(body: crew note ${entry.id})`));
   lines.push(" ".repeat(prefix.length) + bits.join(" "));
   if (entry.deprecatedMs !== 0) {
     const why = entry.deprecatedWhy !== "" ? `: ${entry.deprecatedWhy}` : "";
@@ -176,7 +176,7 @@ export function createDiaryCommands(context: CliContext): CommandMap {
         return show(context, input.positionals[0] ?? "");
       if (input.positionals.length === 0) {
         context.error(
-          'usage: cli.ts note "<title>" --topic <t> [--body "<detail>"]',
+          'usage: crew note "<title>" --topic <t> [--body "<detail>"]',
         );
         context.error(
           dim(`             [--tags a,b] [--kind ${DIARY_KINDS.join("|")}]`),
@@ -185,7 +185,7 @@ export function createDiaryCommands(context: CliContext): CommandMap {
           dim("             [--scope src/sim/water] [--fixes <id>]"),
         );
         context.error(
-          dim("       cli.ts note <id>     # read one, body included"),
+          dim("       crew note <id>     # read one, body included"),
         );
         context.fail();
         return;
@@ -246,7 +246,7 @@ export function createDiaryCommands(context: CliContext): CommandMap {
         const where = check.note.scope !== "" ? ` in ${check.note.scope}` : "";
         context.log(
           dim(
-            `  ${check.note.kind} · ${check.note.topic}${where} — peers find it with \`cli.ts recall\``,
+            `  ${check.note.kind} · ${check.note.topic}${where} — peers find it with \`crew recall\``,
           ),
         );
         if (check.note.scope === "")
@@ -276,7 +276,7 @@ export function createDiaryCommands(context: CliContext): CommandMap {
         if (all.length === 0) {
           context.log(
             dim(
-              `the ${context.projectName} diary is empty — write one with \`cli.ts note\`.`,
+              `the ${context.projectName} diary is empty — write one with \`crew note\`.`,
             ),
           );
           return;
@@ -305,7 +305,7 @@ export function createDiaryCommands(context: CliContext): CommandMap {
         const cloud = store.diary.tagCloud();
         if (cloud.length === 0) {
           context.log(
-            dim('no tags yet — `cli.ts note "…" --topic x --tags perf,flaky`'),
+            dim('no tags yet — `crew note "…" --topic x --tags perf,flaky`'),
           );
           return;
         }
@@ -345,7 +345,7 @@ export function createDiaryCommands(context: CliContext): CommandMap {
         }
         context.log(
           dim(
-            '  Close one by filing the fix: `cli.ts note "<what fixed it>" --topic <t> --fixes <id>`',
+            '  Close one by filing the fix: `crew note "<what fixed it>" --topic <t> --fixes <id>`',
           ),
         );
       });
@@ -424,7 +424,7 @@ export function createDiaryCommands(context: CliContext): CommandMap {
       if (!input) return;
       if (input.positionals[0] === "merge") {
         if (input.positionals.length !== 3 || input.flags.size !== 0) {
-          context.error("usage: cli.ts topic merge <from> <into>");
+          context.error("usage: crew topic merge <from> <into>");
           context.fail();
           return;
         }
@@ -434,7 +434,7 @@ export function createDiaryCommands(context: CliContext): CommandMap {
           const count = store.diary.mergeTopic(from, into);
           if (count === 0) {
             context.error(
-              `${red("✗")} nothing moved — check both names with \`cli.ts topics\``,
+              `${red("✗")} nothing moved — check both names with \`crew topics\``,
             );
             context.fail();
             return;
@@ -449,7 +449,7 @@ export function createDiaryCommands(context: CliContext): CommandMap {
       if (limit === undefined) return;
       const name = input.positionals.join(" ").trim();
       if (!name) {
-        context.error("usage: cli.ts topic <name> [--limit n]");
+        context.error("usage: crew topic <name> [--limit n]");
         context.fail();
         return;
       }

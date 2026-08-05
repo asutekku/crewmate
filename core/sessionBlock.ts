@@ -1,7 +1,7 @@
 /**
  * The session-start block: who is here, what they said, what this agent knows.
  *
- * IN core/ RATHER THAN IN THE HOOK because `cli.ts injection` has to inspect
+ * IN core/ RATHER THAN IN THE HOOK because `crew injection` has to inspect
  * the REAL envelope, and importing a hook module runs it — `session-start.ts`
  * has a top-level `await main()` that reads stdin, so a CLI importing it would
  * hang whenever stdin never reaches EOF (diary finding 35). Duplicating the
@@ -78,7 +78,7 @@ export function fingerprint(lines: readonly string[]): string {
  * next turn.
  */
 const HOW_TO_MESSAGE =
-  "Peers are reachable with `bun ~/.claude/agent-presence/bin/cli.ts msg <name> " +
+  "Peers are reachable with `crew msg <name> " +
   '"<text>"`. A message reaches only the named agent; `say` reaches every agent. ' +
   "Delivery happens between the recipient's tool batches, or at its next turn — a " +
   "`busy` peer is mid-turn and reads it when that turn ends. The channel carries " +
@@ -98,9 +98,9 @@ const HOW_TO_MESSAGE =
  * read one: subagents, and any repo without its own.
  */
 const HOW_TO_RECORD =
-  "Work worth tracking across turns can be recorded with `cli.ts doing " +
-  '"<subject>" --plan "step a; step b; step c"`, ticked off with `cli.ts did <n> ' +
-  '"<what changed>"`, and closed with `cli.ts done`. `cli.ts board` shows what ' +
+  "Work worth tracking across turns can be recorded with `crew doing " +
+  '"<subject>" --plan "step a; step b; step c"`, ticked off with `crew did <n> ' +
+  '"<what changed>"`, and closed with `crew done`. `crew board` shows what ' +
   "every agent is working on. QUICK CHECKS AND ONE-OFF QUESTIONS DO NOT NEED A " +
   "CHECKLIST — `--plan` is optional and an item with no steps is fine.";
 
@@ -164,9 +164,9 @@ export function identityLines(name: string, project: string): string[] {
 const HOW_TO_BE_CALLED =
   "Peers reach you by that name — it is what they type at `msg`, and it " +
   "survives a restart. You " +
-  'can say what you ARE with `cli.ts call-you "<role>"` — "Tooling Master", ' +
+  'can say what you ARE with `crew call-you "<role>"` — "Tooling Master", ' +
   '"Keeper of Wet Things" — which appears beside your name on the roster; or take ' +
-  'a different name with `cli.ts call-me "<name>"`. Both optional. Your name stays ' +
+  'a different name with `crew call-me "<name>"`. Both optional. Your name stays ' +
   "put while the role changes, so a role that moves still reads as the same agent." +
   "\n\nWHEN YOU MENTION A PEER IN TEXT THE USER READS, give their role too: " +
   '"adela (the road-network agent) is fixing this" rather than "adela is fixing ' +
@@ -187,7 +187,7 @@ export interface EnvelopeInputs {
 /**
  * The session-start block, as an envelope nobody has rendered yet.
  *
- * EXPORTED SO `cli.ts injection` INSPECTS THE REAL THING. An inspector that
+ * EXPORTED SO `crew injection` INSPECTS THE REAL THING. An inspector that
  * rebuilt this list would drift from it in exactly the situation someone runs
  * the inspector — after a surprise — and would then report a block that was
  * never injected. Both callers pass the same store and get the same candidates;
@@ -267,7 +267,7 @@ export function sessionEnvelope(store: Store, input: EnvelopeInputs): Envelope {
         stateVersion: fingerprint(log),
         origin: "peer",
         requiresPeerFraming: true,
-        compact: `${log.length} recent peer message(s) — \`cli.ts log\`.`,
+        compact: `${log.length} recent peer message(s) — \`crew log\`.`,
       });
     }
     add({
@@ -318,15 +318,15 @@ export function sessionEnvelope(store: Store, input: EnvelopeInputs): Envelope {
       priority: P.diary,
       text:
         `The diary holds ${total} finding(s) other agents left about this repo, by topic: ${named}${more}.\n` +
-        "`cli.ts recall <words>` searches them; `cli.ts topic <name>` reads one topic. Findings" +
+        "`crew recall <words>` searches them; `crew topic <name>` reads one topic. Findings" +
         " about a folder you edit surface on their own. Add one with" +
-        ' `cli.ts note "<what you found>" --topic <t> --scope <folder>` — it outlives this' +
+        ' `crew note "<what you found>" --topic <t> --scope <folder>` — it outlives this' +
         " session and is readable from every worktree.",
       actionable: false,
       stateVersion: `${total}:${named}`,
       origin: "system",
       requiresPeerFraming: false,
-      compact: `${total} diary finding(s) — \`cli.ts recall <words>\`.`,
+      compact: `${total} diary finding(s) — \`crew recall <words>\`.`,
     });
   }
 
@@ -359,15 +359,15 @@ export function sessionEnvelope(store: Store, input: EnvelopeInputs): Envelope {
       text: [
         head,
         ...body,
-        "`cli.ts remember \"<what you learned>\"` adds one (`--global` if it is true of them" +
-          " everywhere, not just here); `cli.ts forget <id>` drops one that turned out wrong." +
-          " They can read these with `cli.ts about-me`.",
+        "`crew remember \"<what you learned>\"` adds one (`--global` if it is true of them" +
+          " everywhere, not just here); `crew forget <id>` drops one that turned out wrong." +
+          " They can read these with `crew about-me`.",
       ].join("\n"),
       actionable: false,
       stateVersion: fingerprint(body),
       origin: "system",
       requiresPeerFraming: false,
-      compact: `${mine.length} thing(s) learned about the operator — \`cli.ts about-me\`.`,
+      compact: `${mine.length} thing(s) learned about the operator — \`crew about-me\`.`,
     });
   }
 

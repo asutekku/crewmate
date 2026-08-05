@@ -87,7 +87,7 @@ describe("an existing db gains the column", () => {
     // plan_doc". Every test here passed, because a fresh db builds the table
     // WITH the column and the migration is a no-op.
     //
-    // Found by running `cli.ts link` against the real roster, not by a test.
+    // Found by running `crew link` against the real roster, not by a test.
     const path = `${tmpdir().replace(/\\/g, "/")}/presence-plans-legacy-${process.pid}-${n++}.db`;
     paths.push(path);
 

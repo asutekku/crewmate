@@ -146,7 +146,7 @@ function isContentless(phrase: string): boolean {
  * Marks of pasted terminal output rather than a stated task: a shell prompt, a
  * command line, an ANSI escape, a log timestamp, a diff or stack frame.
  *
- * Observed live 2026-07-31: pasting a `cli.ts log` transcript to ask about it
+ * Observed live 2026-07-31: pasting a `crew log` transcript to ask about it
  * set the roster's headline field to "Now it looks like this $ bun
  * ~/.claude/agent-presence/bin/c…". Rejecting filler had correctly left the
  * intent slot open, and the next prompt — the paste — took it.

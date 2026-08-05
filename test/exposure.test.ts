@@ -9,7 +9,7 @@
  * proves the function, not the feature.
  *
  * The other half is the inbox. `pack` renders "N actionable item(s) omitted —
- * run `cli.ts inbox`" so that nothing an agent must act on disappears quietly.
+ * run `crew inbox`" so that nothing an agent must act on disappears quietly.
  * That line shipped before the command existed, which is worse than dropping
  * the item: the agent is told work exists and finds no way to reach it.
  */
@@ -166,7 +166,7 @@ describe("exposure survives the session", () => {
       const c = cand({
         key: "ob",
         text: "z".repeat(400),
-        compact: "1 item — `cli.ts inbox`",
+        compact: "1 item — `crew inbox`",
         stateVersion: "v7",
       });
       const r = pack(env([c], 120), store.injectionExposures(SID));

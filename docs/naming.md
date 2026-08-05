@@ -32,9 +32,9 @@ Luna — Tooling Master       Vega — Keeper of Wet Things       Rowan — Terr
 ```
 
 ```sh
-cli.ts call-you "Tooling Master"   # what I am — changes as the work does
-cli.ts call-me  tooling            # a different name, if the assigned one won't do
-cli.ts call-you "…" --agent luna   # the operator setting either, for any agent
+crew call-you "Tooling Master"   # what I am — changes as the work does
+crew call-me  tooling            # a different name, if the assigned one won't do
+crew call-you "…" --agent luna   # the operator setting either, for any agent
 ```
 
 **Two fields, because they want opposite things.** A name is _typed_: short,

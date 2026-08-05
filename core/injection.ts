@@ -9,7 +9,7 @@
  *
  * NOTHING VANISHES SILENTLY: an actionable item too large for the space left
  * degrades to its compact form; if even that will not fit, the block carries
- * one aggregate line saying how many were omitted, and `cli.ts inbox` hands
+ * one aggregate line saying how many were omitted, and `crew inbox` hands
  * over the full text.
  */
 
@@ -78,7 +78,7 @@ export interface InjectionCandidate {
    * IT MUST STAND ON ITS OWN OR NAME ITS OWN SOURCE. A compact form is
    * SELECTED, which means it is recorded as delivered and is NOT an omission —
    * so nothing about it reaches the inbox. A compact line reading "1 item —
-   * `cli.ts inbox`" would therefore point at an empty inbox and strand the
+   * `crew inbox`" would therefore point at an empty inbox and strand the
    * agent. The three producers today each cite the command that actually serves
    * their content (`log`, `recall`, `about-me`); a future one that cannot must
    * omit `compact` and let the item fall through to the inbox instead.
@@ -163,7 +163,7 @@ export function renderBlock(lines: readonly string[]): string {
  * The tie-break is not decoration. Candidates arrive from several producers and
  * two at the same priority would otherwise be ordered by insertion, which varies
  * with which store queries returned rows — making the injected block differ
- * between two sessions with identical state, and making `cli.ts injection`
+ * between two sessions with identical state, and making `crew injection`
  * unreproducible exactly when someone is using it to explain a surprise.
  */
 export function ordered(candidates: readonly InjectionCandidate[]): InjectionCandidate[] {
@@ -295,7 +295,7 @@ export function pack(env: Envelope, seen: ReadonlyMap<string, string> = new Map(
   ).length;
   if (lostActionable > 0) {
     lines.push(
-      `${lostActionable} actionable item(s) omitted for length — run \`cli.ts inbox\`.`,
+      `${lostActionable} actionable item(s) omitted for length — run \`crew inbox\`.`,
     );
   }
 

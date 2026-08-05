@@ -96,6 +96,6 @@ export function notAnAgent(context: CliContext, verb: string): void {
       "  No CLAUDE_CODE_SESSION_ID here, so there is no agent to record it against.",
     ),
   );
-  context.error(dim("  Read the board with `cli.ts board`."));
+  context.error(dim("  Read the board with `crew board`."));
   context.fail();
 }

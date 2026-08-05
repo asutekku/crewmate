@@ -69,7 +69,7 @@ replaces `bin/` wholesale so a module that moves cannot leave a stale twin.
 | `config.ts`           | Tunables — staleness windows, how much of the board to show.                                                                              |
 | `stats.ts`            | Aggregates rows plus separate feature availability/exposure/use observations, session opportunities, and surfaces.                        |
 | `injection.ts`        | What reaches a session's context: identity as an un-evictable envelope, everything else ranked against a budget.                          |
-| `sessionBlock.ts`     | The session-start candidates themselves — roster, recent activity, diary, memories — built once for both the hook and `cli.ts injection`. |
+| `sessionBlock.ts`     | The session-start candidates themselves — roster, recent activity, diary, memories — built once for both the hook and `crew injection`. |
 
 `feature_events` is the raw P3 evidence ledger. Availability means a session
 loaded a build containing a feature, exposure means a named surface actually

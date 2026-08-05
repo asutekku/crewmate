@@ -78,7 +78,7 @@ export function looksLikePlan(path: string): boolean {
  * WHY THIS EXISTS AT ALL. `--plan-doc` and `link` shipped and nothing pointed
  * at them, which is the exact shape of the `breaks`/`needs` failure: two verbs
  * that worked, were advertised nowhere, and were used by nobody but their
- * author. `cli.ts plans` is only as good as the links it has, and as of writing
+ * author. `crew plans` is only as good as the links it has, and as of writing
  * it holds ONE plan out of 82.
  *
  * THREE CONDITIONS, and each one is a way this could become noise:
@@ -112,8 +112,8 @@ export function planLinkLine(store: StoreHandle, sessionId: string, path: string
   // the part that must not wrap.
   return [
     `You are editing a plan and your open item does not name one.`,
-    `  \`cli.ts link ${plan}\``,
-    `  links it to "${fit(item.subject, 44)}", so \`cli.ts plans\` can report what`,
+    `  \`crew link ${plan}\``,
+    `  links it to "${fit(item.subject, 44)}", so \`crew plans\` can report what`,
     `  actually shipped against this plan rather than what it claims.`,
   ];
 }
@@ -191,7 +191,7 @@ export function lineageLines(
   // along with it.
   const [first] = [...authors];
   return [
-    `- ${first} worked this ground and is gone. \`cli.ts inherit ${first}\` takes up what` +
+    `- ${first} worked this ground and is gone. \`crew inherit ${first}\` takes up what` +
       ` it learned, as ${discipleName(displayName(self), first ?? "")}.`,
   ];
 }
@@ -209,9 +209,9 @@ export function diaryLines(store: StoreHandle, path: string): string[] {
     // same whether someone fixed it last week or nobody ever has, and "still
     // open" is the half that decides whether you act on it now.
     const open = e.kind === "error" && e.fixedMs === 0 ? " STILL OPEN" : "";
-    // TITLES only — the body is what `cli.ts note <id>` is for. A title states
+    // TITLES only — the body is what `crew note <id>` is for. A title states
     // the claim, which is enough to decide whether the body is worth opening.
-    lines.push(`- ${e.kind}${open}${where}: ${e.title} (${e.agent}, \`cli.ts note ${e.id}\`)`);
+    lines.push(`- ${e.kind}${open}${where}: ${e.title} (${e.agent}, \`crew note ${e.id}\`)`);
   }
 
   // THE POINTER MUST NAME A COMMAND THAT RETURNS WHAT IT PROMISES, and the two
@@ -219,7 +219,7 @@ export function diaryLines(store: StoreHandle, path: string): string[] {
   // (scope ""); `recall --scope` deliberately excludes them, because a repo-wide
   // note is not "about this folder". Measured 2026-08-01 by driving this hook
   // with two repo-wide entries and no scoped ones: it printed "2 more entries
-  // cover this folder — `cli.ts recall --scope <file>`" and that command
+  // cover this folder — `crew recall --scope <file>`" and that command
   // returned nothing at all. Same defect class as the `--scope` equality bug
   // this file already carries a note about — advice that fails when followed.
   //
@@ -239,7 +239,7 @@ export function diaryLines(store: StoreHandle, path: string): string[] {
     // enclosing folder — so handing it the file is what makes the advice true.
     lines.push(
       `- ${scoped} more diary ${scoped === 1 ? "entry covers" : "entries cover"} this folder — ` +
-        `\`cli.ts recall --scope ${path}\``,
+        `\`crew recall --scope ${path}\``,
     );
   }
   if (repoWide > 0) {
@@ -247,7 +247,7 @@ export function diaryLines(store: StoreHandle, path: string): string[] {
     // folder" is how a reader learns to distrust the count.
     lines.push(
       `- ${repoWide} repo-wide diary ${repoWide === 1 ? "entry applies" : "entries apply"} ` +
-        `everywhere — \`cli.ts recall --limit ${repoWide}\``,
+        `everywhere — \`crew recall --limit ${repoWide}\``,
     );
   }
   if (lines.length === 0) return [];
@@ -388,7 +388,7 @@ async function main(): Promise<void> {
     // and the reader could not tell which it was without querying the db.
     //
     // Session names, not handles: this text is read by an agent that may go on
-    // to message the peer, and `cli.ts msg knuth` works only by luck.
+    // to message the peer, and `crew msg knuth` works only by luck.
     const label = (cs: typeof others, where: string): string =>
       cs.length > 0 ? `${cs.map((o) => claimName(o)).join(", ")}${where}` : "";
     const parts = [label(here, " in this tree"), label(away, " in another worktree")].filter(
@@ -453,10 +453,10 @@ async function main(): Promise<void> {
       // when a live claim would already have vanished. Asking is the fallback,
       // not the first move.
       lines.push(
-        `Before asking, look: \`bun ~/.claude/agent-presence/bin/cli.ts files ${first}\` ` +
+        `Before asking, look: \`crew files ${first}\` ` +
           `lists every file they have touched and what they say they are doing; ` +
-          `\`cli.ts blame ${path}\` shows who has been in this one. If that leaves a ` +
-          `real question, \`cli.ts msg ${first} "<text>"\` reaches them — what each of ` +
+          `\`crew blame ${path}\` shows who has been in this one. If that leaves a ` +
+          `real question, \`crew msg ${first} "<text>"\` reaches them — what each of ` +
           `you is changing, and which parts are load-bearing, is knowledge the ` +
           `other cannot derive from the file.`,
       );

@@ -17,7 +17,7 @@
  * emitted no matching line at all. That is the deliberate trade — silently
  * MISSING a commit costs the board one event, where inventing one from the
  * command text would put a sha nobody can look up next to work that may not
- * exist. `cli.ts did`/`step` still record it by hand.
+ * exist. `crew did`/`step` still record it by hand.
  *
  * NEVER BLOCKS AND EMITS NOTHING. The agent already knows it committed; telling
  * it so would spend context on news it just made.

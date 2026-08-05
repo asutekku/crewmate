@@ -77,7 +77,7 @@ function questionLines(
     for (const q of owed) {
       lines.push(`  #${q.id} from ${q.askerName}: ${q.text}`);
     }
-    lines.push(`  Answer with \`cli.ts answer <id> "<text>"\`, or say why not.`);
+    lines.push(`  Answer with \`crew answer <id> "<text>"\`, or say why not.`);
   }
   return lines;
 }
@@ -110,9 +110,9 @@ function staleWorkLines(
     store.work.markAsked(item.workId, nowMs);
   }
   lines.push(
-    "If one is finished or abandoned, `cli.ts done \"<subject match>\"` (add `--abandoned` if it" +
-      " was dropped) closes it. If it is still live, `cli.ts did <n> \"<what changed>\"` or" +
-      " `cli.ts step <n> \"<status>\"` moves it on. Either way the board stops advertising work" +
+    "If one is finished or abandoned, `crew done \"<subject match>\"` (add `--abandoned` if it" +
+      " was dropped) closes it. If it is still live, `crew did <n> \"<what changed>\"` or" +
+      " `crew step <n> \"<status>\"` moves it on. Either way the board stops advertising work" +
       " nobody is doing — you will not be asked about these again.",
   );
   return lines;

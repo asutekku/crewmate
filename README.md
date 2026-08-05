@@ -1,4 +1,4 @@
-# Agent presence
+# Crewmates
 
 Lets the Claude Code sessions working on one project see each other: who is
 active, what each said it is doing, which files they have touched, and when one
@@ -44,10 +44,20 @@ bun .claude/hooks/presence/install.ts --force   # re-register hooks
 bun .claude/hooks/presence/install.ts --remove  # uninstall
 ```
 
-Copies the scripts to `~/.claude/agent-presence/bin/` and registers its hooks in
-`~/.claude/settings.json` (backing it up first, and merging rather than
-replacing — your other settings are untouched). **Restart your sessions**
-afterwards; hooks are read at session start.
+Copies the scripts to `~/.claude/agent-presence/bin/`, installs a `crew` command
+into `~/.local/bin/`, and registers its hooks in `~/.claude/settings.json`
+(backing it up first, and merging rather than replacing — your other settings are
+untouched). **Restart your sessions** afterwards; hooks are read at session start.
+
+```sh
+crew who                      # the roster
+crew msg alder "this is mine" # tell one agent something
+crew note "..." --scope src/  # leave a finding for whoever edits next
+```
+
+On Windows both `crew` (Git Bash) and `crew.cmd` (PowerShell, cmd) are written,
+because agents work in either. If `~/.local/bin` is not on your PATH the
+installer says so rather than leaving you a command that is not there.
 
 The files in this repo are the source of truth. After editing them, re-run
 `install.ts` to push the change to the installed copy.
@@ -75,7 +85,7 @@ You are "traffic-12" in Traffic's shared presence log.
 Names come from **Claude Code itself** (`claude agents --json`), so the roster
 matches the session names on your terminals, and `idle`/`busy` is its own status
 rather than a guess from a heartbeat. It costs ~950 ms, so it is sampled at
-session start and on `cli.ts who` — never on a per-prompt path.
+session start and on `crew who` — never on a per-prompt path.
 
 A peer in a **different worktree** is labelled with it; peers in the same tree
 show nothing, keeping the common case quiet.
@@ -97,9 +107,9 @@ reading and a column of "reached a stopping point".
 Agents and you can send to **one** agent or to everyone:
 
 ```sh
-cli.ts msg traffic-16 "waterSim.ts is mine for the next hour"   # to one agent
-cli.ts say "branch before committing"                           # to everyone
-cli.ts msg traffic-16 "..." --from traffic-12                   # speak AS an agent
+crew msg traffic-16 "waterSim.ts is mine for the next hour"   # to one agent
+crew say "branch before committing"                           # to everyone
+crew msg traffic-16 "..." --from traffic-12                   # speak AS an agent
 ```
 
 **The sender identifies itself; you do not pass a flag.** Claude Code sets
@@ -119,7 +129,7 @@ on recipient, so an unaddressed peer never receives the row at all. Names match
 the real session name, the fallback handle, or a unique prefix.
 
 > **Scoped delivery, not secrecy.** Every agent runs as you and can read the db
-> file directly, and `cli.ts log` shows everything. This keeps contexts clean and
+> file directly, and `crew log` shows everything. This keeps contexts clean and
 > stops four agents acting on one instruction. It is **not** a channel for
 > anything you would not want all your sessions to see.
 
@@ -152,7 +162,7 @@ them off. `stop_hook_active` suppresses delivery entirely.
 | ------- | --------------------------------------- | --------------------- |
 | `say`   | `traffic-12 to traffic-16: ...`         | that agent            |
 | `say`   | `traffic-12 to everyone: ...`           | that agent, broadcast |
-| `note`  | `the user, to everyone: ...`            | you, via `cli.ts say` |
+| `note`  | `the user, to everyone: ...`            | you, via `crew say` |
 | `done`  | `traffic-12 done: finished a turn: ...` | the agent             |
 | `claim` | `traffic-12 claim: also editing ...`    | the agent             |
 
@@ -191,7 +201,7 @@ answer "are they done?", and delivers any news that arrived mid-turn.
 
 ## Commands
 
-`cli.ts help` prints this list. It is generated from the verb table in
+`crew help` prints this list. It is generated from the verb table in
 `core/verbs.ts`, and `test/verbs.test.ts` fails if a verb is dispatched without
 appearing there — the usage string had drifted to 13 of 33 verbs before that
 test existed, which for a tool agents discover at runtime means the other 20

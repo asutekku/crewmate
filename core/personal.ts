@@ -241,7 +241,7 @@ export class PersonalStore {
    * was keyed `lineage = 'hopper'` and vanished when it returned as `akari`.
    *
    * The lineage arm is not legacy support — a disciple inherits by NAME
-   * (`cli.ts inherit hopper`), which the uuid alone could not express.
+   * (`crew inherit hopper`), which the uuid alone could not express.
    */
   forConversation(
     sessionId: string,
@@ -290,7 +290,7 @@ export class PersonalStore {
   }
 
   /**
-   * How many memories exist at all, for `cli.ts stats`.
+   * How many memories exist at all, for `crew stats`.
    *
    * Not derived by summing `lineages()`, which is the obvious shortcut and is
    * wrong: that query filters `lineage != ''`, so every row written before the

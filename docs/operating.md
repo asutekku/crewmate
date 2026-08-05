@@ -92,7 +92,7 @@ the title half is free and independent.
   described nothing.
 
   Pasted terminal output is rejected for the same reason: leaving the slot open
-  meant the next prompt could fill it, and a pasted `cli.ts log` promptly became
+  meant the next prompt could fill it, and a pasted `crew log` promptly became
   a session's "stated task". A session with no stated task shows **nothing** in
   that column — the `editing` line beneath already names its files, and a summary
   there would be a strict subset of the detail directly below it.
@@ -109,7 +109,7 @@ the title half is free and independent.
   hash into `bin/VERSION`, recorded per session, and the roster marks any
   session on an older build `⟲ old hooks` — it needs a restart, not debugging.
 - **Sessions that die uncleanly linger** until they miss the 90-minute staleness
-  window (`STALE_MS` in `store.ts`); `cli.ts who` prunes them as a side effect.
+  window (`STALE_MS` in `store.ts`); `crew who` prunes them as a side effect.
   A session reaped while still alive is no longer lost — any hook firing
   re-registers it, because a firing hook proves the session is running.
 - **`bun` must be on PATH.** The registered command is `bun`, not an absolute

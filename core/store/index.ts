@@ -164,7 +164,7 @@ export class Store {
     return run.immediate();
   }
 
-  /** Everything `cli.ts stats` reports; its aggregates cut across every table here. */
+  /** Everything `crew stats` reports; its aggregates cut across every table here. */
   stats(memories: number, topAgents?: number): Stats {
     return collectStats(this.db, memories, topAgents);
   }
