@@ -23,20 +23,12 @@ const SENSITIVE =
   /(?:api[_-]?key|secret|token|password|passwd|credential|bearer|authorization|ssh-rsa|BEGIN [A-Z ]*PRIVATE KEY|\.env|[A-Za-z0-9_-]{32,})/i;
 
 /**
- * Words that carry no topic on their own. Measured, not guessed: with three
- * sessions live, all three roster intents were pure filler of this shape —
- * "Ok great, start implementing the next steps.", "lovely, we can start working
- * on next steps.", "Lovely, start working on it." Each passed the word-count
- * gate and each told a peer precisely nothing.
+ * Words that carry no topic on their own — the resumed session's "Lovely, start
+ * working on it", which passes a word-count gate and tells a peer nothing.
  *
- * This is the CONTINUE case, and it is the common one: the first prompt of a
- * resumed session is an acknowledgement, because the actual subject was
- * established in the conversation that came before it.
+ * SINGLE WORDS ONLY: `isContentless` tests one word at a time, so a multi-word
+ * entry here silently never matches.
  */
-// SINGLE WORDS ONLY — `isContentless` tests one word at a time, so a multi-word
-// entry here can never match and silently does nothing. "go ahead" and "carry
-// on" were listed as phrases, which let "yes go ahead" through as a stated task
-// because `ahead` and `then` were in no entry of their own.
 const FILLER =
   /^(?:ok|okay|oh|ah|yeah|yes|yep|yup|sure|right|alright|great|lovely|nice|good|perfect|cool|awesome|thanks|thank|please|now|so|and|but|then|well|continue|continuing|go|going|ahead|proceed|carry|keep|next|lets|let's|we|i|you|can|could|should|would|shall|will|start|started|begin|implement|implementing|work|working|do|doing|done|make|making|on|it|that|this|the|a|an|to|of|for|with|step|steps|thing|things|stuff|task|tasks|one|two|first|second|last|more|some|any|all|is|are|was|were|be|been|being|have|has|had|get|got|up|out|in|at|if|as|too|also|just|still|again|ready|there|here|them|its|your|my|works|work|worked|fine|correct|agreed|exactly|indeed|true|looks|sounds|seems)$/i;
 
@@ -56,17 +48,9 @@ const RESERVED_ALIASES = /^(?:human|user|operator|everyone|all|none|system|claud
  * Validates a name an agent picked for itself, returning the cleaned name or a
  * reason it was refused.
  *
- * STRICTER THAN AN INTENT, because an alias is durable and addressable: peers
- * type it into `msg`, it is frozen into every message that agent sends, and it
- * appears on the board after the session is gone. An intent that is wrong is
- * noise for one session; a name that is wrong misroutes messages.
- *
- * ONE WORD, ALWAYS. A name with a space is not addressable and not readable:
- * `msg water dynamic "..."` parses as a message to `water` with a stray
- * argument, and on the roster `Water Dynamic — Keeper of Wet Things` gives a
- * reader no way to see where the name stops and the role starts. The role is
- * the field for several words, and it is unrestricted precisely because it is
- * only ever read.
+ * STRICTER THAN AN INTENT: an alias is addressable and frozen into every
+ * message, so a wrong one misroutes. ONE WORD, ALWAYS — `msg water dynamic`
+ * parses as a message to `water`. The ROLE is the field for several words.
  */
 export function validateAlias(raw: string): { ok: true; alias: string } | { ok: false; why: string } {
   const alias = raw.trim().replace(/\s+/g, " ");
@@ -114,10 +98,9 @@ export function validateRole(raw: string): { ok: true; role: string } | { ok: fa
   if ([...role].length > ROLE_MAX) {
     return { ok: false, why: `a role must be ${ROLE_MAX} characters or fewer` };
   }
-  // Control characters could rewrite a roster row; everything printable is fine.
-  // Scanned by CODE POINT rather than written as a literal range: a literal ESC
-  // in the source is invisible in a diff, makes grep call the file binary, and
-  // cannot be matched by a pattern typed as an escape.
+  // Control characters could rewrite a roster row. Scanned by CODE POINT: a
+  // literal ESC in source is invisible in a diff and makes grep call the file
+  // binary.
   for (const ch of role) {
     const code = ch.codePointAt(0) ?? 0;
     if (code < 0x20 || code === 0x7f) {
@@ -143,16 +126,9 @@ function isContentless(phrase: string): boolean {
 }
 
 /**
- * Marks of pasted terminal output rather than a stated task: a shell prompt, a
- * command line, an ANSI escape, a log timestamp, a diff or stack frame.
- *
- * Observed live 2026-07-31: pasting a `crew log` transcript to ask about it
- * set the roster's headline field to "Now it looks like this $ bun
- * ~/.claude/agent-presence/bin/c…". Rejecting filler had correctly left the
- * intent slot open, and the next prompt — the paste — took it.
- *
- * Checked against the WHOLE prompt, not its first clause, because the give-away
- * is usually below the sentence that introduces it.
+ * Marks of pasted terminal output rather than a stated task: a shell prompt, an
+ * ANSI escape, a log timestamp, a diff or stack frame. Checked against the
+ * WHOLE prompt, because the give-away sits below the sentence introducing it.
  */
 const PASTED_OUTPUT = new RegExp(
   [
@@ -178,39 +154,23 @@ export function summarize(text: string, maxLen: number): string {
  * shaped, and rejects bare continuations ("go", "yes") that describe nothing.
  */
 export function topicOf(text: string): string {
-  // Tested against the RAW text, before whitespace is flattened: the marks of a
-  // paste are its line structure, and collapsing newlines destroys the evidence.
-  //
-  // STRUCTURAL MARKS ONLY — no line-count rule. A ">4 lines means a document"
-  // heuristic rejected an ordinary five-line instruction (a file path, a blank
-  // line, two short paragraphs) on 2026-07-31, leaving a working session blank
-  // in the roster until the user asked why it was missing. Length is not
-  // evidence of pasted output; a shell prompt or a stack frame is, and those
-  // catch the real cases without costing a normal multi-paragraph request.
+  // Tested against the RAW text: the marks of a paste are its line structure,
+  // which flattening destroys. STRUCTURAL MARKS ONLY — length is not evidence,
+  // and a line-count rule rejected ordinary multi-paragraph instructions.
   if (PASTED_OUTPUT.test(text)) return "";
 
   const flat = text.replace(/\s+/g, " ").trim();
   if (flat === "" || SENSITIVE.test(flat)) return "";
-  // First sentence or clause: later ones are usually detail and caveats.
+  // First sentence or clause; a too-short head falls through to the next one,
+  // so a leading "goal:" label does not yield a one-word topic.
   //
-  // A leading label ("goal:", "task:") is the exception — splitting on its colon
-  // leaves a one-word head that then fails the length gate, so a perfectly good
-  // prompt yields nothing. When the head is too short to be a topic, the text
-  // AFTER the separator is the topic.
-  //
-  // THE COLON MUST NOT BE INSIDE A PATH OR URL. `i:\Projects\…` and `https://…`
-  // both contain one, and splitting there left the head "We have i" — which then
-  // read as filler and rejected the whole prompt. Observed live 2026-07-31: an
-  // agent started with a real, detailed instruction sat blank in the roster
-  // because that instruction happened to open with a Windows path. A colon only
-  // separates a clause when what follows it is whitespace.
+  // THE COLON MUST NOT BE INSIDE A PATH OR URL: `i:\Projects\…` split into the
+  // head "We have i", which then read as filler and rejected the whole prompt.
+  // A colon separates a clause only when whitespace follows it.
   const parts = flat.split(/(?<=[.!?])\s|:\s|[;\n]/).filter((s) => s.trim() !== "");
   const head = (parts[0] ?? flat).trim();
-  // A long file path or URL is dropped from the label rather than allowed to
-  // consume it. "We have i:\Projects\…\WATER_HOT_FUNCTIONS.md Your task is to
-  // optimize…" is one clause — the path carries no meaning at roster width and
-  // would eat the whole 60 characters, hiding the sentence that says what the
-  // session is for.
+  // A long path carries no meaning at roster width and would eat the whole
+  // budget, hiding the sentence that says what the session is for.
   const dropPaths = (s: string): string =>
     s
       .split(/\s+/)
@@ -223,15 +183,9 @@ export function topicOf(text: string): string {
       ? headClean
       : (parts.map(dropPaths).find((p) => p.split(/\s+/).length >= 3) ?? (headClean || head));
   const short = summarize(usable, INTENT_MAX);
-  // A phrase of pure filler is worse than no phrase: it looks like a stated task
-  // and outranks every honest fallback the roster could show instead.
-  //
-  // CONTENT, NOT LENGTH. This used to also require three words, which threw away
-  // real two-word tasks to catch continuations the filler test already catches:
-  // "water optimizations", "refactor derive" and "fix lanes" were rejected
-  // alongside "go ahead". Observed live 2026-07-31 — a session started for water
-  // optimization work sat blank in the roster and the user asked why it was
-  // missing. One word that is not filler is a topic; "go" and "yes" have none.
+  // Pure filler is worse than nothing: it looks like a stated task and outranks
+  // every honest fallback. CONTENT, NOT LENGTH — a word-count gate also threw
+  // away real two-word tasks like "fix lanes".
   if (isContentless(short)) return "";
   return short;
 }
