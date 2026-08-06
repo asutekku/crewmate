@@ -1,21 +1,9 @@
 /**
  * Which repo is this session in, and where does its presence db live.
  *
- * These hooks are installed USER-WIDE (`~/.claude/settings.json`), so they fire
- * in every project and in worktrees that live outside the repo directory. That
- * makes repo identity a runtime question, not a constant.
- *
- * THE KEY IS THE GIT COMMON DIR. Every worktree of one repo reports the same
- * `--git-common-dir` (verified: the main tree, an in-repo `.claude/worktrees/*`
- * checkout, and one under the system temp dir all resolve to the same path), and
- * two different repos never collide. Keying on cwd instead would split one repo
- * into a roster per worktree — the exact thing this is meant to join up.
- *
- * WHY NOT INSIDE THE REPO: a db under `.claude/` would be invisible to a
- * worktree pinned to an older commit, and would need gitignoring in every repo
- * the hooks touch. One directory under `~/.claude/` avoids both, and keeps a
- * non-git directory (where there is no repo to coordinate over) from creating
- * stray files.
+ * Hooks are installed USER-WIDE, so repo identity is a runtime question. THE
+ * KEY IS THE GIT COMMON DIR, which every worktree of one repo shares. The db
+ * sits under `~/.claude/`. See docs/design-notes.md, the opening notes.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -74,15 +62,8 @@ function slug(key: string, name: string): string {
 }
 
 /**
- * Project identity comes from a `git rev-parse` subprocess, measured at ~31 ms —
- * cheap once per session, but `PostToolBatch` fires after every batch of tool
- * calls, where it dominates the hook's cost. So it is cached on disk.
- *
- * THE CACHE OUTLIVES THE SESSION THAT WROTE IT, which is where the danger is: a
- * cwd's answer is stable only while that directory remains what it was. Deleting
- * a worktree and reusing its path, or `git init` in a directory previously seen
- * as plain, both change the true answer — so a hit is only trusted while its key
- * still exists on disk.
+ * Project identity costs a `git rev-parse` subprocess, which dominates the cost
+ * of `PostToolBatch`. So it is cached on disk.
  */
 function cachedResolve(cwdNorm: string): RepoContext | null {
   try {
@@ -93,12 +74,9 @@ function cachedResolve(cwdNorm: string): RepoContext | null {
       RepoContext
     >;
     const hit = map[cwdNorm] ?? null;
-    // The cache outlives the session that wrote it, so "cannot go stale" is only
-    // true while the directory it describes still is what it was. A worktree
-    // deleted and its path reused by a DIFFERENT repo would otherwise route that
-    // session into the old repo's roster, and a `git init` in a directory
-    // previously resolved as non-git would split that project in two. Checking
-    // the key still exists costs a stat and closes both.
+    // THE CACHE OUTLIVES THE SESSION THAT WROTE IT, so a hit is trusted only
+    // while its key still exists on disk. A reused worktree path, or `git init`
+    // in a directory seen as plain, both change the true answer.
     if (hit && !existsSync(hit.key)) return null;
     return hit;
   } catch {
@@ -126,24 +104,16 @@ function cacheResolve(cwdNorm: string, ctx: RepoContext): void {
 /**
  * Redirects every hook to a throwaway db.
  *
- * Testing a hook means RUNNING it, and running it writes to whatever db it
- * resolves — so a test payload lands in the live project roster as a real
- * session with real claims and real log lines. That happened here on
- * 2026-07-31: probe sessions left 26 junk messages and a false contested-file
- * warning naming this session on a file it never edited, all of which the user
- * had to read past. A test must not be able to reach the shared store at all.
+ * Testing a hook means RUNNING it, so without this a test payload lands in the
+ * live roster as a real session with real claims. A test must not be able to
+ * reach the shared store at all.
  */
 const TEST_DB = process.env["PRESENCE_TEST_DB"] ?? "";
 
 /**
- * Resolves the project for `cwd`. Never null: a directory with no git repo is a
- * perfectly good coordination scope, and agents working there need the roster
- * just as much. Without this fallback the hooks would silently do nothing for
- * anyone who has not run `git init`, which looks like a broken install rather
- * than an unsupported setup.
- *
- * The two keys cannot collide: a git key always ends in `/.git`, a plain
- * directory never does.
+ * Resolves the project for `cwd`. Never null: a directory with no git repo is
+ * still a coordination scope, and hooks that did nothing there would look like
+ * a broken install. A git key always ends in `/.git`, so the two cannot collide.
  */
 export function resolveProject(cwd: string): RepoContext {
   const cwdNorm = cwd.replace(/\\/g, "/").replace(/\/$/, "");
@@ -233,13 +203,8 @@ function cacheTree(cwdNorm: string, tree: string): void {
 /**
  * The build a session loaded, versus the one now installed.
  *
- * A session reads the hook scripts when it starts and keeps that copy until it
- * restarts, so an install mid-flight leaves the roster mixing old and new
- * behaviour with nothing to distinguish them. The user had to infer it from the
- * SHAPE of the output — "some agents are running on older hooks i believe" —
- * which is a guess the roster should not require.
- *
- * Empty when unknown, which is what a pre-stamp build reports.
+ * A session keeps the hook scripts it read at start, so an install mid-flight
+ * leaves the roster mixing old and new behaviour. Empty when unknown.
  */
 export function installedVersion(): string {
   try {
@@ -266,12 +231,8 @@ export interface InstallManifest {
  * What the installed build CLAIMS to provide, for asking whether a session
  * could have had a feature at all.
  *
- * Separate from `installedVersion` because a hash answers "which build" and not
- * "which capabilities" — and the second is the one exposure telemetry needs,
- * since `bin/` is a copy and a session keeps whatever it loaded at start.
- *
- * Null when absent or malformed, never a throw: this is read on hook paths, and
- * a missing manifest is the normal state of every build before this one.
+ * Separate from `installedVersion`: a hash answers "which build", not "which
+ * capabilities". Null when absent or malformed, never a throw.
  */
 export function installManifest(): InstallManifest | null {
   try {
@@ -283,14 +244,9 @@ export function installManifest(): InstallManifest | null {
 }
 
 /**
- * VALIDATES rather than coerces.
- *
- * An earlier version ran every field through `Number()`/`String()`, which turns
- * `"yesterday"` into `NaN`, `{}` into `NaN`, and `[false, 42]` into
- * `["false", "42"]` — all returned as a valid manifest. That is worse than
- * returning null: a caller asking "did this build have obligations?" would get
- * a confident wrong answer from a corrupt file. Anything that is not the
- * declared shape is not a manifest.
+ * VALIDATES rather than coerces. Anything not of the declared shape is not a
+ * manifest: coercion turns `"yesterday"` into `NaN` and returns it as valid,
+ * so a caller asking "did this build have obligations?" gets a wrong answer.
  */
 export function parseManifest(raw: unknown): InstallManifest | null {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
@@ -341,20 +297,9 @@ export function currentBranch(cwd: string): string {
 /**
  * How far a checkout has drifted from the branch it was cut from.
  *
- * `behind` is commits on the base that this checkout lacks; `ahead` is its own
- * commits the base lacks. Both null when there is no repo, no base branch, or
- * git refuses — an unknown answer must not read as zero, because zero is the
- * value that means "you are fine".
- *
- * WHY THIS EXISTS. An agent in a worktree cannot see this without asking, and
- * the natural way to ask — `git log` — shows the NEWEST commits, which after a
- * merge from the base are somebody else's. Measured 2026-08-02: an agent read
- * its own fourteen commits as missing that way and spent five tool calls
- * establishing they had landed. This is the same fact in 123 ms.
- *
- * BOTH NUMBERS OR NEITHER. `ahead` is what makes the advice safe: a branch with
- * its own commits must never be told to merge, because merging is a decision
- * with conflict cost that belongs to the agent.
+ * `behind` is commits the checkout lacks, `ahead` its own. Both null when
+ * unknown, because an unknown answer must not read as the zero that means "you
+ * are fine". BOTH NUMBERS OR NEITHER: `ahead` is what keeps the advice safe.
  */
 export interface BaseDistance {
   readonly behind: number;
@@ -362,15 +307,9 @@ export interface BaseDistance {
 }
 
 /**
- * The branch a worktree is measured against.
- *
- * Tried in order: whatever `origin/HEAD` points at, then the conventional names.
- * `origin/HEAD` is unset in plenty of clones — verified unset in THIS repo,
- * which is why the fallback list is load-bearing rather than decoration.
- *
- * Local refs only, deliberately: `worktree.baseRef: "head"` means worktrees here
- * branch from local HEAD, so local master is the honest base. Consulting a
- * remote would also put the network on the session-start path.
+ * The branch a worktree is measured against: `origin/HEAD` first, then these
+ * names. The fallback is load-bearing, as `origin/HEAD` is unset in many
+ * clones. LOCAL REFS ONLY — a remote would put the network on session start.
  */
 const BASE_BRANCH_NAMES = ["master", "main", "trunk"] as const;
 

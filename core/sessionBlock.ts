@@ -1,16 +1,9 @@
 /**
  * The session-start block: who is here, what they said, what this agent knows.
  *
- * IN core/ RATHER THAN IN THE HOOK because `crew injection` has to inspect
- * the REAL envelope, and importing a hook module runs it — `session-start.ts`
- * has a top-level `await main()` that reads stdin, so a CLI importing it would
- * hang whenever stdin never reaches EOF (diary finding 35). Duplicating the
- * list instead would drift from what ships, and drift exactly when someone runs
- * the inspector to explain a surprise. Moving it here gives both callers one
- * source with no import hazard.
- *
- * Reads the store; writes nothing. Registration and version stamping stay in
- * the hook, so running the inspector cannot put the CLI on the roster.
+ * IN core/ RATHER THAN IN THE HOOK: importing a hook module RUNS it, and
+ * `session-start.ts` awaits stdin at the top level (diary finding 35). Reads
+ * the store and writes nothing, so the inspector cannot join the roster.
  */
 
 import { type Store } from "./store.ts";
@@ -36,11 +29,6 @@ export const MAX_OBLIGATION_CANDIDATES = 5;
 /**
  * What outranks what, in one table rather than in the order of the code.
  *
- * The old assembly encoded priority as the sequence of `lines.push` calls,
- * which meant reordering two blocks changed what gets dropped under pressure —
- * invisibly, because nothing was ever dropped. Naming the ranks makes the
- * decision reviewable and lets a producer be moved without moving its code.
- *
  * Identity is absent DELIBERATELY: it is the envelope, and a number here would
  * put it back in the auction this design exists to keep it out of.
  */
@@ -60,10 +48,9 @@ const P = {
 /**
  * A cheap content fingerprint for suppression.
  *
- * Length plus content, not a timestamp: the question is "has this changed since
- * the recipient last saw it", and a clock answers a different one. Collisions
- * only cost a suppressed line that should have been shown, so a full hash would
- * be paying for a guarantee this does not need.
+ * Content, not a timestamp: the question is "has this changed since the
+ * recipient last saw it". A collision costs one suppressed line, so a full
+ * hash would buy a guarantee this does not need.
  */
 export function fingerprint(lines: readonly string[]): string {
   let h = 0;
@@ -79,13 +66,9 @@ export function fingerprint(lines: readonly string[]): string {
 }
 
 /**
- * Told once, at session start, rather than repeated on every delivery — an agent
- * that has peers needs to know the channel exists; it does not need reminding
- * each turn.
- *
- * The delivery caveat is stated plainly because the alternative is an agent
- * sending a message and waiting for a reply that cannot arrive until the peer's
- * next turn.
+ * Told once at session start, not on every delivery: an agent needs to know the
+ * channel exists, not to be reminded each turn. The delivery caveat is stated
+ * plainly, or an agent waits for a reply that cannot arrive until the next turn.
  */
 const HOW_TO_MESSAGE =
   "Peers are reachable with `crew msg <name> " +
@@ -97,15 +80,9 @@ const HOW_TO_MESSAGE =
 /**
  * The work board, phrased as PERMISSION rather than instruction.
  *
- * Saying when NOT to is the load-bearing half. A line that only says "record
- * your work" fails two ways: agents dutifully open an item for "what does this
- * function do", burying the real ones, or they read it as boilerplate and ignore
- * it entirely. Naming the exemption makes it a judgement call, which is what an
- * agent is good at — and whether a checklist exists is the signal that will gate
- * the planned idle check, so it has to mean something.
- *
- * Repeated here as well as in CLAUDE.md because this reaches sessions that never
- * read one: subagents, and any repo without its own.
+ * Saying when NOT to is the load-bearing half, or agents open an item for
+ * "what does this function do" and bury the real ones. Repeated here as well as
+ * in CLAUDE.md, because subagents never read one.
  */
 const HOW_TO_RECORD =
   "Work worth tracking across turns can be recorded with `crew doing " +
@@ -117,33 +94,9 @@ const HOW_TO_RECORD =
 /**
  * WHO THIS SESSION IS, phrased to survive contact with the system prompt.
  *
- * MEASURED FAILURE, 2026-08-02. Asked "who are you", a session answered: "I'm
- * Claude Code, Anthropic's AI assistant... In this session, I'm anouk." It had
- * ranked two claims correctly. The system prompt says "You are Claude Code" and
- * is re-presented every turn; the old line here said `You are "anouk" in
- * Traffic's shared presence log` exactly once, and that sentence ARGUES for the
- * losing reading — `in ... log` scopes the name to a database row. The reply
- * mirrored the scoping straight back.
- *
- * A HOOK CANNOT WIN ON RANK. Injected text never reaches the system prompt
- * (only output styles, `--append-system-prompt`, and a subagent's own agent
- * file do), so the goal is not to overwrite "Claude Code" — it is to make the
- * name the answer to WHO, while "Claude Code" stays the answer to WHAT. Those
- * do not conflict, and the old wording never said so.
- *
- * Hence the three moves here, each earning its tokens:
- *   - the name alone on its own line, with no preposition to hide behind;
- *   - "Claude Code" CONCEDED rather than ignored, because it is true and an
- *     unaddressed truth is what produced the "I'm X, but here I'm Y" hedge;
- *   - the REASON given, not just the rule — "Claude Code" does not distinguish
- *     you from the four other agents in this tree, which in a shared repo is
- *     the only thing the name is for.
- *
- * Phrased as fact plus rationale rather than as an order. HOOKS.MD is explicit
- * that imperative injected text can read as an out-of-band command; the one
- * near-imperative ("Asked who you are, say X") stays because it names the exact
- * situation that failed, and a rule with its reason attached holds better than
- * either alone.
+ * A HOOK CANNOT WIN ON RANK, so the name answers WHO while "Claude Code" stays
+ * the answer to WHAT. Never scope the name to a place ("in the presence log") —
+ * that phrasing loses. See docs/design-notes.md, "Telling a session its name".
  */
 export function identityLines(name: string, project: string): string[] {
   const proper = nameCase(name);
@@ -160,16 +113,9 @@ export function identityLines(name: string, project: string): string[] {
 /**
  * The name is stated as a fact, the role offered as a choice.
  *
- * An agent that is not TOLD its name keeps referring to itself by whatever
- * label it can see — before sender identity existed, one typed "traffic-4b:"
- * into a message body by hand to say who it was. An assigned name nobody is
- * told is just a database column.
- *
- * THIS NO LONGER DEFINES THE NAME. It used to open "The name above is what
- * peers type at `msg`", which defines an identity as an ADDRESS — an email
- * alias — one line after `identityLines` has just asserted it as a self. Being
- * addressable is now a CONSEQUENCE of having a name, which is the true
- * relationship and the one that does not undercut the line above it.
+ * IT DOES NOT DEFINE THE NAME: being addressable is a CONSEQUENCE of having
+ * one. Opening with "the name above is what peers type" defines an identity as
+ * an address, one line after `identityLines` asserted it as a self.
  */
 const HOW_TO_BE_CALLED =
   "Peers reach you by that name — it is what they type at `msg`, and it " +
@@ -197,15 +143,8 @@ export interface EnvelopeInputs {
 /**
  * The session-start block, as an envelope nobody has rendered yet.
  *
- * EXPORTED SO `crew injection` INSPECTS THE REAL THING. An inspector that
- * rebuilt this list would drift from it in exactly the situation someone runs
- * the inspector — after a surprise — and would then report a block that was
- * never injected. Both callers pass the same store and get the same candidates;
- * only the rendering differs.
- *
- * Reads the store; writes nothing. Registration and version stamping stay in
- * `main`, because running the inspector must not make the CLI look like a
- * session on the roster.
+ * EXPORTED SO `crew injection` INSPECTS THE REAL THING: both callers get the
+ * same candidates from the same store, and only the rendering differs.
  */
 export function sessionEnvelope(store: Store, input: EnvelopeInputs): Envelope {
   const { me, projectName, sessionId, tree, now } = input;
@@ -230,23 +169,12 @@ export function sessionEnvelope(store: Store, input: EnvelopeInputs): Envelope {
     candidates.push({ ...c, dedupeKey: c.dedupeKey ?? c.key });
   };
 
-  // P2 produces candidates; P0 remains the only allocator and exposure ledger.
-  // The conversation uuid is the durable agent principal across resume/restart.
+  // CAPPED, because obligations rank ABOVE the roster and would otherwise let
+  // one peer own the whole budget. Oldest first, so a long-outstanding one is
+  // never starved; the remainder collapses to a countable line.
   //
-  // CAPPED, because obligations are the one priority class that can crowd out
-  // everything else. They rank ABOVE the roster and nothing expires them --
-  // `--until` is opaque text and the `expire` event has no trigger -- so a
-  // peer that files twenty obligations occupies the whole budget of a session
-  // that never agreed to any of them. Measured 2026-08-05: three sat above a
-  // roster for 45 minutes with no path to removal.
-  //
-  // Oldest first, so a long-outstanding obligation is never starved by a fresh
-  // one; the remainder collapses to a single countable line. This is the
-  // `inbox` pattern already built, applied to the class that most needed it.
-  // EXPIRY IS SWEPT HERE because this is the path that would otherwise show a
-  // dead obligation to an agent. There is no daemon; a hook only runs because
-  // its own session did something, so the check has to ride along with a read
-  // that already happens. Idempotent, so doing it every session start is safe.
+  // EXPIRY IS SWEPT HERE because there is no daemon: a hook runs only when its
+  // own session acts, so the check rides along with a read that happens anyway.
   store.obligations.expireDue(now);
   const obligations = store.obligations.candidates(sessionId);
   for (const obligation of obligations.slice(0, MAX_OBLIGATION_CANDIDATES))
@@ -374,14 +302,9 @@ export function sessionEnvelope(store: Store, input: EnvelopeInputs): Envelope {
     });
   }
 
-  // WHAT THIS AGENT KNOWS ABOUT THE OPERATOR. The one place automatic injection
-  // is clearly right: small, certainly relevant (it is about the person in the
-  // room), and the whole difference between an agent that remembers how you
-  // work and one that does not.
-  //
-  // Titles only, and only this agent's. Keyed on the CONVERSATION first so a
-  // rename cannot orphan it, its lineage second so a disciple still inherits —
-  // keying on the name alone lost hopper's memory. See `forConversation`.
+  // WHAT THIS AGENT KNOWS ABOUT THE OPERATOR. Titles only, and only its own.
+  // Keyed on the CONVERSATION first so a rename cannot orphan it, on the
+  // lineage second so a disciple still inherits. See `forConversation`.
   const inherited = input.lineageFrom;
   const lineage = inherited !== "" ? inherited : lineageKey(me, sessionId);
   const mine = withPersonal((personal) =>

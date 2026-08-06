@@ -97,6 +97,26 @@ is worse than useless if you act on its most alarming cell and it was invented.
 `BUSY_HEARTBEAT_MS` is sized from 307 measured intra-session hook gaps (p50 21 s,
 p90 134 s, p95 324 s); five minutes sits just above p95.
 
+## Telling a session its name
+
+**A hook cannot win on rank.** Measured 2026-08-02: asked "who are you", a
+session answered "I'm Claude Code, Anthropic's AI assistant... In this session,
+I'm anouk." It had ranked two claims correctly. The system prompt says "You are
+Claude Code" and is re-presented every turn; the line here said `You are "anouk"
+in Traffic's shared presence log` exactly once, and that sentence ARGUES for the
+losing reading — `in ... log` scopes the name to a database row, and the reply
+mirrored the scoping straight back. Injected text never reaches the system prompt,
+so the goal is not to overwrite "Claude Code": it is to make the name the answer
+to WHO while "Claude Code" stays the answer to WHAT. Hence the name alone on its
+own line with no preposition to hide behind, "Claude Code" conceded rather than
+ignored, and the reason given rather than just the rule.
+
+**Obligations are capped** at `MAX_OBLIGATION_CANDIDATES`. They rank above the
+roster and nothing expires them — `--until` is opaque text and the `expire` event
+has no trigger — so a peer filing twenty would occupy the whole budget of a
+session that never agreed to any. Measured 2026-08-05: three sat above a roster
+for 45 minutes with no path to removal.
+
 ## The trust note
 
 **Phrased as facts, deliberately.** HOOKS.MD is explicit that injected text
