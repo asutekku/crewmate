@@ -2,14 +2,9 @@
  * UserPromptSubmit: heartbeat, deliver unread peer messages, and record what
  * this session was asked to do.
  *
- * This is the hook that makes the whole thing work without polling. Peer news
- * arrives as ordinary context at the top of a turn, so an agent reads it the way
- * it reads anything else — no tool call, no inference cost when idle.
- *
- * THE UNAVOIDABLE LIMIT: this fires on a prompt boundary. A session in the
- * middle of a long autonomous run does not see a peer's message until its next
- * turn. There is no supported way to inject into a running turn today, so the
- * design leans on the Stop hook to catch news at the end of a turn instead.
+ * ONE OF THREE DOORS. This one fires at a prompt; `tool-batch` delivers between
+ * tool batches and `turn-end` after a stop, so a long autonomous run does not
+ * have to wait for its next prompt.
  */
 
 import { agoText, displayName, withStore } from "../core/store.ts";
@@ -25,36 +20,11 @@ import { readTranscript } from "../core/transcript.ts";
 const STALE_SHOWN = 3;
 
 /**
- * Asks about open work items that have not moved in a while.
- *
- * WHY: an item is opened, the work finishes, the agent moves on and never
- * closes it — so the board keeps advertising work nobody is doing. Observed
- * live 2026-08-01: an item sat 13 hours at "1/3 · updated 12h" while its agent
- * had shipped four unrelated commits since. The operator reads that board to
- * see who is doing what, and a dangling item is a lie it tells about a
- * specific agent.
- *
- * NEVER AUTO-CLOSED. Only the agent knows whether the work finished, was
- * abandoned, or is genuinely parked, and a timer that closed it would swap a
- * stale "open" for an equally wrong "done" — worse, because "done" is believed.
- * So this asks; the decision stays where the knowledge is.
- *
- * ASKED ONCE PER ITEM. `markAsked` records it, so an agent that judges an item
- * still live is not asked again next turn. A reminder that repeats is a
- * reminder that gets skipped, and then the one that mattered is skipped too.
- * (The column and setter for this shipped months ago with NO CALLER — the
- * nudge was scaffolded and never wired, which is why the board dangled.)
- */
-/**
  * Questions owed by this session, and answers owed to it.
  *
- * BOTH DIRECTIONS IN ONE PLACE, because they are the two halves of the same
- * fact. An agent that asked something needs the reply the moment it lands, and
- * an agent that was asked needs to be told at all — `msg` reaches it eventually
- * but carries no obligation, which is exactly the gap questions exist to close.
- *
- * Resolved answers are DRAINED, so each is shown once. Repeating one every turn
- * is how a line that mattered becomes a line that gets skipped.
+ * BOTH DIRECTIONS IN ONE PLACE, being two halves of one fact. Resolved answers
+ * are DRAINED, so each is shown once: a line repeated every turn is a line that
+ * gets skipped.
  */
 function questionLines(
   store: Parameters<Parameters<typeof withStore>[1]>[0],
@@ -86,6 +56,10 @@ function questionLines(
   return lines;
 }
 
+/**
+ * Asks about open work items that have not moved. NEVER AUTO-CLOSED and asked
+ * ONCE PER ITEM — see `staleItems` in core/work.ts for why both matter.
+ */
 function staleWorkLines(
   store: Parameters<Parameters<typeof withStore>[1]>[0],
   sessionId: string,

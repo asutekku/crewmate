@@ -1,24 +1,9 @@
 /**
- * Public facade and compatibility methods for the agent-presence stores: who
- * is working in this repo, what they are doing, and their shared message log.
+ * Public facade for the agent-presence stores: who is working in this repo,
+ * what they are doing, and their shared message log.
  *
- * WHY SQLITE AND NOT A MARKDOWN FILE: 3-4 agents run concurrently here, and a
- * read-modify-write of one `.md` is a lost-update race — two sessions read the
- * same text and the second write erases the first's line. That is precisely the
- * failure this is meant to prevent, so the store has to serialise writes itself.
- * `bun:sqlite` ships with Bun (no dependency to add) and WAL mode lets every
- * reader proceed while one writer commits, so a hook never blocks on a peer.
- *
- * THE CURSOR IS THE DELIVERY MODEL: `messages.id` is monotonic and each session
- * stores the last id it has been shown. "Unread" is `id > last_read_id`, so
- * delivery is a range read followed by advancing one integer. No per-recipient
- * fan-out, no acknowledgements, and a session that never reads simply has a
- * stale cursor rather than a growing queue of its own.
- *
- * ADVISORY ONLY: nothing here can stop another agent from editing a file. A
- * claim is a published intention, which is what makes an overlap *visible*;
- * enforcement would mean blocking a tool call, and a wedged agent is worse than
- * a conflict someone can see and talk about.
+ * ADVISORY ONLY — a claim is a published intention, never a lock. See
+ * docs/design-notes.md for the storage and delivery models.
  */
 
 import { Database } from "bun:sqlite";
@@ -364,12 +349,8 @@ export class Store {
   /**
    * Records an edit: the live claim, and the permanent history row.
    *
-   * BOTH FROM ONE CALL, so the two cannot drift — a claim written without its
-   * history row is an edit that blame will never see, and there is no way to
-   * notice that afterwards.
-   *
-   * The `tool`/`worktree` arguments are optional so the older two-argument form
-   * still works; a caller that omits them loses only detail, never the row.
+   * BOTH FROM ONE CALL, so they cannot drift — a claim with no history row is
+   * an edit `blame` will never see, and nothing afterwards can notice.
    */
   claim(
     sessionId: string,
@@ -488,13 +469,9 @@ export class Store {
   }
 
   /**
-   * The raw connection, for tests that must read a TABLE rather than a view.
-   *
-   * Named rather than left as a private field three test files reach into: the
-   * need is real — `allClaims` inner-joins `sessions`, so an orphaned claim row
-   * vanishes from it whether or not the sweep deleted it, and a leak has to be
-   * asserted where it would accumulate. Production code has the sub-stores and
-   * must not come here.
+   * The raw connection, for tests that must read a TABLE rather than a view:
+   * `allClaims` inner-joins `sessions`, so an orphaned claim row vanishes from
+   * it either way. Production code uses the sub-stores.
    */
   get rawDb(): Database {
     return this.db;
@@ -503,11 +480,9 @@ export class Store {
   /**
    * Conversation uuids Claude Code still has a transcript for, lowercased.
    *
-   * Empty when the directory is missing or unreadable, which reads as "none" —
-   * so a caller offering `claude --resume` shows nothing rather than an offer
-   * that would fail. `owners.release` treats the same empty set as "unknown"
-   * and keeps every name; the difference is deliberate, since one direction
-   * loses a hint and the other would lose an identity.
+   * Empty means "none" here, so a caller offers no dead `--resume`. DELIBERATE
+   * ASYMMETRY: `owners.release` reads the same empty set as "unknown" and keeps
+   * every name, because that direction would lose an identity, not a hint.
    */
   conversationsOnDisk(): Set<string> {
     if (this.transcriptDirPath === "") return new Set();

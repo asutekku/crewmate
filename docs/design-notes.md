@@ -97,6 +97,31 @@ is worse than useless if you act on its most alarming cell and it was invented.
 `BUSY_HEARTBEAT_MS` is sized from 307 measured intra-session hook gaps (p50 21 s,
 p90 134 s, p95 324 s); five minutes sits just above p95.
 
+## The personal diary
+
+**One db, outside the per-project files.** Everything else the tool stores is
+per-repo because everything else is about a repo; this is about a PERSON, and a
+preference stated in one project is usually true in the next. But not always —
+"run the water tests alone, this box is loaded" is about this machine. So every
+entry carries the project it was learned in and `global` marks the ones that
+travel. The default is project-scoped, because a preference carried into the
+wrong repo is acted on confidently and wrongly.
+
+**Keyed on a lineage, not a conversation.** Hopper's read of the operator is not
+Luna's, and that separation stays. But a conversation uuid is the wrong grain:
+delete the transcript and the memories keyed on it die with the one thing
+guaranteed not to outlive them. The operator's case was that starting a new
+roadworks session when a roadworks agent already exists "might create a
+completely new empty state that has to learn everything from scratch". A lineage
+is a NAME rather than a new synthetic id — `aliases` already maps uuid to name
+durably, survives `pruneStale`, and is what the operator types and remembers.
+`session_id` stays frozen on every row, so "which conversation learned this" is
+still answerable afterwards.
+
+**Readable by the operator.** `about-me` shows what an agent believes about them
+and `forget` is as easy to reach as `remember`. A private model of a person that
+the person cannot read is the one shape this must not take.
+
 ## Packing the block
 
 **The framing is settled by the first peer candidate, win or lose.** The space

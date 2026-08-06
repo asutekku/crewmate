@@ -1,43 +1,11 @@
 /**
- * The personal diary: what one agent has learned about the operator.
+ * The personal diary: what one agent has learned about the OPERATOR.
  *
- * NOT facts about the code — those are shared, and putting one here hides it
- * from everyone. The test is: WOULD ANOTHER AGENT BE WRONG TO ACT ON THIS?
- * Yes, it is personal ("hands me rendering changes to check visually rather
- * than screenshotting"). No, it belongs in the shared diary.
- *
- * ONE DB, OUTSIDE THE PER-PROJECT FILES, which is the only piece of new
- * plumbing in the diary work. Everything else the tool stores is per-repo,
- * because everything else is about a repo; this is about a PERSON, and a
- * preference they stated in one project is usually true in the next.
- *
- * But not always — "run the water tests alone, this box is loaded" is about
- * this machine and this project. So every entry carries the project it was
- * learned in, and `global` marks the ones that travel. Default is
- * project-scoped: a preference carried into the wrong repo is acted on
- * confidently and wrongly, which is worse than not remembering it.
- *
- * KEYED ON A LINEAGE, NOT A CONVERSATION. Hopper's read of the operator is not
- * Luna's — that part is deliberate and stays. But a conversation uuid is the
- * wrong grain for it: delete the transcript and the agent is gone, so memories
- * keyed on the uuid die with the one thing guaranteed not to outlive them. The
- * operator said it plainly: starting a new roadworks session when a roadworks
- * agent already exists "might create a completely new empty state that has to
- * learn everything from scratch".
- *
- * A LINEAGE IS A NAME. Not a new synthetic id — `aliases` already maps uuid to
- * name durably (it survives `pruneStale`, which drops `sessions` rows at 90
- * minutes), a name is held for 60 h against four sources, and a name is what
- * the operator types and remembers. Adding a second identifier beside it would
- * be a column that has to be kept in sync with the one that already works.
- *
- * `session_id` stays on every row untouched, frozen at write time, so "which
- * conversation learned this" is still answerable after that conversation is
- * gone — the same split the diary and `edits` already use.
- *
- * READABLE BY THE OPERATOR. `about-me` shows what an agent believes about
- * them, and `forget` is as easy to reach as `remember`. A private model of a
- * person that the person cannot read is the one shape this must not take.
+ * NOT facts about the code, which are shared. The test is "would another agent
+ * be wrong to act on this?". Keyed on a LINEAGE (a name), not a conversation,
+ * so memories outlive the transcript. Entries default to project-scoped, and
+ * `global` marks the ones that travel. See docs/design-notes.md, "The personal
+ * diary" — including why the operator can always read and delete it.
  */
 
 import { Database } from "bun:sqlite";
@@ -46,12 +14,8 @@ import { BASE_DIR } from "./repo.ts";
 
 /**
  * Deliberately outside `resolveProject`: this is the one store that is NOT
- * per-repo, and routing it through the project resolver would silently make it
- * per-repo again.
- *
- * `PRESENCE_TEST_DB` still redirects it, for the same reason it redirects
- * everything else — a test that reaches the real store is how the live roster
- * got polluted with fake agents once already.
+ * per-repo, and the resolver would silently make it so. `PRESENCE_TEST_DB`
+ * still redirects it, so a test can never reach the real store.
  */
 export function personalDbPath(): string {
   const test = process.env["PRESENCE_TEST_DB"] ?? "";
@@ -124,13 +88,9 @@ function addPersonalColumn(db: Database, column: string, decl: string): void {
 }
 
 /**
- * The lineage a name belongs to.
- *
- * Lowercased so `Hopper` and `hopper` are one body of knowledge — names are
- * matched case-insensitively everywhere else in this tool, and two lineages
- * differing only in case would be invisible to the operator who typed them.
- * Empty name falls back to the uuid, keeping an anonymous session private to
- * itself rather than pooling every unnamed agent together.
+ * The lineage a name belongs to. Lowercased, so `Hopper` and `hopper` are one
+ * body of knowledge. An empty name falls back to the uuid, keeping an anonymous
+ * session private to itself rather than pooling every unnamed agent.
  */
 export function lineageKey(name: string, sessionId: string): string {
   const n = name.trim().toLowerCase();
@@ -236,12 +196,9 @@ export class PersonalStore {
   /**
    * What THIS CONVERSATION learned, by uuid, falling back to its lineage.
    *
-   * The uuid is the durable key (user ruling, 2026-08-05): knowledge belongs to
-   * the conversation, so a rename cannot orphan it. MEASURED: hopper's memory
-   * was keyed `lineage = 'hopper'` and vanished when it returned as `akari`.
-   *
-   * The lineage arm is not legacy support — a disciple inherits by NAME
-   * (`crew inherit hopper`), which the uuid alone could not express.
+   * The uuid is the durable key, so a rename cannot orphan knowledge. The
+   * lineage arm is not legacy support: a disciple inherits by NAME, which the
+   * uuid alone cannot express.
    */
   forConversation(
     sessionId: string,
@@ -303,13 +260,9 @@ export class PersonalStore {
   }
 
   /**
-   * DELETES, where the shared diary deprecates.
-   *
-   * The asymmetry is deliberate. A shared finding that stopped being true is
-   * still history worth keeping — somebody believed it for a reason. A wrong
-   * belief about a PERSON has no such value: it is injected every session, it
-   * compounds, and the operator asked for it gone. Keeping a tombstone would
-   * mean an agent could still read what it was told to forget.
+   * DELETES, where the shared diary deprecates. A wrong belief about a PERSON
+   * is injected every session and compounds, and a tombstone would let an agent
+   * still read what it was told to forget.
    */
   forget(id: number): boolean {
     return this.db.query(`DELETE FROM memories WHERE id = ?`).run(id).changes > 0;
