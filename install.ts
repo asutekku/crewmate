@@ -44,8 +44,13 @@ const HERE = `${dirname(fileURLToPath(import.meta.url)).replace(/\\/g, "/")}/`;
  * dev dependency (`@types/bun`), and the first install from it copied 236 files
  * instead of 74 — 162 type declarations deployed as if they were hooks, and
  * folded into the content hash that identifies the build.
+ *
+ * `.claude` holds kept worktrees (`.claude/worktrees/<name>` is a full second
+ * checkout): an install run beside one deployed 157 scripts instead of 78,
+ * every module twice, measured 2026-08-06 minutes after the first kept
+ * worktree existed.
  */
-const SKIPPED_DIRS = new Set(["test", "node_modules", ".git"]);
+const SKIPPED_DIRS = new Set(["test", "node_modules", ".git", ".claude"]);
 
 async function scriptNames(): Promise<string[]> {
   const { readdirSync } = await import("node:fs");
