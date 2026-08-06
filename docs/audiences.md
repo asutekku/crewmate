@@ -42,12 +42,12 @@ nobody but their author.
 
 | Audience | Count |
 | -------- | ----- |
-| agent | 32 |
+| agent | 33 |
 | human | 11 |
 | shared | 3 |
 | oversight | 10 |
 
-Derived from `core/verbs.ts` by `test/tools/regen-audiences.ts`; 56 verbs in total. Do not edit between the markers.
+Derived from `core/verbs.ts` by `test/tools/regen-audiences.ts`; 57 verbs in total. Do not edit between the markers.
 
 ## Agent
 
@@ -87,6 +87,7 @@ Reached from an injection, a hook, or another agent's coordination. A human *can
 | `inherit` | take up a departed agent's knowledge; bare lists them |
 | `call-me` | take a different name; peers type it at msg |
 | `call-you` | say what you ARE: Keeper of Wet Things |
+| `release` | give up your name so a successor can take it |
 
 ## Human
 

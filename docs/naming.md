@@ -75,3 +75,29 @@ Three rules, each protecting something specific:
   roster row. Whitespace is collapsed rather than refused, so a name pasted with
   a trailing newline is cleaned instead of rejected.
 
+
+## Handing a name to a successor
+
+An agent gives its name up while still alive:
+
+```sh
+crew release            # outgoing session
+crew call-me hopper     # successor session
+```
+
+Two commands in two sessions. The releasing agent takes a fresh name from the
+pool and stays on the roster, so `msg` still reaches it.
+
+**Why a verb exists for this.** `quit` does not free a name, and cannot: it
+deregisters a session that may simply be idle, and taking names from agents that
+are coming back is the bug the ledger was built to prevent. A live session also
+cannot free its own name by any combination of other commands — the reads it
+does to *verify* the release re-register it, because `quit` writes the departing
+name into `aliases` and the next `register` reads it straight back.
+
+Measured 2026-08-05/06: a `HANDOVER.md` opened with `crew call-me hopper`, and
+that instruction was unrunnable by the agent it was written for. The successor
+saw `✗ another live agent already answers to hopper`.
+
+`release` drops the ledger row and the alias row in one transaction, so the name
+is genuinely free the instant the command returns.

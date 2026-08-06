@@ -210,6 +210,20 @@ export class OwnershipStore {
     return gone.length;
   }
 
+  /**
+   * Drops ONE conversation's row, because that agent gave the name up.
+   *
+   * Distinct from `release(live)`, which prunes by what is on disk. This is a
+   * deliberate act by a session that is still alive, so it cannot be expressed
+   * as absence — the transcript is still there and always will be.
+   */
+  forget(sessionId: string): boolean {
+    return (
+      this.db.query(`DELETE FROM name_owners WHERE session_id = ?`).run(sessionId)
+        .changes > 0
+    );
+  }
+
   /** Every ledgered ownership, newest claim first. */
   all(): Ownership[] {
     return (this.db.query(

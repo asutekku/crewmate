@@ -215,6 +215,31 @@ export class SessionStore {
     return set.immediate();
   }
 
+  /**
+   * Gives a live session a fresh name from the pool, clearing any alias.
+   *
+   * For `releaseName`, which has already dropped this session's ledger and
+   * alias rows. The seed is the session id, so the name is the one this
+   * conversation would have been given had it registered now.
+   */
+  rename(sessionId: string): string | null {
+    const exists = this.db.query(`SELECT 1 FROM sessions WHERE session_id = ?`).get(sessionId);
+    if (!exists) return null;
+    const taken = new Set<string>();
+    for (const r of this.db.query(
+      `SELECT handle, alias FROM sessions WHERE session_id != ?`,
+    ).all(sessionId) as Array<{ handle: string; alias: string }>) {
+      taken.add(r.handle.toLowerCase());
+      if (r.alias !== "") taken.add(r.alias.toLowerCase());
+    }
+    for (const name of this.owners.reserved(liveConversations(this.transcriptDirPath)))
+      taken.add(name);
+    const fresh = pickName(taken, sessionId);
+    this.db.query(`UPDATE sessions SET handle = ?, alias = '' WHERE session_id = ?`)
+      .run(fresh, sessionId);
+    return fresh;
+  }
+
   setRole(sessionId: string, role: string): void {
     this.db.query(`UPDATE sessions SET role = ? WHERE session_id = ?`).run(role, sessionId);
   }

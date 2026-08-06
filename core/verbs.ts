@@ -154,6 +154,7 @@ export const VERBS: readonly Verb[] = [
   // ---- identity
   { verb: "call-me", audience: "agent", args: "<name> [--agent <who>]", blurb: "take a different name; peers type it at msg", group: "identity", aliases: ["name"] },
   { verb: "call-you", audience: "agent", args: '"<role>" [--agent <who>]', blurb: "say what you ARE: Keeper of Wet Things", group: "identity", aliases: ["role"] },
+  { verb: "release", audience: "agent", args: "[--agent <who>]", blurb: "give up your name so a successor can take it", group: "identity" },
 ];
 
 /** Every spelling that must appear as a `case` label, aliases included. */

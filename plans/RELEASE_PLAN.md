@@ -5,7 +5,10 @@
 `crew release <name>` — an agent gives up its name **while still alive**, so the
 next session can take it.
 
-Status: **specified, not built.**
+Status: **P0 and P1 shipped 2026-08-06.** Measured against the code: `crew release`
+is registered in `core/verbs.ts`, `Store.releaseName` does the three writes in one
+transaction, and `test/release.test.ts` carries 10 tests including the
+mutation-verified regression. P1 succession is documented in `docs/naming.md`.
 
 ## The defect
 

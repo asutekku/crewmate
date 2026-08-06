@@ -191,6 +191,7 @@ a verb is dispatched without appearing here.
 |---|---|
 | `call-me <name> [--agent <who>]` | take a different name; peers type it at msg |
 | `call-you "<role>" [--agent <who>]` | say what you ARE: Keeper of Wet Things |
+| `release [--agent <who>]` | give up your name so a successor can take it |
 
 <!-- END GENERATED COMMANDS -->
 

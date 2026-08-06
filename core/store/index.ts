@@ -262,6 +262,30 @@ export class Store {
     const unregister = this.db.transaction(() => this.sessions.unregister(sessionId, nowMs));
     unregister.immediate();
   }
+  /**
+   * Gives up a name while still alive, and takes a fresh one.
+   *
+   * THREE WRITES, ONE TRANSACTION, and each is load-bearing. The ledger row
+   * returns the name to the pool. The `aliases` row goes too, or `restoreAlias`
+   * hands the name straight back on the next heartbeat -- the exact bug this
+   * exists to fix. The session then takes a new name, because it is still alive
+   * and `msg` must still reach it.
+   *
+   * Returns the new name, or null if the caller has no session row.
+   */
+  releaseName(sessionId: string, nowMs: number): string | null {
+    const run = this.db.transaction((): string | null => {
+      const session = this.findBySession(sessionId);
+      if (!session) return null;
+      this.owners.forget(sessionId);
+      this.db.query(`DELETE FROM aliases WHERE session_id = ?`).run(sessionId);
+      const fresh = this.sessions.rename(sessionId);
+      if (fresh !== null) this.owners.claim(sessionId, fresh, nowMs);
+      return fresh;
+    });
+    return run.immediate();
+  }
+
   departSession(sessionId: string, nowMs: number): boolean {
     const run = this.db.transaction(() => {
       const session = this.findBySession(sessionId);

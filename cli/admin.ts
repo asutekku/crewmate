@@ -54,6 +54,35 @@ export function createAdminCommands(context: CliContext): CommandMap {
       );
     });
   };
+  /**
+   * Gives up a name while still alive, so a successor can take it.
+   *
+   * The outgoing agent runs this; the successor runs `call-me`. Two commands in
+   * two sessions, with no third party and no race -- see plans/RELEASE_PLAN.md
+   * for the trick this replaces.
+   */
+  const release = (args: readonly string[]): void => {
+    const parsed = parseArguments(args, { valueFlags: ["--agent"] });
+    if (!parsed.ok) return failCommand(context, `release: ${parsed.error}`);
+    const target = stringFlag(parsed.value, "--agent") ?? "";
+    withStore(context.dbPath, (store) => {
+      const now = context.now();
+      const self = resolveSelf(context, store, target, now, "`release`");
+      if (!self) return;
+      const was = displayName(self);
+      const fresh = store.releaseName(self.sessionId, now);
+      if (fresh === null) {
+        context.error(`${red("✗")} no session to release a name from`);
+        context.fail();
+        return;
+      }
+      context.log(
+        `${green("✓")} ${bold(was)} released ${dim("—")} you are now ` +
+          `${bold(handleColour(fresh)(fresh))}`,
+      );
+      context.log(dim(`  A successor may take it with \`crew call-me ${was}\`.`));
+    });
+  };
   const role = (args: readonly string[]): void => {
     const parsed = parseArguments(args, { valueFlags: ["--agent"] });
     if (!parsed.ok) return failCommand(context, `call-you: ${parsed.error}`);
@@ -82,6 +111,7 @@ export function createAdminCommands(context: CliContext): CommandMap {
   };
   return {
     "call-me": rename,
+    release,
     name: rename,
     "call-you": role,
     role,
