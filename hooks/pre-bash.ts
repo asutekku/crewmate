@@ -8,7 +8,9 @@
  * `test/prebash.test.ts` for the cases held open on purpose.
  */
 
-import { readPayload } from "../core/shared.ts";
+import { loadCrewFile, type CrewFile } from "../core/crewfile.ts";
+import { resolveProject } from "../core/repo.ts";
+import { emit, readPayload } from "../core/shared.ts";
 
 /** A shell loop. `until` counts: `until [ -s f ]; do sleep 5; done` is the same bug. */
 const LOOP = /\b(?:for|while|until)\b/;
@@ -75,23 +77,65 @@ export function checkCommand(command: string): Verdict {
   };
 }
 
+/**
+ * WARN, NOT DENY — the poll guard denies because the denied thing is strictly
+ * wasteful, where a full-suite run is sometimes right (a cross-cutting change
+ * before a commit). Facts plus the alternative, and the agent decides.
+ */
+export function checkTestPolicy(command: string, crew: CrewFile): string {
+  if (crew.testPolicy !== "scoped-only") return "";
+  const test = crew.checks.test.trim();
+  if (test === "") return "";
+  const runnable = executableParts(command);
+  const escaped = test.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+  // The command, standing alone in its statement: at a statement boundary, and
+  // followed only by flags until the next one. A non-flag token after it is a
+  // path — that IS the scoped form, and the warning must not fire on it.
+  const statement = new RegExp(`(?:^|[;&|(\\n])\\s*${escaped}(?=\\s|$)([^;&|\\n]*)`, "g");
+  for (const match of runnable.matchAll(statement)) {
+    const rest = (match[1] ?? "").trim();
+    // A bare integer is a flag's VALUE (`--timeout 10000`), not a path; every
+    // real scope argument has a name. Numbers must not read as scoped.
+    const scoped = rest
+      .split(/\s+/)
+      .some((token) => token !== "" && !token.startsWith("-") && !/^\d+$/.test(token));
+    if (!scoped) {
+      const scopedForm = crew.checks.testScoped !== "" ? crew.checks.testScoped : `${test} <path>`;
+      return (
+        `This runs the full test suite (\`${test}\`), and this repo's crew.json sets ` +
+        `\`testPolicy: scoped-only\`. A scoped run covers a self-contained change: ` +
+        `\`${scopedForm}\` with the files you touched. Full runs cost minutes, and other ` +
+        `agents' in-flight edits can make unrelated failures look like yours. If the ` +
+        `change is genuinely cross-cutting, the full run is still yours to make.`
+      );
+    }
+  }
+  return "";
+}
+
 async function main(): Promise<void> {
   const payload = await readPayload();
   const command = payload?.tool_input?.command ?? "";
   if (command === "") return;
 
   const verdict = checkCommand(command);
-  if (!verdict.deny) return;
+  if (verdict.deny) {
+    console.log(
+      JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "deny",
+          permissionDecisionReason: verdict.reason,
+        },
+      }),
+    );
+    return;
+  }
 
-  console.log(
-    JSON.stringify({
-      hookSpecificOutput: {
-        hookEventName: "PreToolUse",
-        permissionDecision: "deny",
-        permissionDecisionReason: verdict.reason,
-      },
-    }),
-  );
+  const cwd = payload?.cwd;
+  if (!cwd) return;
+  const warning = checkTestPolicy(command, loadCrewFile(resolveProject(cwd).root));
+  if (warning !== "") emit("PreToolUse", warning, "presence: crew.json testPolicy is scoped-only");
 }
 
 try {

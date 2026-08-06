@@ -108,6 +108,10 @@ export const VERBS: readonly Verb[] = [
   // avoided running it on the strength of a blast radius it does not have.
   { verb: "clear", audience: "human", args: "[--force]", blurb: "wipe the roster and claims; the log is kept", group: "presence" },
   { verb: "export", audience: "human", args: "[path]", blurb: "copy the store somewhere safe before anything destructive", group: "presence" },
+  // The flag list is partial like `note`'s: `--no-claude-md`, `--crew-size`,
+  // `--task-length` and `--overnight` live in the plan and the README; the
+  // spec carries the flags an operator reaches for first.
+  { verb: "init", audience: "human", args: "[--check [--repo]] [--test-policy <p>] [--base-ref <ref>]", blurb: "set this repo up: crew.json, the CLAUDE.md block, settings", group: "presence" },
   // `--help`/`-h` dispatch here too. They are flag SPELLINGS rather than verbs,
   // so they are aliases (recognised, never advertised) -- help offering three
   // ways to ask for help is help that wastes its first line on itself.

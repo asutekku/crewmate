@@ -67,6 +67,9 @@ replaces `bin/` wholesale so a module that moves cannot leave a stale twin.
 | `names.ts`            | The given-name pool, and the two casers (prose role vs typeable name).                                                                    |
 | `dirty.ts`            | Uncommitted files, for the roster's "what is in flight" line.                                                                             |
 | `config.ts`           | Tunables — staleness windows, how much of the board to show.                                                                              |
+| `crewfile.ts`         | The repo's shape from `.claude/crew.json` — hot/generated globs, checks, per-repo tunables. Degrades per field.                           |
+| `detect.ts`           | Manifests in, partial crew.json out — pure detectors per format, for `crew init`.                                                         |
+| `initBlock.ts`        | The generated CLAUDE.md coordination block: template, markers, case-insensitive file match.                                               |
 | `stats.ts`            | Aggregates rows plus separate feature availability/exposure/use observations, session opportunities, and surfaces.                        |
 | `injection.ts`        | What reaches a session's context: identity as an un-evictable envelope, everything else ranked against a budget.                          |
 | `sessionBlock.ts`     | The session-start candidates themselves — roster, recent activity, diary, memories — built once for both the hook and `crew injection`. |

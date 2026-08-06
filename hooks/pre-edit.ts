@@ -12,6 +12,7 @@
 
 import type { Claim } from "../core/store.ts";
 import { agoText, claimName, displayName, withStore } from "../core/store.ts";
+import { loadCrewFile, matchesAny } from "../core/crewfile.ts";
 import { discipleName } from "../core/names.ts";
 import { withPersonal } from "../core/personal.ts";
 import { emit, readPayload } from "../core/shared.ts";
@@ -210,6 +211,21 @@ async function main(): Promise<void> {
   const outsideTree = /^(?:[A-Za-z]:\/|\/)/.test(path.replace(/\\/g, "/"));
   if (outsideTree) return;
 
+  const crew = loadCrewFile(project.root);
+  // A GENERATED FILE NEEDS NO COORDINATION: build outputs are re-derived, so a
+  // claim on one is noise that pushes real claims past the cap, and an overlap
+  // there is not a conflict. crew.json's `generated` list opts the path out.
+  if (matchesAny(crew.generated, path)) return;
+  // Hot files conflict WHETHER OR NOT anyone holds a claim — a lockfile merge
+  // fails on any two concurrent writers. Stated even when no peer is live.
+  const hotLines = matchesAny(crew.hot, path)
+    ? [
+        `crew.json lists ${path} as hot: simultaneous edits here conflict regardless of ` +
+          `who else is live (lockfiles and shared manifests merge badly).`,
+        `\`crew blame ${path}\` shows who has been in it recently.`,
+      ]
+    : [];
+
   const notice = withStore(project.dbPath, (store) => {
     const now = Date.now();
     store.touch(sessionId, now);
@@ -337,15 +353,22 @@ async function main(): Promise<void> {
     return [...lines, ...(diary.length > 0 ? ["", ...diary] : [])].join("\n");
   }, project.root);
 
-  if (!notice) return;
+  if (!notice && hotLines.length === 0) return;
+  // The hot notice leads: it holds whether or not a peer is live, where the
+  // overlap and diary halves depend on who else has been here.
+  const combined = [hotLines.join("\n"), notice ?? ""].filter((s) => s !== "").join("\n\n");
   // The status line names the OVERLAP only when there is one — a diary pointer
   // is not a warning, and labelling it as one is how a genuine collision stops
   // being read as urgent.
-  const overlap = notice.startsWith("Another session is editing");
+  const overlap = notice?.startsWith("Another session is editing") ?? false;
   emit(
     "PreToolUse",
-    notice,
-    overlap ? "presence: file also claimed by another agent" : "presence: diary notes on this folder",
+    combined,
+    overlap
+      ? "presence: file also claimed by another agent"
+      : hotLines.length > 0
+        ? "presence: crew.json lists this file as hot"
+        : "presence: diary notes on this folder",
   );
 }
 

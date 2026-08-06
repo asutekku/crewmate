@@ -47,6 +47,31 @@ Hooks are installed user-wide rather than per-project because a git worktree
 checked out at an older commit never sees a project-level hook — and worktrees
 are exactly where parallel agents run.
 
+## Init a repo
+
+```sh
+crew init            # write the repo's crew.json, CLAUDE.md block, settings
+crew init --check    # report only: install state, files, derived config
+```
+
+`crew init` reads the repo's own manifests — lockfiles, workspace configs,
+test scripts, `.gitignore` — and writes three files at the main tree root:
+
+- **`.claude/crew.json`** — the repo's shape: `generated` globs the pre-edit
+  hook never claims, `hot` files it warns on regardless of who is live,
+  `checks` (the real test commands), `testPolicy` (`scoped-only` makes
+  pre-bash suggest the one-file form on full-suite runs), and per-repo
+  `tunables` overriding `config.json`.
+- **A CLAUDE.md block** between `<!-- crew:init:begin/end -->` markers — the
+  shared-tree git rules, the crew habits, and the repo's scoped test command.
+  Text outside the markers is never touched.
+- **`.claude/settings.json`** — `worktree.baseRef` only, merged.
+
+It never prompts: bare `crew init` applies detection plus defaults, flags
+override (`--test-policy`, `--base-ref`, `--crew-size`, `--task-length`,
+`--overnight`, `--no-claude-md`), and re-running re-derives while keeping
+hand-added keys. `--check --repo` is CI-safe — it ignores machine state.
+
 ## Usage
 
 ```sh
@@ -142,6 +167,7 @@ a verb is dispatched without appearing here.
 | `quit <name> [--force]` | drop a session off the roster; no liveness check |
 | `clear [--force]` | wipe the roster and claims; the log is kept |
 | `export [path]` | copy the store somewhere safe before anything destructive |
+| `init [--check [--repo]] [--test-policy <p>] [--base-ref <ref>]` | set this repo up: crew.json, the CLAUDE.md block, settings |
 | `help` | this list |
 
 ### What you are doing

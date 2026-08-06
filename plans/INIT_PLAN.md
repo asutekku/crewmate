@@ -198,42 +198,48 @@ markerless hand-written CLAUDE.md section is reported, never edited.
 
 ## Phases
 
+P0–P3 shipped 2026-08-06, with three deviations from the text below, each
+deliberate:
+
+1. **No questions at all.** The user asked for a bare `crew init` that works
+   without prompting anywhere. The TTY question flow was dropped; flags are
+   the only override surface, and defaults apply otherwise. "The questions"
+   section above describes flags now, not prompts.
+2. **`core/detect.ts` is one module, not a `core/detect/` directory** — the
+   detectors are small pure functions and a directory bought nothing.
+3. **Init owns a feature id** (`init` in `core/features.ts`) rather than
+   `trackUse: false`: `features.test.ts` requires every non-help verb to have
+   a feature owner, which is stricter than this plan assumed.
+
 ### P0 — config layer
-- [ ] `core/crewfile.ts`: schema, parse, per-field validation, `repoConfig(root)`
+- [x] `core/crewfile.ts`: schema, parse, per-field validation, `repoConfig(root)`
       merge (DEFAULTS ← global ← repo), cache keyed by root, clear seam.
-- [ ] Tests: malformed file → empty shape; one bad key does not drop the rest;
-      merge order; unknown and reserved keys preserved, never a throw.
+- [x] Tests: `test/crewfile.test.ts` — malformed file → empty shape; one bad
+      key does not drop the rest; merge order; unknown and reserved keys.
 
 ### P1 — the verb, read-only
-- [ ] Row in `core/verbs.ts` (enforced by verbs.test.ts): audience `human`,
-      group `presence`.
-- [ ] Feature wiring in `core/features.ts` — `cli/main.ts` records feature use
-      through `featureForVerb`, so init either joins a feature's `helpVerbs`
-      or carries `trackUse: false` deliberately. An unwired verb is a silent
-      telemetry hole, which is exactly the drift the verb table exists to stop.
-- [ ] New family `cli/init.ts` in `COMMAND_FAMILIES` (`cli/main.ts`); detectors
-      in `core/detect/` as pure functions over the file list. `install.ts`
-      walks the tree, so the new directory deploys with no installer change.
-- [ ] `crew init --check`: prints the derived crew.json, the install state
-      (`installedVersion`, `driftFromInstalled`, shim on PATH), which of the
-      three files exist, and any keys in crew.json nothing reads. Exit 1 when
-      something is missing. CI NEEDS A NARROWER GATE: install state is per
-      MACHINE (hooks, shim, `~/.claude`), so on a CI runner it is always
-      missing and a bare `--check` would always fail. `--check --repo` limits
+- [x] Row in `core/verbs.ts`; feature owner in `core/features.ts`.
+- [x] New family `cli/init.ts` in `COMMAND_FAMILIES`; detectors in
+      `core/detect.ts` as pure functions over a `FileAccess`.
+- [x] `crew init --check`: prints the derived crew.json, the install state
+      (`installedVersion`, shim on PATH), which of the three files exist, and
+      keys nothing reads. Exit 1 when something is missing. CI NEEDS A
+      NARROWER GATE: install state is per MACHINE, so `--check --repo` limits
       the check and the exit code to the repo files; that is the CI gate.
 
 ### P2 — cheap consumers, existing hooks
-- [ ] pre-edit: skip claims on `generated`; escalate on `hot` with last-touch
-      from existing edit history.
-- [ ] pre-bash: `testPolicy` warning naming `checks.testScoped`.
-- [ ] Tests beside the hooks' existing suites.
+- [x] pre-edit: skips claims on `generated`; warns on `hot` (pointing at
+      `crew blame` rather than embedding last-touch — one query cheaper).
+- [x] pre-bash: `testPolicy` warning naming `checks.testScoped`.
+- [x] Tests: `test/testpolicy.test.ts` (pure), `test/crewfile-hook.test.ts`
+      (the real subprocess with a payload on stdin).
 
 ### P3 — init writes
-- [ ] crew.json (only keys with shipped consumers), CLAUDE.md block from the
+- [x] crew.json (only keys with shipped consumers), CLAUDE.md block from the
       template (case-insensitive filename match), settings.json
-      `worktree.baseRef`. Golden test pins the block; idempotency test pins
-      re-run behaviour.
-- [ ] This repo runs `crew init` on itself; the hand-written CLAUDE.md section
+      `worktree.baseRef`. `test/init-block.test.ts` pins the block;
+      `test/init-cli.test.ts` pins re-run stability and hand-edit survival.
+- [x] This repo ran `crew init` on itself; the hand-written CLAUDE.md section
       is replaced by the generated block.
 
 ### P4 — structural consumers

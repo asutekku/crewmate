@@ -9,6 +9,14 @@ that applies when the file is missing, unreadable, or malformed — it is read o
 hook paths, so a typo must degrade rather than take a session's edit with it,
 and defaults apply **per field** so one bad line cannot revert the rest.
 
+A repo can override these per key in `<root>/.claude/crew.json` under
+`tunables` (written by `crew init`, editable by hand). The merge order is
+DEFAULTS ← `config.json` ← repo `tunables`, per field, with the same
+degradation rules. The repo file wins because coordination knobs are team
+knowledge; a personal `config.json` still governs every repo without one.
+`crew.json`'s other keys (`generated`, `hot`, `checks`, `testPolicy`) describe
+the repo's shape for the hooks — see the README's "Init a repo".
+
 | Key                 | Default | What it bounds                                        |
 | ------------------- | ------- | ----------------------------------------------------- |
 | `staleMs`           | 90 min  | a session with no heartbeat is treated as gone        |

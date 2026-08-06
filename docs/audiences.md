@@ -43,11 +43,11 @@ nobody but their author.
 | Audience | Count |
 | -------- | ----- |
 | agent | 33 |
-| human | 11 |
+| human | 12 |
 | shared | 3 |
 | oversight | 10 |
 
-Derived from `core/verbs.ts` by `test/tools/regen-audiences.ts`; 57 verbs in total. Do not edit between the markers.
+Derived from `core/verbs.ts` by `test/tools/regen-audiences.ts`; 58 verbs in total. Do not edit between the markers.
 
 ## Agent
 
@@ -103,6 +103,7 @@ Operator surfaces, built for a terminal window. Two fields in `who` — the conv
 | `quit` | drop a session off the roster; no liveness check |
 | `clear` | wipe the roster and claims; the log is kept |
 | `export` | copy the store somewhere safe before anything destructive |
+| `init` | set this repo up: crew.json, the CLAUDE.md block, settings |
 | `help` | this list |
 | `board` | what everyone is doing |
 | `plans` | every plan with work against it, and what shipped |

@@ -20,6 +20,7 @@ export const FEATURES = [
   {id:"release",label:"name release",helpVerbs:["release"]},
   {id:"minions",label:"minions",helpVerbs:[]},
   {id:"tasks",label:"tasks",helpVerbs:[]},
+  {id:"init",label:"repo init",helpVerbs:["init"]},
 ] as const;
 
 export type FeatureId = typeof FEATURES[number]["id"];
