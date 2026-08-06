@@ -73,17 +73,47 @@ export const GIVEN_NAMES = [
 ] as const;
 
 /**
- * Picks a name nobody has used recently.
+ * A stable offset into the pool, from arbitrary text.
+ *
+ * The multiplier and the `>>> 0` match `handleColour`, which needed the same
+ * thing for names outside the pool. Not cryptographic and does not need to be:
+ * a collision costs one probe forward.
+ */
+export function seedOffset(seed: string): number {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 131 + seed.charCodeAt(i)) >>> 0;
+  return h;
+}
+
+/**
+ * Picks a name nobody has used recently, starting from `seed`.
+ *
+ * SCANNING FROM ZERO WASTED THE POOL. `GIVEN_NAMES.find` returned the first free
+ * entry of an alphabetical list, so names were issued strictly in order and only
+ * the first few were ever reachable — measured 2026-08-06, a two-agent roster
+ * read `adela` and `akari`, pool positions 1 and 2. That defeats the mixed
+ * origins the pool was built with: `adela`/`akari`/`akira`/`alder` are four
+ * A-names in a column of eight windows. It also maximised reuse, since the name
+ * released most recently was the next one issued, which is what `NAME_REUSE_MS`
+ * exists to prevent.
+ *
+ * A conversation uuid as the seed makes the choice deterministic per
+ * conversation, matching the ledger in `ownership.ts`: the same session asking
+ * twice gets the same answer. The array stays sorted so a duplicate is still
+ * visible when editing — only the entry point moves.
  *
  * Falls back to a numbered name rather than reusing one: with this many to
  * choose from, exhausting the pool means something is wrong (a hook looping, a
  * db never pruned), and a name that silently doubles up would hide it.
  */
-export function pickName(taken: ReadonlySet<string>): string {
-  const free = GIVEN_NAMES.find((n) => !taken.has(n));
-  if (free !== undefined) return free;
+export function pickName(taken: ReadonlySet<string>, seed = ""): string {
+  const start = seed === "" ? 0 : seedOffset(seed) % GIVEN_NAMES.length;
+  for (let i = 0; i < GIVEN_NAMES.length; i++) {
+    const name = GIVEN_NAMES[(start + i) % GIVEN_NAMES.length];
+    if (name !== undefined && !taken.has(name)) return name;
+  }
   for (let i = 2; i < 1000; i++) {
-    const candidate = `${GIVEN_NAMES[i % GIVEN_NAMES.length]}${i}`;
+    const candidate = `${GIVEN_NAMES[(start + i) % GIVEN_NAMES.length]}${i}`;
     if (!taken.has(candidate)) return candidate;
   }
   return `agent${taken.size}`;

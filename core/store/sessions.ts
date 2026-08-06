@@ -90,7 +90,11 @@ export class SessionStore {
       // can genuinely disagree with the ledger.
       const heldByPeer =
         mine !== "" && this.nameHeldBy(mine, sessionId);
-      const handle = mine !== "" && !heldByPeer ? mine : pickName(taken);
+      // SEEDED ON THE UUID, so a conversation that somehow loses its ledger row
+      // lands on the same name again rather than on whatever is alphabetically
+      // free at that moment. See `pickName`.
+      const handle =
+        mine !== "" && !heldByPeer ? mine : pickName(taken, sessionId);
       this.db
         .query(
           `INSERT INTO sessions

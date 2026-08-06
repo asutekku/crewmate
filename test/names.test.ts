@@ -12,6 +12,9 @@ import { fullName, GIVEN_NAMES, nameCase, pickName, titleCase } from "../core/na
 import { validateAlias, validateRole } from "../core/topic.ts";
 import { rosterName } from "../core/store.ts";
 
+/** `GIVEN_NAMES` is `as const`, so a runtime string is not one of its literals. */
+const POOL: readonly string[] = GIVEN_NAMES;
+
 describe("the name pool", () => {
   test("every name is unique", () => {
     expect(new Set(GIVEN_NAMES).size).toBe(GIVEN_NAMES.length);
@@ -42,7 +45,8 @@ describe("the name pool", () => {
 });
 
 describe("pickName", () => {
-  test("takes the first free name", () => {
+  test("with no seed it takes the first free name", () => {
+    // The unseeded path is what callers with nothing stable to hash still get.
     expect(pickName(new Set())).toBe(GIVEN_NAMES[0]);
     expect(pickName(new Set([GIVEN_NAMES[0]!]))).toBe(GIVEN_NAMES[1]);
   });
@@ -52,6 +56,59 @@ describe("pickName", () => {
     for (let i = 0; i < 250; i++) {
       const n = pickName(taken);
       expect(taken.has(n)).toBe(false);
+      taken.add(n);
+    }
+  });
+
+  /**
+   * THE POOL WAS DECORATIVE. `find` returned the first free entry of a sorted
+   * list, so 280 names chosen for their variety yielded `adela`, `akari`,
+   * `akira`, `alder` -- and a roster of two read as two near-identical A-names.
+   * These pin the distribution, not the specific names, so reordering the pool
+   * does not turn them red.
+   */
+  test("a seed moves the name off the top of the pool", () => {
+    const seeded = pickName(new Set(), "061b1a91-3739-4e63-866c-e9cc3441c77a");
+    expect(POOL).toContain(seeded);
+    expect(seeded).not.toBe(GIVEN_NAMES[0]);
+  });
+
+  test("the same seed always gives the same name", () => {
+    // What makes this safe when a conversation loses its ledger row: it lands
+    // on the name it had, not on whatever is free at that moment.
+    const uuid = "22e930ad-0e3f-476f-9b6c-8a708813a581";
+    expect(pickName(new Set(), uuid)).toBe(pickName(new Set(), uuid));
+  });
+
+  test("distinct seeds spread across the pool rather than clustering", () => {
+    // Eight concurrent agents is the case the roster is built for. Alphabetical
+    // assignment put all eight inside the first eight entries; the property
+    // that matters is that they are spread, not that any one is chosen.
+    const names = Array.from({ length: 8 }, (_, i) =>
+      pickName(new Set(), `session-${i}-uuid`),
+    );
+    expect(new Set(names).size).toBe(8);
+    const indices = names.map((n) => POOL.indexOf(n));
+    expect(Math.max(...indices) - Math.min(...indices)).toBeGreaterThan(20);
+  });
+
+  test("a seeded pick still refuses a taken name, wrapping the pool", () => {
+    // The probe walks forward from the offset and must wrap, or a seed landing
+    // near the end of the pool would fall through to the numbered fallback
+    // while most of the pool was still free.
+    const seed = "wrap-me";
+    const first = pickName(new Set(), seed);
+    const second = pickName(new Set([first]), seed);
+    expect(second).not.toBe(first);
+    expect(POOL).toContain(second);
+  });
+
+  test("every seeded pick is drawn from the pool, never invented", () => {
+    const taken = new Set<string>();
+    for (let i = 0; i < 250; i++) {
+      const n = pickName(taken, `uuid-${i}`);
+      expect(taken.has(n)).toBe(false);
+      expect(POOL).toContain(n);
       taken.add(n);
     }
   });
