@@ -5,6 +5,9 @@ import {
   baseBranch,
   baseDistance,
   currentBranch,
+  driftFromInstalled,
+  headRevision,
+  installManifestRaw,
   worktreeRoot,
 } from "../core/repo.ts";
 import {
@@ -201,6 +204,20 @@ export function createAdminCommands(context: CliContext): CommandMap {
       context.log(`${dim("key:    ")} ${cyan(context.projectKey)}${note}`);
       context.log(`${dim("root:   ")} ${context.projectRoot}`);
       context.log(`${dim("db:     ")} ${context.dbPath}`);
+      // What agents actually RUN, which is not this checkout until install.ts
+      // has copied it. Silent unless genuinely behind.
+      const installDrift = driftFromInstalled(
+        installManifestRaw(),
+        headRevision(context.cwd),
+      );
+      if (installDrift.stale) {
+        context.log(
+          `${dim("install:")} ${red("stale")} ${dim(
+            `— agents run ${installDrift.installed.slice(0, 7)}, this tree is ${installDrift.head.slice(0, 7)}`,
+          )}`,
+        );
+        context.log(dim("  run `bun install.ts` to push this checkout to them"));
+      }
       if (!context.isGit) return;
       const tree = worktreeRoot(context.cwd);
       const inWorktree = tree !== context.projectRoot;

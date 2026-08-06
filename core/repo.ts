@@ -214,6 +214,59 @@ export function installedVersion(): string {
   }
 }
 
+/** The manifest as written, unvalidated. For callers that parse it themselves. */
+export function installManifestRaw(): unknown {
+  try {
+    return JSON.parse(readFileSync(`${BASE_DIR}/bin/manifest.json`, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+/** The commit this checkout is on, or null outside a git repo. */
+export function headRevision(cwd: string): string | null {
+  return git(cwd, ["rev-parse", "HEAD"]);
+}
+
+/** Whether the running install is behind the checkout, and by what. */
+export interface InstallDrift {
+  readonly stale: boolean;
+  readonly installed: string;
+  readonly head: string;
+  readonly installedAt: number;
+}
+
+/**
+ * Is the code agents RUN the code in this checkout?
+ *
+ * Hooks execute from the installed copy, so an edit here changes nothing until
+ * `install.ts` runs. Measured 2026-08-06: a name-allocator fix was committed and
+ * reported shipped while every agent kept running the previous day's build.
+ *
+ * SILENT WHENEVER IT CANNOT KNOW. No manifest, no revision, unreadable HEAD --
+ * all report no drift. A warning that fires when nothing is wrong is one every
+ * reader learns to skip, and this one has to be believed the day it matters.
+ */
+export function driftFromInstalled(
+  raw: unknown,
+  head: string | null,
+): InstallDrift {
+  const none = { stale: false, installed: "", head: "", installedAt: 0 };
+  const manifest = parseManifest(raw);
+  if (!manifest || manifest.sourceRevision === "") return none;
+  const at = head?.trim().toLowerCase() ?? "";
+  const installed = manifest.sourceRevision.trim().toLowerCase();
+  if (at === "") return { ...none, installed, installedAt: manifest.installedAt };
+  // Prefix either way: `rev-parse --short` and the full sha name one commit.
+  const same = installed.startsWith(at) || at.startsWith(installed);
+  return {
+    stale: !same,
+    installed,
+    head: at,
+    installedAt: manifest.installedAt,
+  };
+}
+
 /** What a build says it installed. Every field absent on a pre-manifest build. */
 export interface InstallManifest {
   readonly installedAt: number;
