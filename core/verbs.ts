@@ -1,36 +1,16 @@
 /**
  * Every command the CLI answers to, in one table.
  *
- * WHY A TABLE AND NOT A STRING. The usage text was a hand-maintained literal
- * and it drifted to 13 of 33 verbs -- `note`, `recall`, `remember`, `breaks`,
- * `needs`, `blame` and thirteen more existed, worked, and appeared in no help
- * output anywhere. That is worse here than in an ordinary CLI: this tool is
- * discovered at RUNTIME by agents rather than read as a manual, so the only
- * verbs an agent ever learns are the ones some hook happens to mention. Two
- * shipped features had, on measurement, been used by nobody but their author.
- *
- * Editing that string would have fixed the symptom until the next verb landed.
- * So the table is the source, `usage()` renders it, and `verbs.test.ts` asserts
- * every `case` label in cli.ts appears here -- the test is the part that keeps
- * this true, not the table.
- *
- * PER-VERB USAGE LIVES HERE TOO. cli.ts had 21 separate `usage: cli.ts <verb>`
- * literals for argument errors. They now read `usageFor(verb)`, so a verb's
- * arguments are stated once and the error you get for `did` with no number is
- * the same text `--help` shows you.
+ * The table is the source: `usage()` renders it and `verbs.test.ts` asserts
+ * every `case` label in cli.ts appears here. Per-verb usage lives here too,
+ * read through `usageFor(verb)`. See docs/design-notes.md, "The verb table".
  */
 
 /**
  * How an agent is told to invoke this tool, in ONE place.
  *
- * The same drift as the usage string, one layer out: 85 hint strings across 10
- * files hardcoded `cli.ts <verb>`, which was never what anyone typed — the real
- * invocation was `bun ~/.claude/agent-presence/bin/cli.ts`. Renaming the binary
- * to `crew` meant editing all 85, and the next rename would too.
- *
- * Hints read `${CLI} note "..."`. `verbs.test.ts` asserts no bare `cli.ts`
- * literal comes back, because the table is not what keeps this true — the test
- * is.
+ * Hints read `${CLI} note "..."` so a rename touches one line.
+ * `verbs.test.ts` asserts no bare `cli.ts` literal comes back.
  */
 export const CLI = "crew";
 

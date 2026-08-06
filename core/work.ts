@@ -1,20 +1,8 @@
 /**
  * Work records: what each agent is doing, as a timeline rather than a status.
  *
- * WHY THREE TABLES AND NOT ONE STATUS COLUMN. A row that is overwritten answers
- * "what now?" and destroys "what happened?", and the second question is the one
- * asked days later ("who moved the baselines?"). So current state is a FOLD over
- * an append-only event log, not a stored column — `board` and `board --history`
- * read the same rows and therefore cannot disagree.
- *
- * `work_steps` is the one deliberate exception. Which phases remain is asked on
- * every `Stop`, and that has to be one indexed query rather than a replay of an
- * agent's whole history, so a step's `done_ms` is mutable in place.
- *
- * KEYED ON THE CONVERSATION, which is what a session id already is — see
- * `agentKey`. Claude Code's `traffic-XX` label moves across a restart; the
- * session id does not, so yesterday's `traffic-aa` and today's `traffic-a0`
- * resolve to one timeline without any matching heuristic.
+ * Current state is a fold over an append-only event log. `work_steps` is the
+ * exception and is mutable. See docs/design-notes.md, "The work log".
  */
 
 import type { Database } from "bun:sqlite";
@@ -24,15 +12,8 @@ import { loadConfig } from "./config.ts";
 /**
  * How long a closed record is kept, when no config says otherwise.
  *
- * This is the first thing in the tool that is deliberately HISTORY rather than
- * live state, so it is exempt from the roster's `STALE_MS` sweep and needs its
- * own. Seven days covers "who broke this?" asked the following week; anything
- * longer is an archive nobody reads.
- *
- * `pruneWork` reads `loadConfig().workKeepMs`, which defaults to this. Kept as
- * an export because tests assert against it — but it is the DEFAULT, not the
- * value in force, and reading it as the latter is what let the config setting
- * silently do nothing.
+ * This is the DEFAULT, not the value in force. `pruneWork` reads
+ * `loadConfig().workKeepMs`.
  */
 export const WORK_KEEP_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
@@ -109,26 +90,10 @@ export interface WorkEvent {
 }
 
 /**
- * The durable identity of an agent across restarts.
+ * The durable identity of an agent across restarts: the conversation uuid.
  *
- * IT IS THE SESSION ID, and that is not the tautology it looks like.
- * `CLAUDE_CODE_SESSION_ID` is not a per-process label — it is the CONVERSATION
- * uuid, the same one that names the transcript on disk and that
- * `claude --resume <uuid>` takes. Measured 2026-07-31 on this very tool's own
- * conversation: the terminal was restarted mid-session, Claude Code's display
- * name moved `traffic-a0` -> `traffic-7c`, and the session id stayed
- * `c5ce05bc-…` throughout — the roster row was never replaced, only relabelled.
- *
- * An earlier version keyed on the conversation TITLE, reasoning that a restart
- * issued a new session id. It does not. The title was strictly worse on two
- * counts: it is model-written and REWRITTEN as a conversation develops, so
- * renaming a conversation silently orphaned every record filed under the old
- * name; and it is empty until the first title lands, so early records fell back
- * to a second key and split one agent's timeline in two.
- *
- * `title` is still taken, and deliberately ignored, so that every call site
- * reads as "identity, given what we know about this session" rather than being
- * quietly rewritten to pass one argument fewer.
+ * `title` is taken and deliberately ignored, so call sites read as "identity,
+ * given what we know". See docs/design-notes.md, "Agent identity".
  */
 export function agentKey(_title: string, sessionId: string): string {
   return `session:${sessionId}`;
@@ -141,10 +106,8 @@ export function createWorkTables(db: Database): void {
       -- "session:" + the conversation uuid. Stored rather than recomputed so a
       -- record still names its owner once that session is gone.
       agent_id   TEXT NOT NULL,
-      -- The name at creation, kept as a FALLBACK: a board read after the session
-      -- exits must still say who did the work. It is not the whole answer,
-      -- because an agent can rename itself after opening an item — the queries
-      -- below prefer the live name and fall back to this one.
+      -- The name at creation, kept as a FALLBACK. The queries below prefer the
+      -- live name, because an agent can rename itself after opening an item.
       agent_name TEXT NOT NULL DEFAULT '',
       subject    TEXT NOT NULL,
       started_ms INTEGER NOT NULL,
@@ -152,21 +115,12 @@ export function createWorkTables(db: Database): void {
       outcome    TEXT NOT NULL DEFAULT '',
       updated_ms INTEGER NOT NULL,
       asked_turn_ms INTEGER NOT NULL DEFAULT 0,
-      -- 1 when a hook opened this rather than the agent. An auto row is a
-      -- PLACEHOLDER: it says "this session is working, here is roughly what on",
-      -- which is worth more than the blank the board showed before. The moment
-      -- the agent opens a real item the placeholder is closed, because two rows
-      -- for one piece of work is worse than none.
+      -- 1 when a hook opened this rather than the agent. Such a row is a
+      -- PLACEHOLDER, and is closed the moment the agent opens a real item.
       auto       INTEGER NOT NULL DEFAULT 0,
       -- The plan document this item executes, repo-relative and forward-slashed.
-      -- THE JOIN THAT MAKES A PLAN'S STATE KNOWABLE. An agent writes a plan and
-      -- then implements it, never touching the file again -- so a plan's own git
-      -- history says nothing about whether its work happened. Measured: one
-      -- agent had 4 of 6 steps done and a sha landed while its plan file had
-      -- zero commits. The work moved; the document did not.
-      --
-      -- Empty for the ordinary item, which is most of them. A required link
-      -- would be a field agents fill with noise.
+      -- This join is what makes a plan's state knowable, because a plan's own
+      -- git history cannot say whether its work happened. Empty is ordinary.
       plan_doc   TEXT NOT NULL DEFAULT ''
     );
     CREATE INDEX IF NOT EXISTS work_agent ON work (agent_id, closed_ms);
@@ -193,30 +147,9 @@ export function createWorkTables(db: Database): void {
 /**
  * What every work query selects, so the three cannot drift apart.
  *
- * `agent_name` resolves to the LIVE name when that agent is still around and
- * has renamed itself, falling back to the copy frozen at creation. Both halves
- * are load-bearing: an agent that renames itself mid-item would otherwise be
- * credited under a name nobody uses any more, and an agent that has exited has
- * no live row to resolve against at all.
- *
- * IT MUST TRY ALL THREE COLUMNS, in `displayName`'s order: alias, then handle,
- * then Claude Code's label. Reading `alias` alone looked right because an agent
- * that renames itself by hand writes there — but the ORDINARY case is a session
- * whose name is its given handle with `alias` empty, and for that one the
- * subquery returned nothing and every row fell back to its frozen string. One
- * agent then rendered under as many names as it had been frozen under: an item
- * opened as `tooling` stayed `tooling` while its newer siblings read `hopper`.
- *
- * The join is on the agent key, which is `session:<uuid>` — the conversation
- * uuid, so it still matches after a restart.
- *
- * THE LEDGER OUTRANKS THE FROZEN COPY, and both outrank nothing. `sessions`
- * holds only LIVE rows, so resolving through it alone means an agent that has
- * exited — or whose row was cleared — falls back to whatever name was frozen
- * when the item was opened. Measured 2026-08-05: `crew clear` emptied
- * `sessions` and one agent's own open item immediately re-rendered under a name
- * it had been renamed away from two days earlier. `name_owners` is the durable
- * answer to "what is this conversation called", so it sits between them.
+ * `agent_name` resolves live session, then `name_owners`, then the copy frozen
+ * at creation. It must try alias, handle and name in `displayName`'s order.
+ * See docs/design-notes.md, "Naming a work item's owner".
  */
 const WORK_COLUMNS = `work.work_id, work.agent_id, work.subject, work.started_ms,
      work.closed_ms, work.outcome, work.updated_ms, work.asked_turn_ms, work.auto,
@@ -376,26 +309,9 @@ export class WorkStore {
   /**
    * The item a bare command means, or `null` when that is a guess.
    *
-   * ONE OPEN ITEM, or a subject substring that picks exactly one. With several
-   * items open a bare command is AMBIGUOUS and is refused, because the caller
-   * cannot see which one was chosen.
-   *
-   * IT USED TO ANSWER "most recently touched" (`items[0]` under
-   * `ORDER BY updated_ms DESC`). That reads well — it matches how an agent
-   * narrates work ("finished the sliver fix, back to the core work") — and it
-   * is wrong in the one way a board must never be wrong: MEASURED 2026-08-06,
-   * `crew did 1 "…"` with two items open ticked a step on the other item, twice
-   * within five minutes. The note text made the first one visible; the second
-   * was `crew did 3` with no note and left no trace at all.
-   *
-   * The heuristic is also SELF-REINFORCING: every tick writes `updated_ms`, so
-   * one wrong guess makes that item the target of every later bare command. And
-   * because a tick could not be undone (see `untick`), the board then asserted
-   * work that had never happened — the `[x] IMPLEMENTED` failure
-   * `plans/README.md` opens with, reached by a typo rather than by optimism.
-   *
-   * Refusing costs the multi-item agent one `--item` flag. Guessing costs a
-   * board nobody can trust, which is the whole artefact.
+   * ONE OPEN ITEM, or a subject substring that picks exactly one. Several open
+   * items make a bare command ambiguous, and it is refused rather than guessed.
+   * See docs/design-notes.md, "Why a bare command refuses to guess".
    */
   target(agentId: string, match?: string): WorkItem | null {
     const q = (match ?? "").trim().toLowerCase();
@@ -421,19 +337,8 @@ export class WorkStore {
   /**
    * Opens a PLACEHOLDER row for an agent that has not opened one itself.
    *
-   * WHY THIS EXISTS: the board's original problem was that agents skip optional
-   * work — the task board it replaced had zero rows. An agent that never runs
-   * `doing` is invisible, so the operator reading the board to see who is doing
-   * what gets a blank where that agent should be. A row saying "this session is
-   * working, roughly on this" is worth more than nothing.
-   *
-   * IDEMPOTENT AND SELF-EFFACING. One auto row per session at a time, and it is
-   * closed the moment the agent opens a real item — two rows for one piece of
-   * work is worse than none, and the agent's own subject is always better than a
-   * conversation title.
-   *
-   * Never opened when the agent already has an open item of its own: a
-   * placeholder beside real work is noise, not information.
+   * One auto row per session, closed the moment the agent opens a real item,
+   * and never opened beside an item the agent wrote.
    */
   autoOpen(agentId: string, agentName: string, subject: string, nowMs: number): number | null {
     const trimmed = subject.trim();
@@ -505,29 +410,14 @@ export class WorkStore {
    * This agent's open items that have not moved in a while, and that it has not
    * already been asked about.
    *
-   * WHY THIS EXISTS: an item is opened, the work finishes, the agent moves on
-   * and never closes it — so the board keeps advertising work nobody is doing.
-   * Observed live 2026-08-01: an item sat 13 hours at "1/3 · updated 12h" while
-   * its agent had shipped four unrelated commits since. The board's whole claim
-   * is that it says what is happening NOW, and a dangling item is a lie it tells
-   * about a specific agent.
-   *
-   * NOT AUTO-CLOSED. Only the agent knows whether the work finished, was
-   * abandoned, or is genuinely parked — and closing it from a timer would swap a
-   * stale "open" for an equally wrong "done". So this only supplies the nudge;
-   * the decision stays where the knowledge is.
-   *
-   * ASKED ONCE PER ITEM, tracked in `asked_turn_ms`. An agent that judges an
-   * item still live must not be asked again next turn, or the reminder becomes
-   * noise it learns to skip — which is how a nudge stops working.
+   * NOT AUTO-CLOSED — only the agent knows if work is finished or parked. Asked
+   * once per item, tracked in `asked_turn_ms`, so the nudge cannot become noise.
    */
   staleItems(agentId: string, nowMs: number, staleMs: number): WorkItem[] {
     const rows = this.db
       .query(
-        // `auto = 0`: a placeholder was never something the agent chose to
-        // track, so asking it to reconcile one is asking about the tool's own
-        // bookkeeping. They are refreshed on every prompt anyway, so they never
-        // go stale — but excluding them here says why rather than relying on it.
+        // `auto = 0`: a placeholder is the tool's own bookkeeping, so asking an
+        // agent to reconcile one asks about something it never chose to track.
         `SELECT ${WORK_COLUMNS} FROM work
           WHERE agent_id = ? AND closed_ms = 0 AND auto = 0
             AND updated_ms < ? AND asked_turn_ms = 0
@@ -566,10 +456,7 @@ export class WorkStore {
   /**
    * Points an item at the plan it is executing. Returns false for an unknown id.
    *
-   * Separate from `open` because the link is usually realised LATE — an agent
-   * opens an item, works for an hour, and only then notices there was a plan
-   * for this all along. Requiring it up front would mean most items never carry
-   * one.
+   * Separate from `open` because the link is usually realised late.
    */
   link(workId: number, planDoc: string, nowMs: number): boolean {
     const path = normalisePlanPath(planDoc);
@@ -580,10 +467,8 @@ export class WorkStore {
       if (res.changes === 0) return false;
       this.db
         .query(`INSERT INTO work_events (work_id, ts_ms, kind, body, ref) VALUES (?, ?, 'linked', ?, ?)`)
-        // BODY CARRIES NO PATH: `ref` already holds it, and `renderHistory`
-        // prints ref then body -- so `executing ${path}` rendered as
-        // "linked  docs/audiences.md executing docs/audiences.md". Every other
-        // event kind keeps the identifier in `ref` alone; this one drifted.
+        // BODY CARRIES NO PATH: `ref` holds it and `renderHistory` prints ref
+        // then body, so a path here renders twice on one line.
         .run(workId, nowMs, path === "" ? "unlinked" : "executing", path);
       return true;
     });
@@ -593,15 +478,9 @@ export class WorkStore {
   /**
    * Every plan any item references, rolled up. Newest activity first.
    *
-   * DERIVED ON READ, storing nothing. A plan's state is a fact about its work
-   * items, and a cached copy is one more thing to fall out of date -- which is
-   * the failure this whole feature exists to fix, so reproducing it here would
-   * be perverse.
-   *
-   * Shas come from `landed` events, which the commit hook writes from git's own
-   * output. That makes them the only column here that is PROOF rather than a
-   * claim: an agent can tick a step it did not do, but it cannot invent a sha
-   * git printed.
+   * DERIVED ON READ, storing nothing, because a cached copy is one more thing
+   * to fall out of date. Shas come from `landed` events and are proof, not
+   * claim: an agent can tick a step it did not do, but cannot invent a sha.
    */
   planRollups(): PlanRollup[] {
     const rows = this.db
@@ -690,20 +569,9 @@ export class WorkStore {
   /**
    * Puts a step back to outstanding. Returns false when there is no such step.
    *
-   * THE MISSING HALF OF `tick`. Until this existed a tick was permanent: `step`
-   * writes a status note but leaves `done_ms` set, so a correction rendered
-   * UNDER a green check and the board went on counting work that had not
-   * happened. MEASURED 2026-08-06 — the only recovery was editing sqlite by
-   * hand, which no operator should ever be asked to do to unsay something.
-   *
-   * The note is cleared with the tick. A step showing "outstanding" beside the
-   * completion note it was ticked with is the same false claim in smaller type.
-   *
-   * HARMLESS ON AN ALREADY-OUTSTANDING STEP: the clearing write is idempotent,
-   * so `untick` twice is not an error. It still records the event, because "this
-   * was taken back" is history worth keeping even when the second one is a
-   * no-op — the append-only log is what `board --history` reads, and a silent
-   * correction is exactly what this whole file exists to prevent.
+   * The note is cleared with the tick, or the step shows a completion note it
+   * no longer earns. Idempotent, and records the event either way, because
+   * "this was taken back" is history `board --history` must show.
    */
   untick(workId: number, idx: number, nowMs: number): boolean {
     const step = this.db
@@ -722,11 +590,8 @@ export class WorkStore {
   }
 
   /**
-   * Appends a step the original plan missed.
-   *
-   * This exists because a plan written at the start is always wrong by the
-   * middle, and an agent that cannot record a discovered phase abandons the
-   * checklist instead of correcting it.
+   * Appends a step the original plan missed. An agent that cannot record a
+   * discovered phase abandons the checklist instead of correcting it.
    */
   addStep(workId: number, text: string, nowMs: number): number {
     const run = this.db.transaction((): number => {
@@ -764,18 +629,12 @@ export class WorkStore {
 
   /**
    * Drops closed records past their keep window, and the steps and events that
-   * belong to them.
-   *
-   * Events are what actually grow — one per update, and P3's commit detection
-   * will add more — so they are bounded by dying with their item rather than by
-   * a count of their own.
+   * belong to them. Events grow one per update, so they are bounded by dying
+   * with their item rather than by a count of their own.
    */
   pruneWork(nowMs: number): void {
-    // From the CONFIG, not the constant. `workKeepMs` was documented in the
-    // README and validated in config.ts while this line ignored it — a setting
-    // that silently did nothing. The config tests missed it because they only
-    // compared DEFAULTS to each other and never asserted that a config FILE is
-    // honoured, which is the "test stubbed above the bug" shape exactly.
+    // From the CONFIG, not the constant, or the documented `workKeepMs` setting
+    // silently does nothing.
     const cutoff = nowMs - loadConfig().workKeepMs;
     const dead = `(SELECT work_id FROM work WHERE closed_ms > 0 AND closed_ms <= ?)`;
     const run = this.db.transaction(() => {
@@ -826,23 +685,16 @@ export interface WorkFold {
 /**
  * What an agent is doing, so far as rows this tool WROTE can say.
  *
- * THREE STATES, NOT FOUR. There is deliberately no "stalled": a session that
- * crashed and one abandoned at a prompt both simply stop firing hooks, and
- * nothing captures an exit code or a failing test. A fourth state would be a
- * promise the data cannot keep, and a board is worse than useless if you act
- * on its most alarming cell and it was invented.
+ * There is deliberately no "stalled": nothing here captures an exit code or a
+ * failing test. See docs/design-notes.md, "Why there is no stalled state".
  */
 export type AgentState = "waiting" | "busy" | "idle" | "gone";
 
 /**
  * Heartbeat age past which a session with NO recorded turn end reads as idle.
  *
- * Only the fallback path uses it; once a session ends one turn the comparison
- * against `lastTurnMs` is exact and this stops mattering. MEASURED 2026-08-05
- * over 307 intra-session hook gaps in this repo: p50 21 s, p90 134 s, p95
- * 324 s. Five minutes sits just above p95, so a genuinely working agent is
- * rarely mislabelled, and the error direction is the safe one — an idle mark
- * invites a look, a busy mark discourages one.
+ * Only the fallback path uses it. Sits just above the measured p95 hook gap,
+ * so a working agent is rarely mislabelled.
  */
 const BUSY_HEARTBEAT_MS = 5 * 60 * 1000;
 
@@ -857,31 +709,19 @@ export interface StateEvidence {
 }
 
 /**
- * DERIVED, NEVER SAMPLED. `sessions.status` holds Claude Code's own idle/busy,
- * but it is only refreshed when `who` runs (~950 ms), so the board would either
- * pay that per read or print a stale glyph. Measured 2026-08-05: a session read
- * `status = busy` while its heartbeat and its last `done` were both 127 s old —
- * it had finished a turn. The heartbeat updates on EVERY hook, so comparing it
- * to the turn boundary is both free and fresher.
- *
- * A heartbeat is "recently firing hooks", not "definitely computing": an agent
- * thinking for minutes with no tool call reads as idle. `PostToolBatch` makes
- * that rare, and over-reporting idle is the safe direction — it invites a look
- * rather than discouraging one.
+ * DERIVED, NEVER SAMPLED. The heartbeat updates on every hook, so comparing it
+ * to the turn boundary is free and fresher than `sessions.status`. An agent
+ * thinking with no tool call reads as idle, which is the safe direction.
  */
 export function agentState(evidence: StateEvidence, nowMs: number): AgentState {
   if (evidence.lastSeenMs === undefined) return "gone";
   if ((evidence.blocked ?? "") !== "") return "waiting";
   const turn = evidence.lastTurnMs ?? 0;
-  // NO TURN EVER RECORDED falls back to the heartbeat's own age. `last_turn_ms`
-  // is written at `Stop`, so it is 0 for every session that has not ended a
-  // turn since the column landed — and reading 0 as "no turn end yet" made
-  // every live agent, including one silent for 16 minutes, render as running.
-  // A heartbeat this old cannot be a turn in progress: hooks fire far oftener.
+  // NO TURN EVER RECORDED falls back to the heartbeat's own age. A heartbeat
+  // this old cannot be a turn in progress, because hooks fire far oftener.
   if (turn === 0) return nowMs - evidence.lastSeenMs > BUSY_HEARTBEAT_MS ? "idle" : "busy";
   // A turn end AT OR AFTER the last heartbeat means the turn is over. Equal
-  // timestamps are the ordinary case, not an edge one: `turn-end.ts` touches
-  // the session and records the turn in the same run, with one `now`.
+  // timestamps are ordinary: `turn-end.ts` writes both from one `now`.
   return turn >= evidence.lastSeenMs ? "idle" : "busy";
 }
 
@@ -896,8 +736,7 @@ export function foldEvents(events: readonly WorkEvent[]): WorkFold {
         if (e.ref !== "" && !landed.includes(e.ref)) landed.push(e.ref);
         break;
       case "breaks":
-        // An empty body RETRACTS. A consequence that turned out not to happen
-        // has to be withdrawable, or the board accumulates warnings that are no
+        // An empty body RETRACTS, or the board keeps warnings that are no
         // longer true and peers learn to skip them.
         if (e.body.trim() === "") breaks = [];
         else breaks.push(e.body);

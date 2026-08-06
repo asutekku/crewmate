@@ -2,20 +2,9 @@
  * The shared diary: findings agents write for each other, searchable by topic,
  * tag and folder.
  *
- * WHY IT IS IN THE DB AND NOT IN MARKDOWN. Claude Code keys its memory
- * directory on the WORKING directory, so an agent in a worktree writes to a
- * directory nobody reads and which dies with the branch — measured 2026-08-01,
- * all 46 of this repo's worktree memory dirs are empty, while CLAUDE.md tells
- * agents to take a worktree for any large feature. The presence db is resolved
- * per-REPO (`resolveProject` keys on `--git-common-dir`, identical across every
- * worktree), so a finding written in a worktree is readable from the main tree
- * and from every other worktree. That is the hole this closes.
- *
- * It follows that no entry carries a project id: the db IS the project, and a
- * column would be the filename stored inside the file.
- *
- * THE BOARD IS NOT THIS. `work.ts` answers "what is happening now" and prunes
- * after a week, deliberately. This answers "has anyone hit this before".
+ * Answers "has anyone hit this before", where `work.ts` answers "what is
+ * happening now". No entry carries a project id, because the db IS the project.
+ * See docs/design-notes.md, "Why the diary lives in the db".
  */
 
 import type { Database } from "bun:sqlite";
@@ -24,14 +13,10 @@ import { loadConfig } from "./config.ts";
 
 /**
  * What kind of thing an entry is. Deliberately closed, not a free string: a
- * `warning` interrupts an edit and a `finding` does not, so the set has to be
- * closed for the reader to mean anything by it.
+ * `warning` interrupts an edit and a `finding` does not.
  *
- * `decision` records what was CHOSEN, which is a different claim from a
- * `finding`'s what is TRUE — "we use pipes over cellular automata" is not
- * falsifiable the way "waterSurface is -Infinity when dry" is. It is the manual
- * path; a choice settled through structured acts is folded from the obligation
- * events instead (see `decisionsFrom` in core/obligations.ts).
+ * `decision` records what was CHOSEN, not what is TRUE. It is the manual path;
+ * settled choices fold from obligation events (`decisionsFrom`).
  */
 export type DiaryKind = "finding" | "warning" | "error" | "optimization" | "decision";
 
@@ -53,14 +38,10 @@ export const DIARY_KINDS: readonly DiaryKind[] = [
 export const LOUD_KINDS: readonly DiaryKind[] = ["warning", "error"];
 
 /**
- * A title is one sentence that makes a CLAIM, and this cap is measured rather
- * than guessed.
+ * A title is one sentence that makes a CLAIM.
  *
- * The 137 notes in this repo's memory dir each carry a one-line description;
- * across them the length is median 140, p90 193, max 362, min 85 (measured
- * 2026-08-01). Nobody wrote a two-word title even with no rule asking them not
- * to. So 200 fits what agents actually write and only bites the outliers — a
- * "keep it short, 60 chars" rule would have fought every real example.
+ * Measured against real notes rather than guessed: 200 fits what agents write
+ * and bites only the outliers.
  */
 export const TITLE_MAX = 200;
 
@@ -76,10 +57,8 @@ export const MAX_TAGS = 8;
 /**
  * How old a live entry gets before `diary check` calls it unverified.
  *
- * NOT an expiry — the entry stays, stays searchable, and is probably still
- * true. It is a prompt to re-check, because a claim about code that nobody has
- * looked at in three months is a different kind of thing from one made last
- * week, and saying so is cheaper than letting a reader guess.
+ * NOT an expiry — the entry stays and stays searchable. It is a prompt to
+ * re-check a claim about code nobody has looked at in months.
  */
 export const STALE_ENTRY_MS = 90 * 24 * 60 * 60 * 1000;
 
@@ -132,9 +111,7 @@ export function createDiaryTables(db: Database): void {
       id           INTEGER PRIMARY KEY AUTOINCREMENT,
       ts_ms        INTEGER NOT NULL,
       -- The author's name at write time, kept as a FALLBACK exactly as the work
-      -- board does it: an entry read after that session exits must still say who
-      -- wrote it, while an author who renames itself should still be credited
-      -- under the name people now use. Queries prefer live, fall back to this.
+      -- board does it. Queries prefer the live name and fall back to this.
       agent        TEXT NOT NULL DEFAULT '',
       session_id   TEXT NOT NULL,
       title        TEXT NOT NULL,
@@ -149,15 +126,10 @@ export function createDiaryTables(db: Database): void {
       deprecated_ms INTEGER NOT NULL DEFAULT 0,
       deprecated_why TEXT NOT NULL DEFAULT '',
       superseded_by INTEGER NOT NULL DEFAULT 0,
-      -- WHAT SEPARATES A BUG LIST FROM A LOG: state. A finding is true forever,
-      -- a bug is open until something fixes it. Only kind='error' carries this
-      -- -- a finding has no open state, and offering one invites an agent to
-      -- "close" a piece of knowledge.
-      --
-      -- Deliberately NOT auto-closed from a commit: a quiet commit prints
-      -- nothing, so a sha-triggered close would work sometimes and silently
-      -- miss the rest, and a bug list that closes bugs at random is worse than
-      -- one that closes none.
+      -- WHAT SEPARATES A BUG LIST FROM A LOG: state. Only kind='error' carries
+      -- this, because a finding has no open state. Never auto-closed from a
+      -- commit — a list that closes bugs at random is worse than one that does
+      -- not close them at all.
       fixed_by     INTEGER NOT NULL DEFAULT 0,
       fixed_ms     INTEGER NOT NULL DEFAULT 0
     );
@@ -215,25 +187,17 @@ export function unpackTags(packed: string): string[] {
 export function normaliseScope(raw: string, looksLikeFile = /[^/.]\.[a-z0-9]+$/i): string {
   const s = raw.trim().replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+$/, "");
   if (s === "" || s === ".") return "";
-  // A TOP-LEVEL DOTTED NAME REDUCES TO REPO-WIDE, and that is correct for the
-  // common case (`README.md`, `package.json`) and wrong for the rare one (a
-  // folder actually named `my.module`). The text cannot tell them apart, so
-  // `crew note` REPORTS the reduction rather than resolving it — see the
-  // "no --scope" line there. Scoping `README.md` to a folder named `README.md`
-  // would match no file at all, which is strictly worse than repo-wide.
+  // A TOP-LEVEL DOTTED NAME REDUCES TO REPO-WIDE: right for `README.md`, wrong
+  // for a folder named `my.module`. The text cannot tell them apart, so `crew
+  // note` REPORTS the reduction rather than resolving it.
   return looksLikeFile.test(s) ? s.split("/").slice(0, -1).join("/") : s;
 }
 
 /**
  * Every folder an entry could be scoped to for this path, nearest LAST.
  *
- * This is what makes `pre-edit` affordable: the candidates are the path's own
- * prefixes, so the lookup is a handful of indexed equality tests bounded by
- * path depth — not a LIKE scan over every entry. Verified 2026-08-01:
- * `src/sim/water/flow.ts` and `src/sim/water/sources/spring.ts` both match a
- * `src/sim/water` entry, `src/sim/traffic/engine.ts` does not.
- *
- * "" is included and means repo-wide.
+ * The candidates are the path's own prefixes, so `pre-edit` costs a few indexed
+ * equality tests bounded by path depth, not a LIKE scan. "" means repo-wide.
  */
 export function scopeCandidates(path: string): string[] {
   const clean = path.trim().replace(/\\/g, "/").replace(/^\.\//, "");
@@ -246,22 +210,17 @@ export function scopeCandidates(path: string): string[] {
 /**
  * Whether two topics are near enough that one is probably meant to be the other.
  *
- * Deliberately NOT an edit distance. The duplicates that actually appear are
- * `water` / `water-sim` / `water-dynamics` — a shared stem with a qualifier —
- * and a distance metric loose enough to catch those also pairs `gen` with
- * `net`. So: one contains the other as a whole hyphen-separated part.
- *
- * Only ever a suggestion. Merging is the operator's call, and a false positive
- * that nags is how a hint gets ignored.
+ * NOT an edit distance: real duplicates share a stem with a qualifier
+ * (`water` / `water-sim`), and a metric loose enough for those pairs `gen` with
+ * `net`. Only ever a suggestion — merging is the operator's call.
  */
 export function nearTopic(a: string, b: string): boolean {
   if (a === b) return false;
   const pa = a.split("-");
   const pb = b.split("-");
   const [shorter, longer] = pa.length <= pb.length ? [pa, pb] : [pb, pa];
-  // Every part of the shorter appears in the longer, in order, from the start:
-  // `water` vs `water-sim` yes, `gen` vs `net` no, `water` vs `deep-water` no
-  // (a leading qualifier changes the subject rather than narrowing it).
+  // Every part of the shorter appears in the longer, in order, from the start.
+  // `water` vs `deep-water` is NO: a leading qualifier changes the subject.
   return shorter.every((part, i) => longer[i] === part);
 }
 
@@ -326,10 +285,9 @@ export function checkNote(input: NoteInput): NoteCheck {
 }
 
 /**
- * Resolves the author's name the way the work board does: the LIVE name when
- * that session still exists and has renamed itself, else the copy frozen at
- * write time. Both halves matter — an agent that renamed itself would otherwise
- * be credited under a name nobody uses, and an exited one has no live row.
+ * The LIVE author name when that session exists, else the copy frozen at write
+ * time. Tries alias then handle only — `WORK_COLUMNS` also tries `s.name`,
+ * which `displayName` falls back to. See `crew note` on the diary/board gap.
  */
 const AUTHOR = `COALESCE(NULLIF((SELECT s.alias FROM sessions s
                                   WHERE s.session_id = diary.session_id), ''),
@@ -481,13 +439,8 @@ export class DiaryStore {
     }
     if (f.scope !== undefined && f.scope !== "") {
       // COVERS, not equals — the same relation `forPath` uses, so a scope that
-      // pre-edit reported can be typed straight back into `recall`. Equality
-      // made the hook's own pointer return nothing (caught live 2026-08-01):
-      // entries at `.claude/hooks/presence` did not match a query for
-      // `.claude/hooks/presence/hooks`, which is the folder being edited.
-      //
-      // A FILE is accepted too, for the same reason `normaliseScope` accepts
-      // one: the caller usually has a path, not a folder.
+      // pre-edit reported can be typed straight back into `recall`. A FILE is
+      // accepted too, because the caller usually has a path, not a folder.
       const cands = scopeCandidates(f.scope).filter((c) => c !== "");
       const self = normaliseScope(f.scope);
       if (self !== "" && !cands.includes(self)) cands.push(self);
@@ -604,11 +557,8 @@ export class DiaryStore {
   /**
    * Fills in a MISSING reason on an entry already marked no longer true.
    *
-   * Separate from `deprecate`, which refuses an entry that is already retired —
-   * a guard that also made an empty reason permanently unrepairable, so
-   * `diary check` would report a problem no command could fix. This writes only
-   * into a blank field: a reason somebody wrote is never overwritten, which is
-   * the property that guard was actually protecting.
+   * Separate from `deprecate`, which refuses an already-retired entry. Writes
+   * only into a blank field, so a reason somebody wrote is never overwritten.
    */
   explainDeprecation(id: number, why: string): boolean {
     const trimmed = why.trim();
@@ -624,26 +574,11 @@ export class DiaryStore {
   }
 
   /**
-   * Points a stale entry at the one that replaced it, and deprecates it.
-   *
-   * SUPERSEDING IS ITSELF THE REASON, so it fills one in. `diary check` flags a
-   * deprecation with no reason, and it flagged both entries this had retired —
-   * correctly, since "no longer true" with nothing after it is the least useful
-   * thing an entry can say. The reason here is not a guess: the replacement IS
-   * the explanation, and naming it beats leaving the field blank.
-   */
-  /**
    * Marks an error fixed, pointing at the entry that records the fix.
    *
-   * ONLY AN ERROR CAN BE FIXED. A finding is a fact — "an UPDATE on an
-   * external-content FTS5 table does nothing to the index" stays true after
-   * someone works around it — so a `fixed` marker on one would mean "we have
-   * stopped believing this", which is what `deprecate` is for. Refusing here is
-   * what keeps `bugs` a list of things to do rather than a list of things known.
-   *
-   * The error is NOT deprecated by being fixed. It remains true as history: the
-   * bug was real, and the next reader hitting the same symptom wants to find it
-   * and follow the link to the fix.
+   * ONLY AN ERROR CAN BE FIXED, which keeps `bugs` a list of things to do
+   * rather than things known. A fixed error is NOT deprecated: it stays true as
+   * history for the next reader hitting the same symptom.
    */
   fix(id: number, byId: number, nowMs: number): boolean {
     if (id === byId) return false;
@@ -676,6 +611,12 @@ export class DiaryStore {
     return rows.map(toEntry);
   }
 
+  /**
+   * Points a stale entry at the one that replaced it, and deprecates it.
+   *
+   * SUPERSEDING IS ITSELF THE REASON, so it fills one in: `diary check` flags a
+   * deprecation with no reason, and the replacement is the explanation.
+   */
   supersede(id: number, byId: number, nowMs: number): boolean {
     if (id === byId) return false;
     const replacement = this.get(byId);
@@ -712,18 +653,9 @@ export class DiaryStore {
       }>;
       const n = this.db.query(`UPDATE diary SET topic = ? WHERE topic = ?`).run(b, a).changes;
       // AN EXTERNAL-CONTENT INDEX IS NOT UPDATABLE BY AN ORDINARY UPDATE, and
-      // the failure is invisible from every direction a reviewer looks: a plain
-      // `UPDATE diary_fts SET topic = ?` reports rows changed, and a later
-      // `SELECT topic FROM diary_fts` reads THROUGH to the content table and so
-      // shows the new value — while the index itself still holds the old term.
-      // Measured 2026-08-01: after merging `water-sim` into `hydrology`,
-      // `MATCH "water-sim"` still returned the row and `MATCH "hydrology"`
-      // returned nothing, so a merge silently broke search under both names.
-      //
-      // The supported repair is the delete/insert pair: the 'delete' command
-      // must be handed the values CURRENTLY IN THE INDEX (the old topic) so FTS
-      // can find the terms it is retracting, and the insert then adds the new
-      // ones.
+      // the failure is silent. Use the delete/insert pair, handing 'delete' the
+      // values CURRENTLY IN THE INDEX so FTS can retract the right terms.
+      // See docs/design-notes.md, "Renaming a topic".
       const del = this.db.prepare(
         `INSERT INTO diary_fts (diary_fts, rowid, title, body, topic, tags)
          VALUES ('delete', ?, ?, ?, ?, ?)`,
@@ -861,13 +793,9 @@ export class DiaryStore {
 export function ftsQuery(raw: string): string {
   const terms = raw
     .split(/\s+/)
-    // A NUL is stripped along with the quote, and for a harder reason. SQLite
-    // binds a JS string as a C string, so a NUL TRUNCATES the statement text:
-    // the closing quote this function just added lands after the cut and the
-    // driver throws `unterminated string`. Quoting made the input data for every
-    // operator character except this one, and a throw inside `pre-edit` is a
-    // hook that fails on an ordinary edit. Measured 2026-08-01: a NUL in ANY
-    // position — leading, middle, trailing, alone — threw.
+    // A NUL is stripped with the quote: SQLite binds a JS string as a C string,
+    // so a NUL truncates the statement and the closing quote lands after the
+    // cut. Quoting makes every other operator character data.
     .map((t) => t.replace(/["\u0000]/g, "").trim())
     .filter((t) => t !== "");
   if (terms.length === 0) return '""';

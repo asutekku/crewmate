@@ -54,3 +54,122 @@ answer "is this someone else's work?", and a wedged agent is worse than a visibl
 conflict. `turn-end` never uses `Stop`'s blocking form, which would trap a
 session in a loop nobody asked for.
 
+## The work log
+
+**Three tables, not one status column.** A row that is overwritten answers "what
+now?" and destroys "what happened?", and the second question is the one asked
+days later ("who moved the baselines?"). Current state is a fold over an
+append-only event log, so `board` and `board --history` read the same rows and
+cannot disagree. `work_steps` is the one exception: which phases remain is asked
+on every `Stop`, so a step's `done_ms` is mutable in place rather than replayed.
+
+**Agent identity is the conversation uuid.** `CLAUDE_CODE_SESSION_ID` is not a
+per-process label — it names the transcript on disk and is what
+`claude --resume <uuid>` takes. Measured 2026-07-31: a terminal restarted
+mid-session moved Claude Code's display name `traffic-a0` → `traffic-7c` while
+the session id held, so the roster row was relabelled rather than replaced. An
+earlier version keyed on the conversation TITLE, which is model-written and
+rewritten as a conversation develops — renaming one silently orphaned every
+record under the old name, and its emptiness before the first title split an
+agent's timeline in two.
+
+**Naming a work item's owner.** `WORK_COLUMNS` resolves the live session first,
+then `name_owners`, then the name frozen at creation. It must try alias, handle
+and name in `displayName`'s order: reading `alias` alone looks right, but the
+ordinary session has an empty alias, so the subquery returned nothing and every
+row fell back to its frozen string — one agent rendering under as many names as
+it had been frozen under. The ledger outranks the frozen copy because `sessions`
+holds only live rows: measured 2026-08-05, `crew clear` emptied it and an open
+item re-rendered under a name abandoned two days earlier.
+
+**Why a bare command refuses to guess.** `target` once answered "most recently
+touched", which reads well and is wrong in the one way a board must never be.
+Measured 2026-08-06: `crew did 1 "…"` with two items open ticked a step on the
+other item, twice in five minutes — the second, with no note, left no trace. The
+heuristic is self-reinforcing, since every tick writes `updated_ms`. Refusing
+costs the multi-item agent one `--item` flag; guessing costs a board nobody can
+trust.
+
+**Why there is no stalled state.** A session that crashed and one abandoned at a
+prompt both simply stop firing hooks, and nothing captures an exit code or a
+failing test. A fourth state would be a promise the data cannot keep, and a board
+is worse than useless if you act on its most alarming cell and it was invented.
+`BUSY_HEARTBEAT_MS` is sized from 307 measured intra-session hook gaps (p50 21 s,
+p90 134 s, p95 324 s); five minutes sits just above p95.
+
+## The diary
+
+**Why the diary lives in the db.** Claude Code keys its memory directory on the
+WORKING directory, so an agent in a worktree writes to a directory nobody reads
+and which dies with the branch — measured 2026-08-01, all 46 of this repo's
+worktree memory dirs were empty while CLAUDE.md tells agents to take a worktree
+for any large feature. The presence db is resolved per-REPO, so a finding written
+in a worktree is readable from the main tree and every other worktree.
+
+**Renaming a topic.** An external-content FTS5 index is not updatable by an
+ordinary UPDATE, and the failure is invisible from every direction a reviewer
+looks: a plain `UPDATE diary_fts SET topic = ?` reports rows changed, and a later
+`SELECT topic FROM diary_fts` reads through to the content table and shows the new
+value — while the index still holds the old term. Measured 2026-08-01: after
+merging `water-sim` into `hydrology`, `MATCH "water-sim"` still returned the row
+and `MATCH "hydrology"` returned nothing, so a merge silently broke search under
+both names. The supported repair is the delete/insert pair, and 'delete' must be
+handed the values currently in the index.
+
+**Scope covers, it does not equal.** `recall --scope` uses the same relation
+`forPath` does, so a scope pre-edit reported can be typed straight back in.
+Equality made the hook's own pointer return nothing (caught live 2026-08-01):
+entries at `.claude/hooks/presence` did not match a query for
+`.claude/hooks/presence/hooks`, the folder actually being edited.
+
+## The pre-edit warning
+
+**A commit clears a claim in this tree only.** A claim is released by nothing
+but a 2-hour timer, so an agent that edited a file here, committed and moved on
+still holds it — the dirty check drops those. It must never be applied to a
+cross-worktree claim, and an earlier version did, which quietly disabled half the
+hook: a peer in another worktree who commits goes clean instantly, but for them a
+commit is when the merge risk STARTS, and CLAUDE.md tells every agent to commit as
+soon as tests pass. Filtering `away` made the warning unreachable for exactly the
+disciplined peers it exists to warn about. Demonstrated: two worktrees editing one
+line, peer commits, warning suppressed, `git merge` conflicts. The 38-of-42
+measurement that motivated the filter counted cross-worktree claims as false
+positives; they were not.
+
+**Pointers must return what they promise.** `countForPath` includes repo-wide
+entries (scope `""`) and `recall --scope` deliberately excludes them, so the two
+counts are different sets. Measured 2026-08-01: with two repo-wide entries and no
+scoped ones the hook printed "2 more entries cover this folder" against a command
+that returned nothing. The remainder is split by what each half is reachable by,
+and the scoped pointer names the FILE, not its directory — `--scope` covers every
+enclosing folder the way the lookup does.
+
+**Offering a lineage.** The operator's case: "I might start a new session with
+roadworks, and if I forget a roadwork agent already exists, it might create a
+completely new empty state that has to learn everything from scratch." The shared
+diary is the index rather than the personal store, because a memory is about the
+operator and carries no scope, so it cannot answer "who knows this folder". A
+scoped finding can — measured 2026-08-02, all 11 scopes in this repo have exactly
+one author. One line naming one lineage: two would be a menu, and a menu at edit
+time gets scrolled past, taking the diary findings above it along.
+
+**Plan links are suggested, not stored as suppressed.** `--plan-doc` and `link`
+shipped with nothing pointing at them — the same shape as the `breaks`/`needs`
+failure, verbs that worked, were advertised nowhere, and were used by nobody but
+their author. The suggestion repeats while the item is still unlinked, because
+recording a said-it-once flag would add a column whose only job is to suppress
+true advice.
+
+## The verb table
+
+**The table is the source, the test is the guarantee.** Usage was once a
+hand-maintained literal and drifted to 13 of the then-33 verbs — `note`,
+`recall`, `remember`, `breaks`, `needs`, `blame` and more existed, worked, and
+appeared in no help output. That matters more here than in an ordinary CLI: this
+tool is discovered at runtime by agents rather than read as a manual, so the only
+verbs an agent learns are the ones some hook mentions. Two shipped features had
+been used by nobody but their author. `verbs.test.ts` asserting every `case`
+label appears in the table is what keeps this true. Per-verb usage lives there
+too, replacing 21 separate `usage: cli.ts <verb>` literals, and `CLI` replaced 85
+hardcoded invocation strings across 10 files.
+
