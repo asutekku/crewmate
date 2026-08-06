@@ -1,12 +1,1 @@
-# The store lives in ~/.claude/agent-presence/, never in the repo — but a test
-# or a hand-run script that forgets `PRESENCE_TEST_DB` writes one here, and a
-# committed db is a committed transcript of somebody's session.
-*.db
-*.db-wal
-*.db-shm
-*.personal
-*.personal-wal
-*.personal-shm
-
-node_modules/
-.DS_Store
+.claude/worktrees/

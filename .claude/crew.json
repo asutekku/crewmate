@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "generated": [
+    "**/node_modules/**"
+  ],
+  "hot": [
+    "bun.lock",
+    "package.json"
+  ],
+  "checks": {
+    "test": "bun test",
+    "testScoped": "bun test {path}",
+    "lint": ""
+  },
+  "testPolicy": "scoped-only"
+}
