@@ -97,6 +97,21 @@ is worse than useless if you act on its most alarming cell and it was invented.
 `BUSY_HEARTBEAT_MS` is sized from 307 measured intra-session hook gaps (p50 21 s,
 p90 134 s, p95 324 s); five minutes sits just above p95.
 
+## Hook cost
+
+**`PostToolBatch` fires many times per turn**, so the empty path has to be
+nearly free. Measured 2026-07-31 with no mail waiting: 76 ms per firing, of which
+52 ms is bare Bun process startup — the floor no in-script work goes below.
+Caching the git-derived project paths took it from 93 ms (a `git rev-parse`
+subprocess was 31 ms of that). Per turn that is ~0.3 s over 5 batches and ~2.2 s
+over 30. If it ever bites, the fix is fewer firings, not a faster script.
+
+**`bun build --compile` was tried and rejected**: the binary measured 85 ms,
+slower than the script, for a 98 MB artifact per hook.
+
+**The `tool_calls` payload is never parsed.** HOOKS.MD warns tool responses "can
+be large", and the hook needs only the session id and cwd.
+
 ## The personal diary
 
 **One db, outside the per-project files.** Everything else the tool stores is

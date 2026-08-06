@@ -53,23 +53,9 @@ export interface Verb {
   /**
    * Who this verb is FOR — see `docs/audiences.md`.
    *
-   * NOT A PERMISSION MODEL. Nothing is gated by caller: every verb works
-   * whether a human types it or an agent shells out. This records who is TOLD
-   * the verb exists (agents learn from `core/sessionBlock.ts` and the hooks;
-   * operators from `crew help` and `docs/`) and who has a reason to run it.
-   *
-   * REQUIRED, because the alternative was measured and failed. The audience
-   * split lived in prose in `docs/audiences.md` and drifted immediately: that
-   * document mis-stated its own totals, and the plan written to fix the drift
-   * reproduced it. Hand-maintained counts in this repo have a 100% drift rate.
-   * A field here means the tables are generated and `test/audit-remediation`
-   * asserts they match — the same reason `usage()` is generated rather than
-   * hand-written.
-   *
-   * `oversight` is the asymmetric case: agent-writes, operator-audits. It is
-   * deliberately distinct from `shared`, which means SYMMETRIC use (`msg`,
-   * `say` — both parties do the same thing). Collapsing the two hid the real
-   * gap, which is that the operator had no aggregate read surface at all.
+   * NOT A PERMISSION MODEL: nothing is gated by caller. It records who is TOLD
+   * the verb exists. REQUIRED, so the audience tables are generated rather than
+   * hand-maintained — every hand-kept count in this repo has drifted.
    */
   readonly audience: VerbAudience;
 }
@@ -142,24 +128,10 @@ export const VERBS: readonly Verb[] = [
   { verb: "needs", audience: "agent", args: '"<what>" [--item <match>]', blurb: "record what you are blocked on, and tell them", group: "work" },
 
   // ---- diary
-  // The flag list is deliberately partial -- `--tags`, `--body` and `--fixes`
-  // are on the verb's own usage line, which prints on an argument error and has
-  // the room. A spec wide enough to name every flag is one that wraps on an
-  // 80-column terminal, and a wrapped spec is harder to read than a short one
-  // plus a pointer to the full form.
-  // `--kind` earns its place despite the width: it is what makes a note a BUG
-  // or a DECISION rather than a fact, and a flag missing from `help` is a
-  // feature agents never reach.
-  //
-  // WHAT THE SPEC COSTS THE TABLE, measured 2026-08-05 by counting rows that
-  // share the two-column form at widths 80/100/120/140. `note` sets the column
-  // for all 33 verbs, so its width is not a local choice:
-  //   [--kind error] [--fixes <id>]      1 /  7 / 29 / 51   (was)
-  //   [--kind error|decision] [--fixes]  1 /  3 / 14 / 46   (naive widening)
-  //   [--kind error|decision]            1 / 11 / 41 / 51   (this, blurb included)
-  // Naming the second kind and moving `--fixes` to the usage line is therefore
-  // not a trade -- it costs nothing and buys 12 rows back at 120 columns. The
-  // blurb feeds the same column, so it is measured with the spec, not after.
+  // `note` is the WIDEST spec and so sets the two-column width for every verb.
+  // Its flag list is deliberately partial: `--tags`, `--body` and `--fixes`
+  // live on the usage line, which prints on an argument error and has room.
+  // `--kind` earns its width, being what makes a note a bug or a decision.
   { verb: "note", audience: "agent", args: '"<title>" --topic <t> [--scope <dir>] [--kind error|decision]', blurb: "file a finding, a bug, or a decision; `note <id>` reads one", group: "diary" },
   { verb: "recall", audience: "agent", args: "<words> [--scope <dir>] [--limit n]", blurb: "search findings", group: "diary" },
   { verb: "bugs", audience: "agent", args: "[--scope <dir>] [--limit n]", blurb: "errors nobody has fixed yet", group: "diary" },
@@ -195,11 +167,8 @@ export function findVerb(verb: string): Verb | undefined {
 }
 
 /**
- * The `usage: crew …` line for one verb, for argument errors.
- *
- * Returns a bare `usage: crew <verb>` for anything absent from the table
- * rather than throwing: a mistyped verb name in an error path should not turn a
- * bad-arguments message into a crash.
+ * The `usage: crew …` line for one verb. An unknown verb yields the bare form
+ * rather than throwing: a typo in an error path must not become a crash.
  */
 export function usageFor(verb: string): string {
   const found = findVerb(verb);
@@ -220,16 +189,12 @@ export function usage(width = 100): string {
     call: `${v.verb}${v.args === "" ? "" : ` ${v.args}`}`,
   }));
 
-  // THE COLUMN IS SET BY THE ROWS THAT SHARE IT, and a row too wide for the
-  // pair stacks on its own without dragging the rest with it. Measured while
-  // writing this: `note`'s 62-char spec padded all 33 verbs to 62, pushing the
-  // worst pair to 126 columns, so the table never fired even on a 120-column
-  // terminal and every verb stacked. Sizing to the outlier is what made one
-  // long spec cost thirty other verbs their layout.
+  // THE COLUMN IS SET BY THE ROWS THAT SHARE IT: a row too wide stacks on its
+  // own rather than padding every other verb to its width, which is what made
+  // one long spec cost the whole table its layout.
   //
-  // Rows are chosen by fixed point: drop what cannot fit, re-measure, repeat.
-  // Dropping a wide row shrinks the column, which can let a previously-dropped
-  // row back in -- one pass would settle on a column wider than necessary.
+  // Chosen by FIXED POINT — drop what cannot fit, re-measure, repeat. Dropping
+  // a wide row shrinks the column and can let a dropped row back in.
   let shared = rendered;
   let column = 0;
   for (;;) {
