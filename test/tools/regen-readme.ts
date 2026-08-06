@@ -33,17 +33,21 @@ function tables(): string {
   return out.join("\n").trimEnd();
 }
 
+const START = "<!-- BEGIN GENERATED COMMANDS -->";
+const END = "<!-- END GENERATED COMMANDS -->";
+
 const src = await Bun.file(README).text();
-// Anchored on the first group heading and the section that follows, so the
-// prose above the tables is never touched.
-const start = src.indexOf(`### ${VERB_GROUPS[0]?.title[0]?.toUpperCase()}${VERB_GROUPS[0]?.title.slice(1)}`);
-const end = src.indexOf("## Files");
+// Explicit markers, not headings. This was anchored on the section that
+// followed the tables; the 2026-08-05 split moved it into `docs/`, so the
+// generator exited 1 unread and the tables drifted by hand for a day.
+const start = src.indexOf(START);
+const end = src.indexOf(END);
 if (start < 0 || end < 0 || end < start) {
-  console.error("anchors not found — has the README's structure changed?");
+  console.error(`markers not found in ${README} — expected ${START} … ${END}`);
   process.exit(1);
 }
 
-const next = `${src.slice(0, start) + tables()}\n\n${src.slice(end)}`;
+const next = `${src.slice(0, start + START.length)}\n\n${tables()}\n\n${src.slice(end)}`;
 if (next === src) {
   console.log("README command tables already current.");
 } else {

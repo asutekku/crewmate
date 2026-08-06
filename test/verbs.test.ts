@@ -138,6 +138,32 @@ describe("the README documents what ships", () => {
       VERBS.filter((v) => v.hidden !== true && !text.includes(`\`${v.verb}`)),
     ).toEqual([]);
   });
+
+  /**
+   * The README's OWN tables, not the widened haystack above.
+   *
+   * That check searches README plus every `docs/` file, so `audiences.md` --
+   * generated from this same table -- satisfied it alone. Measured 2026-08-06:
+   * deleting `blame` from the README left 23 tests passing, and four verbs
+   * (`obligations`, `clearances`, `export`, `memories`) had already drifted out
+   * unnoticed because `regen-readme.ts` exited 1 on a stale anchor and nobody
+   * read the output. Both checks are needed: one proves a verb is documented
+   * somewhere, this proves the front page is complete.
+   */
+  test("the README's generated block lists every shipped verb", async () => {
+    const text = await Bun.file(
+      new URL("../README.md", import.meta.url),
+    ).text();
+    const start = text.indexOf("<!-- BEGIN GENERATED COMMANDS -->");
+    const end = text.indexOf("<!-- END GENERATED COMMANDS -->");
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const block = text.slice(start, end);
+    expect(
+      VERBS.filter((v) => v.hidden !== true && !block.includes(`\`${v.verb}`)),
+    ).toEqual([]);
+  });
 });
 
 describe("agents are told an invocation that works", () => {
