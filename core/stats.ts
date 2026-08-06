@@ -1,23 +1,9 @@
 /**
  * What this tool has actually accumulated — every aggregate `stats` prints.
  *
- * WHY IT EXISTS. Before this, answering "how much is in the store, and which
- * features has anybody ever used?" meant hand-written SQL through `bun -e`
- * against a database filename you had to guess. Measured, on the run that
- * motivated this file: two of six attempts failed outright — one on a wrong db
- * path, one on a column that does not exist (`messages.sender`; the real ones
- * are `from_name`/`to_name`). A tool whose own state is only reachable by
- * guessing gets re-measured badly, or not at all, and a feature nobody can
- * count is a feature nobody can retire.
- *
- * PURE OVER A `Database`, PRINTING ELSEWHERE. Everything here returns data;
- * `cli.ts` colours it. That split is what lets the tests seed a throwaway db
- * and assert on numbers instead of on escape codes.
- *
- * TABLES ARE DISCOVERED, NEVER LISTED. The schema grows by live migration and
- * older project dbs in the same folder have fewer tables, so a hardcoded list
- * would either crash on the old ones or silently omit the new. Every query that
- * names an optional table is guarded by `hasTable`.
+ * PURE OVER A `Database`, so tests assert on numbers and `cli.ts` colours them.
+ * TABLES ARE DISCOVERED, NEVER LISTED: the schema grows by live migration, so
+ * every query naming an optional table is guarded by `hasTable`.
  */
 
 import type { Database } from "bun:sqlite";
@@ -101,16 +87,9 @@ export const SPARSE_ROWS = 1;
 /**
  * The window these numbers describe.
  *
- * EVERY AGGREGATE BELOW IS A SAMPLE, AND A SMALL ONE. The store holds one
- * operator's working week, spent mostly on this tool itself — so a low count
- * measures how the week went, not what the system supports. Printed above the
- * tables rather than under them, because a caveat below a number gets read
- * second and quoted never.
- *
- * This exists because the reasoning it guards against already happened, twice,
- * off these very numbers: co-presence peaked at 5 for one hour in 14, which was
- * read as "features for five agents serve 7% of history" when it mostly meant
- * the operator was rationing a usage budget. A sample turned into a ceiling.
+ * EVERY AGGREGATE BELOW IS A SAMPLE: a low count measures how one week went,
+ * not what the system supports. Printed ABOVE the tables, because a caveat
+ * under a number is read second and quoted never.
  */
 export interface Sample {
   /** Hours in which anybody edited. The denominator for everything here. */
@@ -145,14 +124,9 @@ export function hasTable(db: Database, table: string): boolean {
 }
 
 /**
- * Tables worth counting: sqlite's own bookkeeping and the FTS shadow tables are
- * not state this tool accumulated.
- *
- * The substring rules rather than a name list, because `diary_fts` has four
- * shadow tables today and an FTS index added tomorrow brings four more — a
- * list would need editing at exactly the moment nobody is thinking about it.
- * `diary_fts` itself goes too: it is a view of `diary`, so counting it reports
- * the same findings twice under two names.
+ * Tables worth counting: sqlite's bookkeeping and the FTS shadow tables are not
+ * state this tool accumulated. A substring rule rather than a name list, which
+ * would need editing when nobody is thinking about it.
  */
 export function countableTable(name: string): boolean {
   return !name.startsWith("sqlite_") && !name.includes("_fts");
@@ -208,17 +182,8 @@ function distinct(db: Database, table: string, column: string): number {
  * Distinct agents per source.
  *
  * FOUR NUMBERS, NOT ONE, because they disagree and the disagreement is the
- * finding: every agent edits, far fewer ever post a message, fewer still open
- * work, and the diary is written by a handful. One "agent count" would have to
- * pick a source and would then be quietly wrong for every question but that
- * source's own.
- *
- * BUT `messages` IS NOT COMPARABLE TO THE OTHER THREE. `messages.handle` keeps
- * the name of every session that ever spoke, including the ones swept from
- * `sessions` at 90 minutes, so it is a cumulative historical roll while `edits`
- * counts agents that actually touched files. Reading the gap between them as
- * name churn overstates it — that mistake was made off this exact pair — so the
- * printer marks the row rather than leaving the four to look like one series.
+ * finding. `messages` IS NOT COMPARABLE to the other three: it is a cumulative
+ * historical roll, so the printer marks that row.
  */
 export function agentCounts(db: Database): AgentCounts {
   return {
@@ -258,16 +223,9 @@ const HOUR_MS = 60 * 60 * 1000;
 /**
  * How many agents were ever actually working at the same time.
  *
- * THE MOST DECISION-RELEVANT NUMBER THE STORE HOLDS. Half this tool's design
- * assumes a crowd; whether the crowd exists is answerable only from history,
- * and the answer decides whether a feature aimed at five co-present agents is
- * worth building at all.
- *
- * An hour bucket, not a minute or a day. A minute undercounts — two agents in
- * one conversation rarely edit within the same 60 seconds — and a day
- * overcounts by folding a whole night's sequential shifts into "co-present".
- * The hour is a proxy for "close enough to collide", which is what co-presence
- * costs anybody.
+ * An HOUR bucket: a minute undercounts, since two agents rarely edit within the
+ * same 60 seconds, and a day folds a night of sequential shifts into
+ * "co-present". The hour proxies "close enough to collide".
  */
 export function concurrency(db: Database): Concurrency {
   if (!hasTable(db, "edits")) return { buckets: [], activeHours: 0, peak: 0 };
@@ -317,10 +275,8 @@ export function messageStats(db: Database): MessageStats {
 /**
  * Every optional feature, with the count that says whether anyone uses it.
  *
- * ORDER IS FIXED AND INCLUDES THE ZEROES. A feature omitted because it has no
- * rows is a feature that reads as absent rather than as dead, and the whole
- * point of this section is to name the dead ones. `memories` is passed in
- * because it lives in a different database entirely.
+ * ORDER IS FIXED AND INCLUDES THE ZEROES, or a dead feature reads as absent.
+ * `memories` is passed in because it lives in a different database.
  */
 export function featureUse(db: Database, memories: number): FeatureUse[] {
   const questions = count(db, "questions");
@@ -372,20 +328,9 @@ export function sizeText(bytes: number): string {
 /**
  * What a low row count is, and — deliberately — not what it means.
  *
- * NOT "DEAD", NOT "UNUSED". This flag once said `(unused)`, which is a verdict
- * a row count cannot support. A feature at zero may be unwanted, or it may have
- * shipped last week, or never have been named in the text injected at session
- * start — and this store cannot tell those apart, because nothing records which
- * capabilities a session was ever told about. Printing "unused" turns that
- * instrumentation gap into a product judgement, in the one table a later agent
- * will read as authoritative, and the judgement argues against building the
- * thing that would generate the evidence.
- *
- * So it reports the observation and stops: `no rows in sample` is a fact,
- * `unused` is a conclusion. An exposure ledger — which sessions were told what,
- * on which surface, under which installed version — is what would license the
- * stronger sentence, and until that exists the honest reading of a zero is
- * `exposure unknown`.
+ * NOT "DEAD", NOT "UNUSED": a feature at zero may be unwanted, or new, or never
+ * named to any session. `no rows in sample` is a fact and `unused` is a
+ * conclusion, so it reports the observation and stops.
  */
 export function usageFlag(rows: number, exposureOpportunities = 0): string {
   if (exposureOpportunities > 0 && rows === 0) return `(no rows across ${exposureOpportunities} exposed session opportunities)`;

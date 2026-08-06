@@ -1,25 +1,10 @@
 /**
- * Turning a roster into scannable columns.
+ * Turning a roster into scannable columns. Three rules, because a wrapped line
+ * is indistinguishable from a new agent's row:
  *
- * The problem this solves is measured, not aesthetic. The previous `who`
- * space-joined its fields, so nothing lined up vertically and line lengths ran
- * 78–276 characters against an 80-column terminal — every long line wrapped, and
- * a wrapped line is indistinguishable from a new agent's row. With seven agents
- * live the output was a wall.
- *
- * Three rules follow from that:
- *
- * 1. FIXED COLUMNS. A name column and an age column of known width mean the eye
- *    can drop down one column instead of re-reading each line.
- * 2. NOTHING EXCEEDS THE TERMINAL WIDTH. Text is truncated to fit rather than
- *    left to wrap, because a wrap costs a whole line and destroys the alignment
- *    the columns just bought.
- * 3. REPEATED FACTS MOVE TO THE HEADER. `⟲ old hooks` on seven rows says one
- *    thing seven times; it is a property of the roster, not of an agent.
- *
- * Pure string work, so it is testable without a terminal — the widths and
- * truncation are asserted rather than eyeballed, which is how two spacing bugs
- * shipped previously.
+ * 1. FIXED COLUMNS, so the eye drops down one instead of re-reading each line.
+ * 2. NOTHING EXCEEDS THE TERMINAL WIDTH — truncate rather than let it wrap.
+ * 3. REPEATED FACTS MOVE TO THE HEADER; they belong to the roster, not a row.
  */
 
 /** Fallback when stdout is not a TTY (piped, redirected, or under a test). */
@@ -36,14 +21,9 @@ export function terminalWidth(): number {
 /**
  * Breaks text onto lines of at most `max` cells, at word boundaries.
  *
- * For text where the END CARRIES MEANING and truncating loses the point — a
- * diary title is the whole claim, and a result ending in "…" makes the reader
- * open the entry to find out whether it was relevant. Use `fit` where the text
- * is a label and the start identifies it (a name, a path, a topic).
- *
- * A word longer than `max` is placed on its own line rather than broken: it is
- * usually an identifier, and `resolveBuildingVisu` / `alBounds` across two lines
- * is not searchable by eye.
+ * For text where the END CARRIES MEANING, such as a diary title. Use `fit`
+ * where the start identifies it instead. An over-long word takes its own line
+ * rather than breaking, because a split identifier is not searchable by eye.
  */
 export function wrap(text: string, max: number): string[] {
   if (max <= 0) return [text];
@@ -86,21 +66,15 @@ export function pad(text: string, width: number): string {
 /**
  * Files an agent touched that no one could meaningfully collide on.
  *
- * Agents write throwaway probes constantly — `tmpprobe/`, `tmpwb/`, `.p3msg.tmp`
- * — and they dominated the roster by volume: one live session held 17 of 18
- * claims in `tmpprobe/`, producing a 276-character line in which the single real
- * file was invisible. They are still COUNTED, because "this agent is poking at
- * things" is worth knowing; they are just never worth a path.
+ * Throwaway probes dominate the roster by volume and bury the one real file.
+ * Still COUNTED, because "this agent is busy" is worth knowing; never named.
  */
 export function isScratchPath(path: string): boolean {
   const p = path.replace(/\\/g, "/");
   return (
-    // A TOP-LEVEL directory starting with tmp/temp/scratch. Anchoring at the
-    // repo root is what makes this safe: agents drop probes in the root
-    // (`tmpprobe/`, `tmpwb/`), while real code that merely starts with those
-    // letters lives nested — `src/template/` was matched by an unanchored
-    // `temp[^/]*` and would have hidden a genuine collision, which is far worse
-    // than the noise the filter removes.
+    // A TOP-LEVEL directory only. Anchoring at the repo root is what makes
+    // this safe: unanchored, `temp[^/]*` also matches `src/template/` and
+    // would hide a genuine collision.
     /^(?:tmp|temp|scratch)[^/]*\//i.test(p) ||
     /\.tmp$/i.test(p) ||
     /(?:^|\/)node_modules\//.test(p)
@@ -220,18 +194,11 @@ export interface ProcessLike {
 }
 
 /**
- * Running Claude processes in this repo that no roster row accounts for.
+ * Running Claude processes in this repo that no roster row accounts for —
+ * sessions whose terminal closed while the process lived on.
  *
- * These are sessions whose terminal was closed: the window is gone, the process
- * is not, and nothing in any UI reports them — two were found running for 48
- * hours in worktrees that were no longer in use.
- *
- * SCOPED TO THE REPO. `claude agents --json` is machine-wide, so without this
- * filter a session in an unrelated project would be reported here as a stray of
- * this one. Worktrees live beneath the root, so a prefix test keeps them; the
- * boundary check stops `/Traffic` from also matching `/Traffic-old`.
- *
- * Oldest first — age is what makes one worth acting on.
+ * SCOPED TO THE REPO, because `claude agents --json` is machine-wide. The
+ * boundary check stops `/Traffic` matching `/Traffic-old`. Oldest first.
  */
 export function backgroundProcesses<T extends ProcessLike>(
   processes: readonly T[],
@@ -252,21 +219,9 @@ export function backgroundProcesses<T extends ProcessLike>(
 /**
  * Shortest path suffix that still names ONE file, per path.
  *
- * WHY NOT JUST SHOW FULL PATHS. The column is width-bound and four agents in
- * one tree do not need `src/` repeated on every row — the basename is right
- * almost always, and the docs' "repeated facts move to the header" rule applies
- * to directories too.
- *
- * WHY NOT JUST SHOW BASENAMES, which is what this did. Contention is computed
- * on the FULL path (`cli/roster-model.ts`) while the display was the leaf, so
- * `README.md` and `plans/README.md` rendered identically: two agents in
- * different files looked like a collision, and a real collision could not be
- * told from a coincidence of names. That defeats red-for-contested, which the
- * docs call the one marker that always means "look at this".
- *
- * So: lengthen only what would otherwise be ambiguous, one directory segment at
- * a time, and leave every unambiguous name alone. Identical paths are not
- * ambiguous with each other — the same file listed twice is one file.
+ * NOT the bare basename: contention is computed on the FULL path, so
+ * `README.md` and `plans/README.md` displayed alike make two agents in
+ * different files read as a collision. Identical paths are one file.
  */
 export function disambiguate(paths: readonly string[]): (path: string) => string {
   const unique = [...new Set(paths)];
@@ -289,19 +244,9 @@ export function disambiguate(paths: readonly string[]): (path: string) => string
 }
 
 /**
- * THE GLYPH FOR EACH AGENT STATE, DEFINED ONCE.
- *
- * `who` and `board` rendered these independently and diverged: `○` meant "at a
- * prompt" in `cli/roster-renderers.ts` and "gone" in `cli/work.ts`, in the two
- * surfaces the docs call the most heavily tuned. An operator who learned `○`
- * from `who` read `board`'s `○` as a live idle agent — the exact inversion of
- * "who can I still reach". Measured 2026-08-05.
- *
- * Keyed on `AgentState` (`core/work.ts`) rather than on free strings, so a new
- * state is a type error in both renderers instead of a silently missing row.
- * The two surfaces may still choose WHICH states they show — `who` folds
- * `gone` away because a roster only lists the living — but they can no longer
- * disagree about what a symbol means.
+ * THE GLYPH FOR EACH AGENT STATE, DEFINED ONCE, because `who` and `board` once
+ * disagreed about what `○` meant. Keyed on `AgentState` so a new state is a
+ * type error in both renderers rather than a silently missing row.
  */
 export const STATE_GLYPHS = {
   waiting: "⏸",

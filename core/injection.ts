@@ -1,40 +1,20 @@
 /**
  * What actually reaches a session's context, and what gets left out.
  *
- * MEASURED FAILURE: a session hedged "I'm Claude Code, and in this session I'm
- * anouk" because the system prompt outranks injected text. The identity line
- * needs to answer WHO without fighting WHAT. So: identity is envelope, outside
- * the sort entirely, subtracted from the budget first. `pack` cannot drop it
- * because `pack` is never given it to weigh.
- *
- * NOTHING VANISHES SILENTLY: an actionable item too large for the space left
- * degrades to its compact form; if even that will not fit, the block carries
- * one aggregate line saying how many were omitted, and `crew inbox` hands
- * over the full text.
+ * Identity is ENVELOPE: subtracted from the budget first and never weighed, so
+ * `pack` cannot drop it. NOTHING VANISHES SILENTLY — an item that will not fit
+ * degrades to its compact form, then to a counted line, then to `crew inbox`.
  */
 
 /** Where a candidate's text came from. Peer text is what needs the trust note. */
 export type CandidateOrigin = "operator" | "peer" | "system";
 
 /**
- * Whether the session's CONTEXT survived, which is not the same question as
- * whether the session did.
+ * Whether the session's CONTEXT survived, which is not whether the session did.
  *
- * SUPPRESSION IS ABOUT THE CONTEXT WINDOW, NOT THE ROW. "Already shown" only
- * justifies staying quiet while the earlier text is still in front of the
- * model. SessionStart re-fires on `clear`, `compact` and `fork` with the SAME
- * session id and a context that has been wiped or rewritten — so exposure keyed
- * on the id alone would suppress a roster the agent can no longer see, leaving
- * a block of nothing but the identity header.
- *
- * MEASURED, 2026-08-02, in this tool's own session: 19 identity-block
- * injections appear AFTER the compact boundary in one transcript under one
- * unchanged `session_id`. The lifecycle really does re-run, and the earlier
- * context really is gone.
- *
- * `resume` is the only continuation: the conversation is restored intact and
- * repeating an unchanged roster is pure noise. Everything else starts a fresh
- * context generation and must be told everything again.
+ * `resume` is the ONLY continuation. `clear`, `compact` and `fork` re-fire
+ * SessionStart under the same id with the context wiped, so anything keyed on
+ * the id alone suppresses text the agent can no longer see.
  */
 export function isContinuation(source: string | undefined): boolean {
   return source === "resume";
@@ -54,12 +34,9 @@ export interface InjectionCandidate {
    */
   readonly dedupeKey: string;
   /**
-   * A fingerprint of the CONTENT, never a timestamp.
-   *
-   * "Do not show this again unless it changed" is a content question, and this
-   * tool already shipped the timestamp answer to it: a claim re-announced on
-   * every edit put six identical lines in one log view, and the fix was a
-   * time-based mute that still cannot tell a changed claim from a repeated one.
+   * A fingerprint of the CONTENT, never a timestamp. "Do not show this again
+   * unless it changed" is a content question, and a clock cannot tell a changed
+   * item from a repeated one.
    */
   readonly stateVersion: string;
   readonly origin: CandidateOrigin;
@@ -75,13 +52,9 @@ export interface InjectionCandidate {
   /**
    * A bounded rendering used when the full text will not fit.
    *
-   * IT MUST STAND ON ITS OWN OR NAME ITS OWN SOURCE. A compact form is
-   * SELECTED, which means it is recorded as delivered and is NOT an omission —
-   * so nothing about it reaches the inbox. A compact line reading "1 item —
-   * `crew inbox`" would therefore point at an empty inbox and strand the
-   * agent. The three producers today each cite the command that actually serves
-   * their content (`log`, `recall`, `about-me`); a future one that cannot must
-   * omit `compact` and let the item fall through to the inbox instead.
+   * IT MUST STAND ON ITS OWN OR NAME ITS OWN SOURCE: a compact form counts as
+   * DELIVERED, so it never reaches the inbox and must not point at one. A
+   * producer that cannot cite its own command should omit `compact`.
    */
   readonly compact?: string;
 }
@@ -135,12 +108,8 @@ const JOIN = "\n\n";
 /**
  * What appending this text to a block of `blocks` existing entries costs.
  *
- * SEPARATORS GO BETWEEN, NOT AFTER. An earlier version charged every block
- * `text.length + JOIN.length`, which overcounts by exactly one separator for
- * the whole block — measured at 10 against a rendered 8. Small, and wrong in
- * the direction that matters: near a boundary it omits a candidate that in fact
- * fits, and reports `mandatoryOverflow` for a header that does not overflow.
- * The tests repeated the same formula, so they agreed with the bug.
+ * SEPARATORS GO BETWEEN, NOT AFTER. Charging every block a separator
+ * overcounts by one and drops a candidate that fits.
  */
 function appended(blocks: number, text: string): number {
   return text.length + (blocks > 0 ? JOIN.length : 0);
@@ -160,11 +129,8 @@ export function renderBlock(lines: readonly string[]): string {
 /**
  * Deterministic order: priority first, then key.
  *
- * The tie-break is not decoration. Candidates arrive from several producers and
- * two at the same priority would otherwise be ordered by insertion, which varies
- * with which store queries returned rows — making the injected block differ
- * between two sessions with identical state, and making `crew injection`
- * unreproducible exactly when someone is using it to explain a surprise.
+ * The tie-break is not decoration. Insertion order varies with which store
+ * queries returned rows, which would make `crew injection` unreproducible.
  */
 export function ordered(candidates: readonly InjectionCandidate[]): InjectionCandidate[] {
   return [...candidates].sort((a, b) => b.priority - a.priority || a.key.localeCompare(b.key));
@@ -203,14 +169,9 @@ export function dedupe(
 /**
  * Selects what fits, reserving the mandatory envelope first.
  *
- * THE PEER-FRAMING CIRCULARITY, resolved by stating the order rather than
- * discovering it: the space available depends on whether the trust framing is
- * needed, and whether it is needed depends on which candidates are selected. So
- * the FIRST candidate requiring framing pays for its own text AND the framing,
- * atomically — both fit or neither is taken. Later ones pay only their own size,
- * the framing already being bought. Without the atomic rule a peer line could be
- * admitted and its framing then fail to fit, which is the one combination that
- * must never render.
+ * The FIRST candidate needing peer framing pays for its own text AND the
+ * framing, atomically — both fit or neither is taken. A peer line admitted
+ * without its framing is the one combination that must never render.
  */
 export function pack(env: Envelope, seen: ReadonlyMap<string, string> = new Map()): PackResult {
   const header = env.mandatoryHeader.filter((l) => l !== "");
@@ -234,20 +195,9 @@ export function pack(env: Envelope, seen: ReadonlyMap<string, string> = new Map(
   const omitted: Omitted[] = [...dropped];
   let used = headerChars;
   let framingTaken = false;
-  // THE FRAMING IS SETTLED BY THE FIRST PEER CANDIDATE, WIN OR LOSE.
-  //
-  // Measured against the real envelope at a 700-char budget: `roster` (p90, 76
-  // chars) was DROPPED while `recent` (p70) got in. The highest-priority
-  // candidate in the tool lost to one ranked below it, for lack of 13 chars.
-  //
-  // The cause is that a failed atomic charge left the framing unbought, so the
-  // NEXT peer candidate was offered it again — and being smaller, it could
-  // afford what its senior could not. That is a priority inversion produced by
-  // the funding rule rather than by the ranking, and it would have shipped
-  // looking like correct behaviour, because both invariants still held.
-  //
-  // So the first peer candidate considered decides for the whole pass: it
-  // either buys the framing or establishes that no peer text fits at all.
+  // THE FRAMING IS SETTLED BY THE FIRST PEER CANDIDATE, WIN OR LOSE. Letting a
+  // later, smaller candidate retry the charge its senior could not afford is a
+  // priority inversion. See docs/design-notes.md, "Packing the block".
   let framingSettled = false;
 
   for (const c of kept) {

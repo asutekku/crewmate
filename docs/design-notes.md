@@ -97,6 +97,27 @@ is worse than useless if you act on its most alarming cell and it was invented.
 `BUSY_HEARTBEAT_MS` is sized from 307 measured intra-session hook gaps (p50 21 s,
 p90 134 s, p95 324 s); five minutes sits just above p95.
 
+## Packing the block
+
+**The framing is settled by the first peer candidate, win or lose.** The space
+available depends on whether the trust framing is needed, and whether it is
+needed depends on which candidates are selected — a circularity resolved by
+stating the order rather than discovering it. Measured against the real envelope
+at a 700-char budget: `roster` (p90, 76 chars) was dropped while `recent` (p70)
+got in, the highest-priority candidate losing to one ranked below it for lack of
+13 chars. A failed atomic charge had left the framing unbought, so the next peer
+candidate was offered it again and, being smaller, could afford what its senior
+could not. That is a priority inversion produced by the funding rule rather than
+the ranking, and it would have shipped looking correct, because both invariants
+still held.
+
+**Context, not the row.** SessionStart re-fires on `clear`, `compact` and `fork`
+with the same session id and a context that has been wiped, so exposure keyed on
+the id alone suppresses a roster the agent can no longer see. Measured 2026-08-02
+in this tool's own session: 19 identity-block injections appear after the compact
+boundary in one transcript under one unchanged `session_id`. Only `resume`
+restores the conversation intact.
+
 ## Telling a session its name
 
 **A hook cannot win on rank.** Measured 2026-08-02: asked "who are you", a
