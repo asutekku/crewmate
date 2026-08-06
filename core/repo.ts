@@ -223,6 +223,30 @@ export function installManifestRaw(): unknown {
   }
 }
 
+/**
+ * Hashes this checkout's copy of the files a build installed.
+ *
+ * Same algorithm and same order as `install.ts`, over the script list the
+ * manifest recorded — so an identical result means the running bytes are these
+ * bytes. Returns "" when the list is absent or any file cannot be read, which
+ * makes the caller fall back to comparing revisions rather than guess.
+ */
+export function sourceHashFor(raw: unknown, root: string): string {
+  if (typeof raw !== "object" || raw === null) return "";
+  const scripts = (raw as Record<string, unknown>)["scripts"];
+  if (!Array.isArray(scripts) || scripts.length === 0) return "";
+  try {
+    const hasher = new Bun.CryptoHasher("sha256");
+    for (const name of scripts) {
+      if (typeof name !== "string") return "";
+      hasher.update(readFileSync(`${root}/${name}`, "utf8"));
+    }
+    return hasher.digest("hex").slice(0, 8);
+  } catch {
+    return "";
+  }
+}
+
 /** The commit this checkout is on, or null outside a git repo. */
 export function headRevision(cwd: string): string | null {
   return git(cwd, ["rev-parse", "HEAD"]);
@@ -243,6 +267,13 @@ export interface InstallDrift {
  * `install.ts` runs. Measured 2026-08-06: a name-allocator fix was committed and
  * reported shipped while every agent kept running the previous day's build.
  *
+ * CONTENT DECIDES WHEN IT CAN. A revision is only a label on the bytes, and
+ * `install.ts` run on a dirty tree stamps the commit that existed at the time —
+ * so committing afterwards left the installed bytes identical and the recorded
+ * revision one behind. That false positive was measured within an hour of this
+ * shipping. The hash answers the real question: are the running bytes these
+ * bytes? The revision is the message, and the fallback when no hash exists.
+ *
  * SILENT WHENEVER IT CANNOT KNOW. No manifest, no revision, unreadable HEAD --
  * all report no drift. A warning that fires when nothing is wrong is one every
  * reader learns to skip, and this one has to be believed the day it matters.
@@ -250,12 +281,23 @@ export interface InstallDrift {
 export function driftFromInstalled(
   raw: unknown,
   head: string | null,
+  sourceHash = "",
 ): InstallDrift {
   const none = { stale: false, installed: "", head: "", installedAt: 0 };
   const manifest = parseManifest(raw);
   if (!manifest || manifest.sourceRevision === "") return none;
   const at = head?.trim().toLowerCase() ?? "";
   const installed = manifest.sourceRevision.trim().toLowerCase();
+  const here = sourceHash.trim().toLowerCase();
+  const built = manifest.contentHash.trim().toLowerCase();
+  if (here !== "" && built !== "") {
+    return {
+      stale: here !== built,
+      installed,
+      head: at,
+      installedAt: manifest.installedAt,
+    };
+  }
   if (at === "") return { ...none, installed, installedAt: manifest.installedAt };
   // Prefix either way: `rev-parse --short` and the full sha name one commit.
   const same = installed.startsWith(at) || at.startsWith(installed);

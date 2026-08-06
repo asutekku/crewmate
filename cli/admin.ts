@@ -8,6 +8,7 @@ import {
   driftFromInstalled,
   headRevision,
   installManifestRaw,
+  sourceHashFor,
   worktreeRoot,
 } from "../core/repo.ts";
 import {
@@ -210,16 +211,22 @@ export function createAdminCommands(context: CliContext): CommandMap {
       context.log(`${dim("db:     ")} ${context.dbPath}`);
       // What agents actually RUN, which is not this checkout until install.ts
       // has copied it. Silent unless genuinely behind.
+      const rawManifest = installManifestRaw();
       const installDrift = driftFromInstalled(
-        installManifestRaw(),
+        rawManifest,
         headRevision(context.cwd),
+        sourceHashFor(rawManifest, context.projectRoot),
       );
       if (installDrift.stale) {
-        context.log(
-          `${dim("install:")} ${red("stale")} ${dim(
-            `— agents run ${installDrift.installed.slice(0, 7)}, this tree is ${installDrift.head.slice(0, 7)}`,
-          )}`,
-        );
+        // Same revision, different bytes is the ordinary case — an edited tree
+        // that has not been installed. Naming two identical shas there reads as
+        // a bug in this check rather than as uninstalled work.
+        const where =
+          installDrift.head !== "" &&
+          installDrift.installed.startsWith(installDrift.head.slice(0, 7))
+            ? "this tree has changes agents are not running"
+            : `agents run ${installDrift.installed.slice(0, 7)}, this tree is ${installDrift.head.slice(0, 7)}`;
+        context.log(`${dim("install:")} ${red("stale")} ${dim(`— ${where}`)}`);
         context.log(dim("  run `bun install.ts` to push this checkout to them"));
       }
       if (!context.isGit) return;

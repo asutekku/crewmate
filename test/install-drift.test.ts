@@ -35,6 +35,59 @@ const drift = (
   manifest: unknown = MANIFEST,
 ): InstallDrift => driftFromInstalled(manifest, head);
 
+describe("content decides, because a revision is only a label", () => {
+  /**
+   * THE FALSE POSITIVE, measured 2026-08-06 within an hour of shipping this.
+   *
+   * `install.ts` was run on a dirty tree — the normal way to test a change —
+   * and stamped the manifest with the commit that existed at that moment. The
+   * work was then committed. The installed BYTES were exactly the checkout's,
+   * and the check reported drift anyway, because the revision it recorded was
+   * one commit behind.
+   *
+   * A warning that fires when nothing is wrong is one the reader learns to
+   * skip, and this one has to be believed the day it matters. So the content
+   * hash is authoritative when both sides have one: it answers "are the running
+   * bytes these bytes?", which is the actual question. The revision stays for
+   * the message, and as the fallback when no hash can be computed.
+   */
+  test("matching content is not drift, even from a different revision", () => {
+    const d = driftFromInstalled(
+      MANIFEST,
+      "3ff42f6aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      MANIFEST.contentHash,
+    );
+    expect(d.stale).toBe(false);
+  });
+
+  test("differing content IS drift, even at the same revision", () => {
+    // The inverse, and the more dangerous one: an edited working tree that was
+    // never installed sits at the same commit as the build.
+    const d = driftFromInstalled(
+      MANIFEST,
+      MANIFEST.sourceRevision,
+      "deadbeef",
+    );
+    expect(d.stale).toBe(true);
+  });
+
+  test("an uncomputable content hash falls back to the revision", () => {
+    // Hashing reads the source tree, which can be absent or unreadable. The
+    // revision comparison is weaker but better than reporting nothing.
+    expect(driftFromInstalled(MANIFEST, "3ff42f6", "").stale).toBe(true);
+    expect(
+      driftFromInstalled(MANIFEST, MANIFEST.sourceRevision, "").stale,
+    ).toBe(false);
+  });
+
+  test("a manifest with no content hash still compares revisions", () => {
+    const noHash = { ...MANIFEST, contentHash: "x" };
+    expect(driftFromInstalled(noHash, MANIFEST.sourceRevision, "").stale).toBe(
+      false,
+    );
+  });
+});
+
 describe("driftFromInstalled", () => {
   test("same revision is not drift", () => {
     expect(drift(MANIFEST.sourceRevision).stale).toBe(false);
