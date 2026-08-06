@@ -1,25 +1,11 @@
 /**
  * A one-line description of what a session is actually doing, written by Haiku.
+ * The MOVING half of the roster label, where the transcript title describes the
+ * conversation's opening subject and does not follow the work.
  *
- * WHY A MODEL AT ALL, given the transcript already yields a title: the title is
- * set early and describes the conversation's OPENING subject, so a session that
- * began on water simulation and has moved to render benchmarks still reads as
- * water simulation. The summary is the moving half — it is regenerated from
- * recent assistant text, so it tracks the work rather than its origin.
- *
- * NEVER ON A HOOK PATH. Measured at 7.7 s per call against a ~72 ms budget for
- * every other hook here, so a hook that waited for one would stall a turn for
- * ten times the cost of everything else combined. `refreshSummary` therefore
- * spawns a BACKGROUND process and returns immediately; the result lands in the
- * db for whoever reads the roster next. A roster that is one refresh out of date
- * is the price, and it is the right one — this field is a convenience for the
- * operator, not a coordination signal agents act on.
- *
- * "Background" here means invisible, not detached — see `refreshSummary` for why
- * the Windows console makes those two different things.
- *
- * COST IS BOUNDED BY TIME, NOT BY EVENTS: at most one refresh per session per
- * SUMMARY_TTL_MS however busy the session is (see `staleSummarySessions`).
+ * NEVER ON A HOOK PATH: a call takes seconds against a hook budget in
+ * milliseconds, so `refreshSummary` spawns a background process and returns.
+ * Bounded by TIME, not events — one refresh per session per SUMMARY_TTL_MS.
  */
 
 /** How long a summary stays fresh. A slow-moving label; this need not be tight. */
@@ -35,14 +21,9 @@ export const SUMMARY_MAX = 90;
 const UNCLEAR = "unclear";
 
 /**
- * Framed as a LABELLING job over tagged data, not as a conversation.
- *
- * Asked directly to "summarize what you are working on", Haiku answered as a
- * participant — "I don't have any current work to summarize. This is a fresh
- * session…" — because the text reads as an opening turn addressed to it. Naming
- * the role, fencing the input in tags, and forbidding offers of help produced a
- * usable line on the first try ("Optimizing terrain water vertex processing
- * performance").
+ * Framed as a LABELLING job over tagged data, not as a conversation. Asked
+ * directly, Haiku answers as a participant ("I don't have any current work to
+ * summarize"), because the text reads as an opening turn addressed to it.
  */
 function buildPrompt(activity: string): string {
   return [
@@ -78,19 +59,10 @@ export function parseSummary(raw: string): string {
 /**
  * Spawns the summariser and returns at once, having waited for nothing.
  *
- * `Bun.spawn`, NOT `child_process.spawn` with `detached`. On Windows `detached`
- * gives the child its own console — a black window that flashes up on every
- * `who` — and `windowsHide: true` does NOT suppress it. Measured by asking the
- * child itself for `GetConsoleWindow()`: detached returns a real handle, this
- * returns 0, across three runs each. (Counting `conhost.exe` machine-wide is
- * useless here; it swings ±1 between identical runs from unrelated processes.)
- *
- * The child still outlives its parent, which is the property that matters: the
- * CLI exits in well under a second and the Haiku call takes ~8 s. Note it must
- * NOT be `unref`'d — measured, an unref'd `Bun.spawn` child is killed when the
- * parent exits, which is the opposite of the Node convention.
- *
- * stdio is fully closed so no inherited pipe can hold the parent open.
+ * `Bun.spawn`, NOT `child_process.spawn` with `detached`: on Windows `detached`
+ * gives the child a console window and `windowsHide` does not suppress it. It
+ * must NOT be `unref`'d either — that KILLS a Bun child at parent exit, the
+ * opposite of the Node convention. stdio is closed so no pipe holds the parent.
  */
 export function refreshSummary(
   workerPath: string,
@@ -112,10 +84,8 @@ export function refreshSummary(
 
 /**
  * Runs the model. Only ever called from the detached worker, never from a hook.
- *
- * `claude -p --model haiku` rather than the API: there is no ANTHROPIC_API_KEY
- * in this environment (checked), and the CLI is already authenticated — so this
- * adds no new credential to manage.
+ * `claude -p` rather than the API, because the CLI is already authenticated and
+ * this adds no new credential to manage.
  */
 export async function generateSummary(activity: string, timeoutMs = 60_000): Promise<string> {
   if (activity.trim() === "") return "";
@@ -128,13 +98,9 @@ export async function generateSummary(activity: string, timeoutMs = 60_000): Pro
       // means a worker invoked by hand cannot forge a roster entry either.
       env: { ...process.env, PRESENCE_INTERNAL: "1" },
     });
-    // KILLING STRANDS A ROSTER ROW. `proc.kill()` terminates the child before
-    // its own SessionEnd hook can run, so a timed-out call left a registered
-    // session behind FOREVER — that is how five "You label background jobs."
-    // agents appeared. The env var above stops them registering in the first
-    // place, which is the real fix; this timeout stays as a backstop for a call
-    // that hangs, and is now generous enough that a slow-but-working call is
-    // never killed (measured: ~8 s typical, 7.7 s on a warm cache).
+    // KILLING STRANDS A ROSTER ROW: `kill` pre-empts the child's own SessionEnd
+    // hook. The env var above is the real fix; this is a backstop for a hung
+    // call, generous enough never to kill a slow-but-working one.
     const timer = setTimeout(() => proc.kill(), timeoutMs);
     try {
       const out = await new Response(proc.stdout).text();

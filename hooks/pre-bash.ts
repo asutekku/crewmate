@@ -1,40 +1,11 @@
 /**
  * PreToolUse(Bash): refuse a loop that polls for work the harness announces.
  *
- * THE PATTERN, seen live 2026-08-02 in a peer's shell:
- *
- *     for i in $(seq 1 60); do
- *       if [ -s ".../tasks/b0o9k4oas.output" ]; then echo DONE; break; fi
- *       sleep 10
- *     done; cat ".../tasks/b0o9k4oas.output" | tail -40
- *
- * Ten minutes of a turn spent re-deriving something the harness sends for free:
- * a background task emits a `<task-notification>` when it finishes, so the agent
- * can launch it, do other work, and handle the result when it lands.
- *
- * AND IT IS WRONG, not merely wasteful. `-s` tests "non-empty", not "finished".
- * A task that streams output trips it on the first byte, so the `cat` reads a
- * PARTIAL file and the agent treats half an answer as the whole one. That is
- * silent — it looks exactly like a complete short answer. Measured the same day
- * from the other direction: reading a task output file mid-run returned empty.
- *
- * WHY A HOOK AND NOT A CLAUDE.md LINE. The harness already refuses a bare
- * leading `sleep`, which is why this shape appears at all — an agent reaches for
- * `sleep`, gets refused, and wraps it in a loop, where the existing block does
- * not look. Verified 2026-08-02: `for i in $(seq 1 2); do ...; sleep 1; done`
- * runs with exit 0. A written rule is advice; this is the seam the advice keeps
- * leaking through, so the guard belongs where the leak is.
- *
- * DENY, NOT WARN. A warning arrives alongside a command that then runs for ten
- * minutes, so the agent reads the correction after paying the cost. `deny`
- * returns immediately with the reason, and the reason names the replacement —
- * a refusal that does not say what to do instead is one an agent routes around.
- *
- * NARROW BY CONSTRUCTION. It fires only when a loop, a wait, and a task-output
- * path all appear together. Every part of that conjunction is load-bearing:
- * polling an EXTERNAL thing the harness cannot see (a CI run, a deploy, a
- * server coming up) is legitimate and stays allowed, and so does any loop that
- * merely sleeps. See `test/prebash.test.ts` for the cases held open on purpose.
+ * DENY, NOT WARN — a warning arrives beside a command that then runs for ten
+ * minutes, and the reason names the replacement. NARROW BY CONSTRUCTION: a
+ * loop, a wait and a task-output path must ALL appear, so polling something
+ * external stays allowed. See docs/design-notes.md, "The poll-loop guard", and
+ * `test/prebash.test.ts` for the cases held open on purpose.
  */
 
 import { readPayload } from "../core/shared.ts";
@@ -61,18 +32,11 @@ export interface Verdict {
 }
 
 /**
- * Strips regions where a poll loop is DATA rather than something the shell runs.
+ * Strips regions where a poll loop is DATA rather than something the shell runs
+ * — a heredoc or a `bun -e` script quoting the pattern.
  *
- * Found immediately, by this guard blocking the command that was testing it: a
- * heredoc feeding the pattern to a JSON fixture, and a `bun -e` script listing
- * it as a test case, both read as poll loops. Neither makes the shell wait for
- * anything — the text is an argument.
- *
- * This is deliberately crude. It cannot know whether a quoted region is data or
- * a `bash -c` payload that really will poll, and it errs toward ALLOWING, which
- * is the right direction for a guard that denies: a missed poll costs ten
- * minutes, a false denial blocks work and teaches agents to route around the
- * hook. The unit tests pin the raw patterns; this only widens what gets through.
+ * Deliberately crude, and errs toward ALLOWING: a missed poll costs ten
+ * minutes, a false denial teaches agents to route around the hook.
  */
 function executableParts(command: string): string {
   return (

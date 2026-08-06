@@ -97,6 +97,31 @@ is worse than useless if you act on its most alarming cell and it was invented.
 `BUSY_HEARTBEAT_MS` is sized from 307 measured intra-session hook gaps (p50 21 s,
 p90 134 s, p95 324 s); five minutes sits just above p95.
 
+## The poll-loop guard
+
+**The pattern**, seen live 2026-08-02 in a peer's shell:
+
+```
+for i in $(seq 1 60); do
+  if [ -s ".../tasks/b0o9k4oas.output" ]; then echo DONE; break; fi
+  sleep 10
+done; cat ".../tasks/b0o9k4oas.output" | tail -40
+```
+
+Ten minutes of a turn spent re-deriving what the harness sends for free: a
+background task emits a `<task-notification>` when it finishes.
+
+**And it is wrong, not merely wasteful.** `-s` tests "non-empty", not
+"finished". A task that streams output trips it on the first byte, so the `cat`
+reads a PARTIAL file and the agent treats half an answer as the whole one —
+silently, because it looks exactly like a complete short answer.
+
+**Why a hook and not a CLAUDE.md line.** The harness already refuses a bare
+leading `sleep`, which is why this shape appears at all: an agent reaches for
+`sleep`, gets refused, and wraps it in a loop, where the existing block does not
+look. Verified 2026-08-02 that `for i in $(seq 1 2); do ...; sleep 1; done` runs
+with exit 0. A written rule is advice; this is the seam the advice leaks through.
+
 ## Hook cost
 
 **`PostToolBatch` fires many times per turn**, so the empty path has to be
