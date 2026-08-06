@@ -120,7 +120,7 @@ export function identityLines(name: string, project: string): string[] {
 const HOW_TO_BE_CALLED =
   "Peers reach you by that name — it is what they type at `msg`, and it " +
   "survives a restart. You " +
-  'can say what you ARE with `crew call-you "<role>"` — "Tooling Master", ' +
+  'can say what you ARE with `crew set-role "<role>"` — "Tooling Master", ' +
   '"Keeper of Wet Things" — which appears beside your name on the roster; or take ' +
   'a different name with `crew call-me "<name>"`. Both optional. Your name stays ' +
   "put while the role changes, so a role that moves still reads as the same agent." +

@@ -16,7 +16,7 @@ export const FEATURES = [
   {id:"hazards",label:"hazards",helpVerbs:["hazard"]},
   {id:"corrections",label:"corrections",helpVerbs:["correct"]},
   {id:"claims",label:"claims",helpVerbs:["files","blame"]},
-  {id:"aliases",label:"aliases",helpVerbs:["call-me","call-you","name","role"]},
+  {id:"aliases",label:"aliases",helpVerbs:["call-me","set-role","call-you","name","role"]},
   {id:"release",label:"name release",helpVerbs:["release"]},
   {id:"minions",label:"minions",helpVerbs:[]},
   {id:"tasks",label:"tasks",helpVerbs:[]},

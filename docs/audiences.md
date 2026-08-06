@@ -86,7 +86,7 @@ Reached from an injection, a hook, or another agent's coordination. A human *can
 | `remember` | keep something about the user across sessions |
 | `inherit` | take up a departed agent's knowledge; bare lists them |
 | `call-me` | take a different name; peers type it at msg |
-| `call-you` | say what you ARE: Keeper of Wet Things |
+| `set-role` | set your role: Keeper of Wet Things |
 | `release` | give up your name so a successor can take it |
 
 ## Human

@@ -190,7 +190,7 @@ a verb is dispatched without appearing here.
 | Command | Does |
 |---|---|
 | `call-me <name> [--agent <who>]` | take a different name; peers type it at msg |
-| `call-you "<role>" [--agent <who>]` | say what you ARE: Keeper of Wet Things |
+| `set-role "<role>" [--agent <who>]` | set your role: Keeper of Wet Things |
 | `release [--agent <who>]` | give up your name so a successor can take it |
 
 <!-- END GENERATED COMMANDS -->

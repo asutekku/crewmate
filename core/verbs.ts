@@ -153,7 +153,7 @@ export const VERBS: readonly Verb[] = [
 
   // ---- identity
   { verb: "call-me", audience: "agent", args: "<name> [--agent <who>]", blurb: "take a different name; peers type it at msg", group: "identity", aliases: ["name"] },
-  { verb: "call-you", audience: "agent", args: '"<role>" [--agent <who>]', blurb: "say what you ARE: Keeper of Wet Things", group: "identity", aliases: ["role"] },
+  { verb: "set-role", audience: "agent", args: '"<role>" [--agent <who>]', blurb: "set your role: Keeper of Wet Things", group: "identity", aliases: ["call-you", "role"] },
   { verb: "release", audience: "agent", args: "[--agent <who>]", blurb: "give up your name so a successor can take it", group: "identity" },
 ];
 
@@ -173,8 +173,12 @@ export function findVerb(verb: string): Verb | undefined {
  */
 export function usageFor(verb: string): string {
   const found = findVerb(verb);
+  // THE PRIMARY NAME, not the alias the caller typed. Echoing the input taught
+  // the deprecated spelling back to whoever used it, so an alias kept teaching
+  // itself and nothing ever moved to the advertised name.
+  const name = found?.verb ?? verb;
   const args = found?.args ?? "";
-  return `usage: ${CLI} ${verb}${args === "" ? "" : ` ${args}`}`;
+  return `usage: ${CLI} ${name}${args === "" ? "" : ` ${args}`}`;
 }
 
 /**

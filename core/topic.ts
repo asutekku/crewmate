@@ -67,7 +67,7 @@ export function validateAlias(raw: string): { ok: true; alias: string } | { ok: 
       why:
         `a name must be one word — peers type it at \`msg\`, and "${alias}" would ` +
         `read as two arguments. Try "${alias.replace(/ /g, "-")}", or put the ` +
-        `several-word version in your role with \`call-you\`.`,
+        `several-word version in your role with \`set-role\`.`,
     };
   }
   // Letters, digits, and the two separators a name actually wants. Excludes the

@@ -88,7 +88,7 @@ export function createAdminCommands(context: CliContext): CommandMap {
   };
   const role = (args: readonly string[]): void => {
     const parsed = parseArguments(args, { valueFlags: ["--agent"] });
-    if (!parsed.ok) return failCommand(context, `call-you: ${parsed.error}`);
+    if (!parsed.ok) return failCommand(context, `set-role: ${parsed.error}`);
     const target = stringFlag(parsed.value, "--agent") ?? "";
     const check = validateRole(parsed.value.positionals.join(" ").trim());
     if (!check.ok) {
@@ -98,7 +98,7 @@ export function createAdminCommands(context: CliContext): CommandMap {
     }
     withStore(context.dbPath, (store) => {
       const now = context.now();
-      const self = resolveSelf(context, store, target, now, "`call-you`");
+      const self = resolveSelf(context, store, target, now, "`set-role`");
       if (!self) return;
       store.setRole(self.sessionId, check.role);
       const name = displayName(self);
@@ -116,6 +116,10 @@ export function createAdminCommands(context: CliContext): CommandMap {
     "call-me": rename,
     release,
     name: rename,
+    // `call-you` and `role` are aliases kept working indefinitely: the verb was
+    // renamed because the pair `call-me`/`call-you` read as symmetric when it
+    // is not, and habits already carry the old name.
+    "set-role": role,
     "call-you": role,
     role,
     clear(args) {

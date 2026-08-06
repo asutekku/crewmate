@@ -248,7 +248,10 @@ describe("the table is well formed", () => {
 
   test("findVerb resolves aliases to their canonical row", () => {
     expect(findVerb("name")?.verb).toBe("call-me");
-    expect(findVerb("role")?.verb).toBe("call-you");
+    expect(findVerb("role")?.verb).toBe("set-role");
+    // The retired spelling still resolves: renaming a verb must not break the
+    // habit of every agent and hook that already learned the old one.
+    expect(findVerb("call-you")?.verb).toBe("set-role");
     expect(findVerb("nonsense")).toBeUndefined();
   });
 });

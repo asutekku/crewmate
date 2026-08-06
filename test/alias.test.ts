@@ -71,7 +71,7 @@ describe("validateAlias", () => {
       // A refusal an agent cannot act on just gets retried with another space.
       if (!r.ok) {
         expect(r.why).toContain("water-dynamic");
-        expect(r.why).toContain("call-you");
+        expect(r.why).toContain("set-role");
       }
     });
 

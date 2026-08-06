@@ -32,10 +32,15 @@ Luna — Tooling Master       Vega — Keeper of Wet Things       Rowan — Terr
 ```
 
 ```sh
-crew call-you "Tooling Master"   # what I am — changes as the work does
+crew set-role "Tooling Master"   # what I am — changes as the work does
 crew call-me  tooling            # a different name, if the assigned one won't do
-crew call-you "…" --agent luna   # the operator setting either, for any agent
+crew set-role "…" --agent luna   # the operator setting either, for any agent
 ```
+
+`call-you` and `role` still work — the verb was renamed on 2026-08-06 and the
+old spellings are kept as aliases. `call-me`/`call-you` read as a matched pair
+and were not one: an agent asked to give itself a role ran `call-you` and the
+operator still had to ask what the verb did.
 
 **Two fields, because they want opposite things.** A name is _typed_: short,
 unique, no spaces to quote. A role is _read_: evocative, several words, free to
