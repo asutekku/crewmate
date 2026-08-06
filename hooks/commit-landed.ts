@@ -1,26 +1,10 @@
 /**
- * PostToolUse on Bash: notice that a commit landed, and record it.
+ * PostToolUse on Bash: notice that a commit landed, and record it. A sha is the
+ * one thing on the board that is EVIDENCE rather than a claim.
  *
- * THE ONE THING ON THE BOARD NOBODY HAS TO REMEMBER. A sha is proof the work is
- * real — the difference between a checklist an agent wrote and a record of what
- * actually happened — and it is the single fact a hook can establish without
- * asking. Everything else on an item is a claim; this is evidence.
- *
- * READS THE RESULT, NOT THE COMMAND. A `git commit` that fails a pre-commit hook
- * or finds nothing staged still ran, and recording it would put a sha-less
- * "landed" on the board for work that did not land. Git prints
- * `[branch abc1234] subject` on success and nothing of the kind otherwise, so
- * the sha is taken from the OUTPUT and an absent one means no commit happened.
- *
- * `git commit -q` PRINTS NOTHING, so a quiet commit is invisible here and is
- * recorded by nobody. Measured 2026-08-01 by probing both forms: the quiet one
- * emitted no matching line at all. That is the deliberate trade — silently
- * MISSING a commit costs the board one event, where inventing one from the
- * command text would put a sha nobody can look up next to work that may not
- * exist. `crew did`/`step` still record it by hand.
- *
- * NEVER BLOCKS AND EMITS NOTHING. The agent already knows it committed; telling
- * it so would spend context on news it just made.
+ * READS THE RESULT, NOT THE COMMAND, so a failed `git commit` records nothing.
+ * `git commit -q` prints nothing and is therefore missed — the deliberate
+ * trade, since inventing a sha is worse. EMITS NOTHING: the agent was there.
  */
 
 import { withStore } from "../core/store.ts";
@@ -39,12 +23,8 @@ import { agentKey } from "../core/work.ts";
 export const COMMITTED = /^\[[^\]]*?\b([0-9a-f]{7,40})\]\s*(.*)$/m;
 
 /**
- * The sha and subject a git run reports, or null when nothing landed.
- *
- * Split out from `main` so the parse can be tested against real git output
- * without spawning a hook. The shapes it has to survive are not guessable —
- * see the test file, where each one is a captured `git` run rather than an
- * invented string.
+ * The sha and subject a git run reports, or null when nothing landed. Split out
+ * so the parse is tested against captured git output, not invented strings.
  */
 export function parseCommit(output: string): { sha: string; subject: string } | null {
   const m = COMMITTED.exec(output);

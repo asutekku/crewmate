@@ -1,25 +1,12 @@
 /**
  * Stop: publish that this session reached a stopping point, and hand over
- * anything a peer addressed to it directly.
+ * anything a peer addressed to it directly. A turn ending is the only reliable
+ * "I am at a stopping point" signal there is.
  *
- * WHY THIS HOOK EXISTS AT ALL: "have they finished?" is the question the roster
- * alone cannot answer — an idle session and a working one look identical from the
- * outside. A turn ending is the only reliable "I am at a stopping point" signal
- * available, so it is the one published.
- *
- * INJECTING HERE CONTINUES THE TURN. HOOKS.MD is explicit that `Stop`'s
- * `additionalContext` keeps the conversation going, "through the same loop
- * protections as decision: block, namely the stop_hook_active input and the
- * 8-consecutive-continuation cap". So delivery here is deliberately narrow:
- *   - only messages addressed to THIS session, and human broadcasts
- *   - never while `stop_hook_active`, which means a hook is already continuing
- * Routine `done`/`claim` chatter waits for the next prompt or tool batch. With
- * several sessions in one tree, delivering it here would let every agent's
- * turn-end announcement extend every other agent's turn, and two agents could
- * bounce `done` lines off each other until the cap cut them off.
- *
- * NEVER BLOCKS. `decision: "block"` would trap a session in a loop the user did
- * not ask for.
+ * INJECTING HERE CONTINUES THE TURN, so delivery is deliberately narrow: only
+ * messages addressed to THIS session plus human broadcasts, and never while
+ * `stop_hook_active`. Routine chatter waits for the next prompt or tool batch,
+ * or two agents bounce `done` lines off each other. NEVER BLOCKS.
  */
 
 import { withStore } from "../core/store.ts";

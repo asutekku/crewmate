@@ -1,21 +1,10 @@
 /**
- * Reading a session's own transcript for facts Claude Code already computed.
+ * Reading a session's own transcript for facts Claude Code already computed —
+ * the `ai-title` it rewrites every turn, and `last-prompt`.
  *
- * Claude Code writes an `ai-title` record — the conversation name shown in the
- * picker, "Explore cheap agent communication solutions" — and rewrites it on
- * every turn. It also writes `last-prompt`. Both are strictly better than
- * anything this tool can infer: the title is a model-written summary of the
- * whole conversation, and it costs nothing to read.
- *
- * BOUNDED READ, ALWAYS. These files reach 25 MB and a hook has a ~72 ms budget,
- * so nothing here parses the file. It reads a fixed tail and scans it with a
- * regex — measured at 0.4 ms per file across 25 real transcripts, independent of
- * file size. Since the records repeat every turn, the tail is where the current
- * values are; only the last of each is wanted anyway.
- *
- * The title can be genuinely ABSENT: 3 of 25 transcripts (all predating the
- * feature) have no `ai-title` record anywhere, so every caller treats "" as
- * normal and falls back rather than reporting an error.
+ * BOUNDED READ, ALWAYS: these files reach 25 MB against a hook budget in
+ * milliseconds, so nothing parses them. A fixed tail plus a regex, which is
+ * where the current values are anyway. An ABSENT title is normal, not an error.
  */
 
 import { closeSync, openSync, readSync, statSync } from "node:fs";
@@ -97,13 +86,9 @@ export function readTranscript(path: string): TranscriptFacts {
 /**
  * Recent assistant prose from the tail, oldest first, for summarisation.
  *
- * ASSISTANT TEXT, NOT USER PROMPTS: what an agent has just explained it did is a
- * far better description of its work than what it was asked hours ago, and it
- * moves as the work moves.
- *
- * Tool inputs and results are excluded by construction — only `{"type":"text"}`
- * blocks match — which keeps file contents, diffs and command output out of the
- * text that later reaches a summariser.
+ * ASSISTANT TEXT, NOT USER PROMPTS: what an agent just said it did describes
+ * the work better than what it was asked hours ago. Only `{"type":"text"}`
+ * blocks match, which keeps file contents and command output out.
  */
 export function recentAssistantText(path: string, maxChars = 4000): string {
   const text = tailText(path, TAIL_BYTES);

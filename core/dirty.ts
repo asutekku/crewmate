@@ -1,22 +1,10 @@
 /**
  * Which files in a worktree have uncommitted changes.
  *
- * WHY THIS EXISTS: a claim is recorded per edit and released by nothing but a
- * 2-hour timer, so an agent that edited a file, committed it, and moved on is
- * still "holding" it. Measured on the live roster: 38 of 42 claims were on files
- * with no uncommitted changes at all — 90% of the warning channel pointing at
- * conflicts that had already been resolved by a commit. Peers replied "that's
- * committed" and the operator read the exchange.
- *
- * A committed file is not a collision. Both versions are in history, git merges
- * them, and the thing the warning is actually about — *their uncommitted work is
- * sitting in this file right now* — is simply not true.
- *
- * COST IS WHY THIS IS NOT DONE ON EVERY EDIT. `git status --porcelain` is ~40 ms
- * (measured, main tree, 11 dirty files), and `pre-edit` runs before every Edit
- * and Write. So it is called ONLY once a conflicting claim already exists, which
- * is rare, and the result is cached per worktree for the life of the process —
- * a hook is a short-lived process, so that is one call per warning, not per file.
+ * A committed file is not a collision, and a claim is released by nothing but a
+ * 2-hour timer — so without this most of the warning channel points at
+ * conflicts a commit already resolved. `git status` costs enough that this runs
+ * ONLY once a conflicting claim exists, cached per worktree per process.
  */
 
 import { spawnSync } from "node:child_process";
@@ -36,10 +24,9 @@ const cache = new Map<string, ReadonlySet<string>>();
 export function dirtyFiles(tree: string): ReadonlySet<string> | null {
   const hit = cache.get(tree);
   if (hit !== undefined) return hit;
-  // `--ignored` as well as `--untracked-files=all`: without it a gitignored file
-  // an agent is actively editing reports CLEAN, and the overlap warning for it
-  // is suppressed. In this repo that covers `.claude/settings.local.json`,
-  // `dist/`, and every `*.shots/` — files agents do edit.
+  // `--ignored` as well as `--untracked-files=all`: without it a gitignored
+  // file an agent is actively editing reports CLEAN and its warning is
+  // suppressed. Agents do edit `.claude/settings.local.json` and `dist/`.
   const r = spawnSync("git", ["status", "--porcelain", "--untracked-files=all", "--ignored"], {
     cwd: tree,
     encoding: "utf8",
