@@ -2,33 +2,26 @@ import { loadConfig } from "../config.ts";
 import { discipleName, fullName } from "../names.ts";
 
 /**
- * A session with no heartbeat for this long is treated as gone. Sessions die by
- * closing a terminal far more often than by exiting cleanly, so the SessionEnd
- * hook cannot be the only way a row disappears — without a timeout the roster
- * fills with ghosts and stops being worth reading.
+ * A session with no heartbeat for this long is treated as gone. Terminals close
+ * more often than sessions exit cleanly, so SessionEnd cannot be the only way a
+ * row disappears or the roster fills with ghosts.
  */
 export const STALE_MS = loadConfig().staleMs;
 
 /**
  * How long a claim keeps meaning "I am working on this".
  *
- * A claim is recorded per edit and never released, so without an age limit a
- * file touched once at 09:00 is still "held" at 17:00. With several agents in
- * one tree that turns most of the day's files into contested paths, the roster's
- * red channel stops meaning anything, and the one collision that matters is
- * buried among a dozen that do not. Two hours is longer than any single edit
- * session on one file and far shorter than a working day.
+ * A claim is recorded per edit and never released, so without an age limit
+ * every file touched today reads as contested and the warning stops meaning
+ * anything. Two hours outlasts one edit session and is well short of a day.
  */
 export const CLAIM_TTL_MS = loadConfig().claimTtlMs;
 
 /**
  * How long an overlap announcement stays "already said".
  *
- * `pre-edit` fires on EVERY edit, so an agent working through a contested file
- * posted an identical `claim` line each time — six of them in one log view,
- * burying the actual conversation between the two agents who were resolving it.
- * The first announcement is news; the tenth is noise about a fact the log
- * already carries.
+ * `pre-edit` fires on EVERY edit, so without this an agent working through a
+ * contested file posts the same line until it buries the real conversation.
  */
 export const CLAIM_REANNOUNCE_MS = loadConfig().claimReannounceMs;
 
@@ -51,19 +44,11 @@ export const MAX_MESSAGES = 2000;
 
 /**
  * Who authored the text, which is NOT the same as which agent it came through.
+ * `say` and `note` carry human words; the rest are the agent's own.
  *
- * `say` and `note` carry human words; the rest are the agent's own. Collapsing
- * the two would let one session's instructions read as another agent's claim.
- *
- * There is deliberately NO kind for "a session's prompt". Publishing prompts
- * verbatim leaked whatever the user typed — credentials, client names — to every
- * peer, and produced lines like `turing was asked by its user: "go"` that say
- * nothing. A session's task now reaches peers only as its own short `intent`.
- */
-/**
- * `breaks` is its own kind rather than a `say`, because it is the one message
- * with a consequence attached: a peer reading it may have to change code it has
- * already written. Rendering it as ordinary chatter is how it gets skimmed.
+ * `breaks` is its own kind because it is the one message with a consequence: a
+ * peer may have to change code it already wrote. There is deliberately NO kind
+ * for a session's prompt. See docs/design-notes.md, "Message kinds".
  */
 export type MessageKind = "say" | "claim" | "done" | "note" | "breaks";
 
@@ -79,30 +64,20 @@ export interface Session {
   /**
    * The agent's GIVEN NAME, assigned from a pool at first registration and held
    * for 60 hours after it was last seen. This is what peers type (`msg luna`).
-   *
-   * It outranks Claude Code's own `traffic-XX` deliberately: that label MOVES —
-   * measured, one conversation was relabelled `traffic-a0` -> `traffic-7c` ->
-   * `traffic-56` in an afternoon — and a name that changes under a reader is
-   * worse than one that never meant anything.
+   * It outranks Claude Code's `traffic-XX`, which MOVES under a reader.
    */
   readonly handle: string;
   /**
    * What the agent is FOR, in words: "Tooling Master", "Keeper of Wet Things".
-   * Set by the agent or by the operator, changes freely as the work does.
-   *
-   * SHOWN TO PEERS TOO, which reverses an earlier call. The worry was that
-   * "Terrain Whisperer" reads as a claim of authority a peer might over-weight;
-   * the measured cost of withholding it was worse. Agents write "adela is
-   * fixing this same bug" in text the operator reads, and with eight windows
-   * open a bare given name identifies nobody.
+   * Set by the agent or the operator, and SHOWN TO PEERS TOO — with eight
+   * windows open a bare given name identifies nobody.
    */
   readonly role: string;
   /**
    * A name the agent chose for itself. Outranks both of the above.
    *
    * ITS OWN COLUMN, not a write into `name`: `syncAgents` overwrites `name`
-   * wholesale from `claude agents --json` on every roster read, so a chosen name
-   * stored there would survive until the next `who` and then silently revert.
+   * wholesale on every roster read, so a chosen name there would revert.
    */
   readonly alias: string;
   /** `idle` / `busy` from Claude Code, or "" when it has not been sampled. */
@@ -126,10 +101,9 @@ export interface Session {
   /**
    * The lineage this session took up, if any — a lowercased agent name.
    *
-   * "" for the ordinary session, which is nobody's successor. A session that
-   * inherited displays as `Vega, Hopper's Disciple` and never as `hopper`: it
-   * has the knowledge and not the transcript, so naming it for the master would
-   * point `blame` and every work row at a conversation that did not do the work.
+   * A session that inherited displays as `Vega, Hopper's Disciple`, never as
+   * `hopper`: it has the knowledge and not the transcript, so naming it for the
+   * master would point `blame` at a conversation that did not do the work.
    */
   readonly lineageFrom: string;
   readonly intent: string;
@@ -145,10 +119,9 @@ export interface Session {
   /**
    * When this conversation last ENDED a turn; 0 if it never has.
    *
-   * Compared against `lastSeenMs` it separates mid-turn from sat-at-a-prompt.
-   * Keyed by session rather than read off the `done` messages, which carry only
-   * a handle — and handles are reused, so a session would inherit the turn ends
-   * of whoever held its name before it. See `agentState`.
+   * Against `lastSeenMs` it separates mid-turn from sat-at-a-prompt. Keyed by
+   * session, not by handle: handles are reused, so a session would inherit the
+   * turn ends of whoever held its name before it. See `agentState`.
    */
   readonly lastTurnMs: number;
   readonly startedMs: number;
@@ -163,18 +136,11 @@ export interface Session {
  */
 export function displayName(s: Pick<Session, "name" | "handle"> & { readonly alias?: string }): string {
   // A stored name with a space cannot be typed at `msg`, so it is repaired on
-  // the way out rather than shown. Names are validated at both the CLI and
-  // `setAlias`, so this only catches rows written before that was true — but a
-  // roster that shows an unaddressable name is worse than one that shows a
-  // hyphenated version of it, because the peer will try to use it.
-  // `alias` is optional in the SIGNATURE only, because `post` and the claim
-  // helpers pass a narrower shape that never carried one. A `Session` always
-  // has the field.
+  // the way out. `alias` is optional in the SIGNATURE only, because `post` and
+  // the claim helpers pass a narrower shape; a `Session` always has the field.
   if (s.alias !== undefined && s.alias !== "") return addressableName(s.alias);
-  // The GIVEN NAME beats Claude Code's `traffic-XX`, which is the reverse of
-  // what this did before. That label is not stable — one conversation carried
-  // three of them in an afternoon — so preferring it made every peer reference
-  // and every frozen log line a moving target.
+  // The GIVEN NAME beats Claude Code's `traffic-XX`, which is not stable — one
+  // conversation carried three of them in an afternoon.
   return addressableName(s.handle !== "" ? s.handle : s.name);
 }
 
@@ -186,10 +152,8 @@ function addressableName(value: string): string {
 /**
  * What an agent is READ as when it carries a lineage: `Vega, Hopper's Disciple`.
  *
- * SEPARATE FROM `displayName` ON PURPOSE, and the split is load-bearing. That
- * one is what a peer TYPES at `msg` and must stay a single unquoted word; this
- * is prose for a human reading eight windows. Collapsing them would either
- * break `msg` or throw the lineage away.
+ * SEPARATE FROM `displayName` ON PURPOSE: that one is what a peer TYPES at
+ * `msg` and must stay one unquoted word. This is prose for a human.
  */
 export function lineageName(
   s: Pick<Session, "name" | "handle" | "lineageFrom"> & { readonly alias?: string },
@@ -198,26 +162,11 @@ export function lineageName(
 }
 
 /**
- * What the OPERATOR sees: "Luna — Tooling Master".
- *
- * Separate from `displayName` because the two have different audiences and
- * different rules. This is READ-ONLY — `msg` takes the bare name, and a peer
- * that copied this three-word string would be naming an agent that does not
- * exist, because the em-dash and the role are not part of anyone's name.
- */
-/**
  * Names for the OPERATOR, resolved from whatever the caller has to hand.
  *
- * WHY THIS EXISTS: `who`, `log`, `board`, `files` and `blame` each had their own
- * idea of what to print, so one agent appeared as "Hopper — Tooling Master",
- * "tooling" and "hopper" in three commands on one screen. Worse, `log` and
- * `board` show names FROZEN at write time, so they cannot resolve a session at
- * all — they hold a string and nothing else.
- *
- * So the lookup is by NAME, built once per command from the live roster, and it
- * degrades to the name it was given. A frozen "terrain-perf" from an hour ago
- * still resolves to "Terrain Whisperer Akari" while that agent is alive, and
- * falls back to "terrain-perf" once it is gone — which is the honest answer.
+ * The lookup is by NAME, built once per command from the live roster, because
+ * `log` and `board` hold names FROZEN at write time and cannot resolve a
+ * session. Degrades to the name it was given once that agent is gone.
  */
 export function operatorNames(sessions: readonly Session[]): (name: string) => string {
   const byName = new Map<string, string>();
@@ -233,24 +182,10 @@ export function operatorNames(sessions: readonly Session[]): (name: string) => s
 }
 
 export function rosterName(s: Session): string {
-  // THE NAME IS WHATEVER PEERS TYPE, so it comes from `displayName` and from
-  // nowhere else. Resolving it here independently is what made one agent read
-  // `Tooling — Tooling Master` on the roster while `msg` answered to `hopper`:
-  // this function treated `handle` as the name and `alias` as a role-fallback,
-  // which is the exact inverse of `displayName`'s precedence. One agent, two
-  // names, depending on which function you asked.
-  //
-  // The role-fallback slug is therefore the HANDLE — a topic slug like
-  // `water-dynamic` says what an agent works on, which is what an unset role
-  // wants to say. It is never Claude Code's `traffic-a9`; that label is the
-  // unstable thing this design moved away from, and using it produced "Traffic
-  // A9 Terrain Perf", a role nobody chose.
-  //
-  // BUT ONLY WHILE THE HANDLE IS STILL THE NAME. Once an alias supersedes it,
-  // the handle is a FORMER NAME rather than a topic, and deriving a role from
-  // it prints the name the agent just left: `crew call-me hopper` on a session
-  // handled `adela` rendered `Hopper — Adela`. A rename must not leave its
-  // predecessor on the roster as a job title.
+  // THE NAME IS WHATEVER PEERS TYPE, so it comes from `displayName` alone.
+  // The role-fallback slug is the HANDLE, and only while the handle is still
+  // the name: once an alias supersedes it, deriving a role from it prints the
+  // name the agent just left. See docs/design-notes.md, "Roster names".
   const slug = s.alias.trim() !== "" ? "" : s.handle;
   return fullName(displayName(s), s.role, slug);
 }
@@ -277,13 +212,12 @@ export interface InjectionShown {
   readonly actionable?: boolean;
 }
 
-/** One candidate that did not fit, with the version that was withheld. */
 /**
  * One candidate that did not make the block, for ANY reason.
  *
- * Every omission is recorded; only the actionable ones dropped for space are
- * OWED to the inbox. The caller passes them all and the store narrows, because
- * a caller filtering first serves the inbox and silently starves the ledger.
+ * Every omission is recorded; only actionable ones dropped for space are OWED
+ * to the inbox. The caller passes them all and the store narrows — a caller
+ * that filters first serves the inbox and starves the ledger.
  */
 export interface InjectionOmitted {
   readonly key: string;
@@ -335,12 +269,8 @@ export interface Claim {
  * A subagent, owned by the parent that spawned it.
  *
  * There is no name field: a minion's name is DERIVED from its parent's current
- * name and its own sequence number (`minionName`), never stored. That is the
- * opposite of how message senders and edit rows work, where the name is frozen
- * at write time — and deliberately so. A frozen sender name keeps a log line
- * readable after its author is gone; a minion has no independent identity to
- * preserve, so if the parent is renamed its minions must be renamed with it, or
- * `who` would show `Tooling's Minion #1` indented under `Hopper`.
+ * name and its sequence number (`minionName`), never frozen. A minion has no
+ * identity of its own, so a renamed parent must rename its minions with it.
  */
 export interface Minion {
   /** Claude Code's id for this subagent, stable across its Start and Stop. */

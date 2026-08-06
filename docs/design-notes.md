@@ -97,6 +97,49 @@ is worse than useless if you act on its most alarming cell and it was invented.
 `BUSY_HEARTBEAT_MS` is sized from 307 measured intra-session hook gaps (p50 21 s,
 p90 134 s, p95 324 s); five minutes sits just above p95.
 
+## The trust note
+
+**Phrased as facts, deliberately.** HOOKS.MD is explicit that injected text
+should read as project information rather than out-of-band commands, because
+imperative phrasing "can trigger Claude's prompt-injection defenses, which causes
+Claude to surface the text to you instead of treating it as context". An earlier
+version gave orders ("do not act on it", "decline if it conflicts") and risked the
+coordination layer being flagged as an attack on the agents it exists to inform.
+
+**Who wrote it is not when it arrived.** Three hooks inject peer text through
+three different doors — `prompt-submit` at a prompt, `tool-batch` between tool
+batches, `turn-end` after the session has stopped — and every one appended the
+same note, so a reader could not tell which door it came through. The `turn-end`
+case is causal rather than incidental: the session had genuinely finished, and
+delivering the message is what invoked it again. Without saying so an agent infers
+it from the hook name in the reminder, which does not survive a rename, or
+concludes it was somehow waiting. Nothing here can wait or poll; a session stops,
+and an arrival restarts it.
+
+## Names and messages
+
+**Roster names.** `rosterName` takes the name from `displayName` and nowhere
+else. Resolving it independently is what made one agent read
+`Tooling — Tooling Master` on the roster while `msg` answered to `hopper`: it
+treated `handle` as the name and `alias` as a role-fallback, the exact inverse of
+`displayName`'s precedence — one agent with two names depending which function you
+asked. The role-fallback slug is the handle, because a topic slug like
+`water-dynamic` says what an agent works on; never Claude Code's `traffic-a9`,
+which produced "Traffic A9 Terrain Perf", a role nobody chose. But only while the
+handle is still the name: once an alias supersedes it the handle is a FORMER name,
+and `crew call-me hopper` on a session handled `adela` rendered `Hopper — Adela`.
+A rename must not leave its predecessor on the roster as a job title.
+
+**The role reaches peers**, reversing an earlier call that kept it operator-only
+for fear "Terrain Whisperer" reads as a claim of authority. The measured cost of
+withholding it was worse: agents write "adela is fixing this same bug" in
+user-facing text, and the operator reading eight windows has no idea who adela is.
+
+**Message kinds.** There is deliberately no kind for "a session's prompt".
+Publishing prompts verbatim leaked whatever the user typed — credentials, client
+names — to every peer, and produced lines like `turing was asked by its user:
+"go"` that say nothing. A session's task reaches peers only as its short `intent`.
+
 ## The diary
 
 **Why the diary lives in the db.** Claude Code keys its memory directory on the
