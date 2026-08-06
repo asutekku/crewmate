@@ -23,6 +23,7 @@ the least trustworthy file in the repo.**
 | [COURT_PLAN.md](COURT_PLAN.md) | obligations, message semantics, the session-start injection budget | P0–P5 pending |
 | [RELEASE_PLAN.md](RELEASE_PLAN.md) | `crew release` — giving a name to a successor while still alive | P0–P1 pending |
 | [AUDIT_REMEDIATION_PLAN.md](AUDIT_REMEDIATION_PLAN.md) | defects and absences found by running all 51 verbs: dead Q&A loop, glyph divergence, operator read surfaces | P0–P5 pending |
+| [INIT_PLAN.md](INIT_PLAN.md) | `crew init` — per-repo config layer, generated CLAUDE.md block, first-run checks | P0–P4 pending |
 
 ## Reading order
 
