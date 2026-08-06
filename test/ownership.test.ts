@@ -200,10 +200,18 @@ describe("name ownership", () => {
     // The row itself is gone, so the ledger cannot grow without bound.
     expect(reopen(path, root, (store) => store.owners.nameFor(gone))).toBe("");
 
+    // FREED, NOT HANDED STRAIGHT ON. This asserted the newcomer received the
+    // exact name back, which held only while assignment scanned the pool from
+    // index 0. Names are now seeded on the conversation uuid, so the newcomer
+    // lands on its own offset -- and recycling a just-released name is what
+    // `NAME_REUSE_MS` exists to prevent, so getting it back would be the defect.
+    // The release is proved by the pruned row above and by availability here.
     const taken = reopen(path, root, (store) =>
       store.registerAndRestore(newcomer, "/tree", "master", later),
     );
-    expect(taken).toBe(freed);
+    expect(taken).not.toBe("");
+    const owners = reopen(path, root, (store) => store.owners.all());
+    expect(owners.map((o) => o.name)).not.toContain(freed);
   });
 
   // A live peer still wins: two agents on one name makes `msg` ambiguous.
