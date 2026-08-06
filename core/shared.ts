@@ -255,6 +255,11 @@ export function formatMessages(msgs: readonly Message[], nowMs: number): string[
       const audience = m.to !== "" ? `to ${m.to}` : "to everyone";
       return `  [${when}] ${m.from} ${audience}: ${m.body}`;
     }
+    if (m.kind === "diary") {
+      // FILED, not sent. A note is durable and scoped; rendering it as a
+      // broadcast would claim a delivery that never happened.
+      return `  [${when}] ${m.from} filed ${m.body}`;
+    }
     if (m.kind === "breaks") {
       // Says what it OBLIGES the reader to do. A break reaches only agents who
       // edited the same files, so the consequence is true by construction.

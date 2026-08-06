@@ -68,6 +68,8 @@ function renderLog(
           : dim("everyone");
         return `${when} ${paint(bold(from))} ${dim("→")} ${to}: ${body}`;
       }
+      case "diary":
+        return `${when} ${paint(from)} ${cyan("filed")} ${body}`;
       case "claim":
         return `${when} ${paint(from)} ${red("claim")} ${dim(body)}`;
       case "done":

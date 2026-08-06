@@ -50,7 +50,11 @@ export const MAX_MESSAGES = 2000;
  * peer may have to change code it already wrote. There is deliberately NO kind
  * for a session's prompt. See docs/design-notes.md, "Message kinds".
  */
-export type MessageKind = "say" | "claim" | "done" | "note" | "breaks";
+/**
+ * `note` is the OPERATOR speaking; `diary` is an agent filing a finding. The
+ * two are deliberately distinct: `note` outranks peer text wherever it renders.
+ */
+export type MessageKind = "say" | "claim" | "done" | "note" | "breaks" | "diary";
 
 /**
  * THREE NAME FIELDS, resolved by `displayName` as alias, then handle, then

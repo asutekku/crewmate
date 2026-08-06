@@ -242,6 +242,11 @@ export function createDiaryCommands(context: CliContext): CommandMap {
             now,
           );
         }
+        // ON THE TIMELINE TOO. `log` reads messages and the diary is its own
+        // table, so a note filed by one agent and answered by another left the
+        // log holding the reply and not the thing replied to. A pointer only —
+        // the note keeps living in the diary, where scope and search work.
+        store.post(who.agentName, "diary", `#${id} ${check.note.title}`, now);
         context.log(`${green("✓")} ${bold(`#${id}`)} ${check.note.title}`);
         const where = check.note.scope !== "" ? ` in ${check.note.scope}` : "";
         context.log(
