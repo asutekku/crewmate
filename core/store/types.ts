@@ -158,7 +158,14 @@ export function rosterName(s: Session): string {
   // the name: once an alias supersedes it, deriving a role from it prints the
   // name the agent just left. See docs/design-notes.md, "Roster names".
   const slug = s.alias.trim() !== "" ? "" : s.handle;
-  return fullName(displayName(s), s.role, slug);
+  // THE LINEAGE JOINS THE NAME, NOT THE ROLE. It is a fact about whose
+  // knowledge this agent took up; a role is chosen and changes with the work,
+  // so writing one into the other would let `call-you` erase a descent. With a
+  // lineage the slug fallback is dropped: the suffix is already saying who this
+  // agent is, and deriving a second one from the handle repeats the name.
+  const given = lineageName(s);
+  if (given !== displayName(s)) return fullName(given, s.role, "");
+  return fullName(given, s.role, slug);
 }
 
 export interface Message {
