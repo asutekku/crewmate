@@ -1,45 +1,24 @@
 /**
  * Given names for agents, and the role that goes in front of one.
  *
- * WHY A NAME AND A ROLE RATHER THAN ONE LABEL. They do different jobs and want
- * opposite things. A name is what you TYPE (`msg luna`) — short, unique,
- * unquoted, and it must not move, because peers have learned it. A role is what
- * you READ ("Tooling Master") — evocative, several words, and free to change as
- * the work changes. Collapsing them forces `msg "Luna — Tooling Master"`, which is
- * miserable to type and breaks the quoting rules names are validated against.
- *
- * Keeping the name fixed while the role moves is the point: `Tooling Master
- * Luna` becoming `Luna — Tooling Intern` reads as a demotion rather than as a
- * stranger appearing on the roster. Measured motivation — this tool's own
- * conversation was relabelled `traffic-a0` -> `traffic-7c` -> `traffic-56`
- * across one afternoon, and nothing tied those three together for a reader.
+ * A NAME IS TYPED (`msg luna`) and must not move; a ROLE is read and is free to
+ * change as the work does. Collapsing them forces `msg "Luna — Tooling Master"`
+ * and makes a changed role look like a stranger on the roster.
  */
 
 /**
  * How far back a name is considered taken.
  *
- * DELIBERATELY MUCH LONGER than any other lifetime here (`STALE_MS` is 90 min,
- * `CLAIM_TTL_MS` is 2 h): those answer "is this agent working?", and this
- * answers "would reusing this name confuse the person reading the log?". Sixty
- * hours is measured against real usage rather than guessed — background agents
- * were found alive 37 and 55 hours after starting, so a working day and a half
- * is the span over which one name coming back as a different agent would
- * actually mislead.
+ * DELIBERATELY MUCH LONGER than `STALE_MS` or `CLAIM_TTL_MS`: those ask "is
+ * this agent working?", this asks "would reusing the name mislead a reader?".
+ * Measured against agents found alive 37 and 55 hours after starting.
  */
 export const NAME_REUSE_MS = 60 * 60 * 60 * 1000; // 60 h
 
 /**
- * The pool: 280 names, alphabetical so a duplicate is visible when editing.
- *
- * Large because the eight-name list it replaces ran out at nine agents and
- * started emitting `agent-3f9c21`, and because a name is held for 60 hours after
- * its last use — so the pool has to cover a couple of days of churn, not just
- * the agents alive at one moment.
- *
- * Mixed origins on purpose: a single theme makes names blur together, which
- * defeats the one thing a name is for. A few are strict prefixes of another
- * (`kai`/`kaia`, `leon`/`leonie`, `zeno`/`zenon`) and that is harmless —
- * `findByName` matches exactly before it falls back to a prefix.
+ * The pool, alphabetical so a duplicate is visible when editing. Large because
+ * a name is held 60 hours after its last use, so it must cover days of churn.
+ * Mixed origins on purpose: one theme makes names blur together.
  */
 export const GIVEN_NAMES = [
   "adela", "akari", "akira", "alder", "ambrose", "anouk", "anton", "aoi", "arden", "arlo",
@@ -88,23 +67,10 @@ export function seedOffset(seed: string): number {
 /**
  * Picks a name nobody has used recently, starting from `seed`.
  *
- * SCANNING FROM ZERO WASTED THE POOL. `GIVEN_NAMES.find` returned the first free
- * entry of an alphabetical list, so names were issued strictly in order and only
- * the first few were ever reachable — measured 2026-08-06, a two-agent roster
- * read `adela` and `akari`, pool positions 1 and 2. That defeats the mixed
- * origins the pool was built with: `adela`/`akari`/`akira`/`alder` are four
- * A-names in a column of eight windows. It also maximised reuse, since the name
- * released most recently was the next one issued, which is what `NAME_REUSE_MS`
- * exists to prevent.
- *
- * A conversation uuid as the seed makes the choice deterministic per
- * conversation, matching the ledger in `ownership.ts`: the same session asking
- * twice gets the same answer. The array stays sorted so a duplicate is still
- * visible when editing — only the entry point moves.
- *
- * Falls back to a numbered name rather than reusing one: with this many to
- * choose from, exhausting the pool means something is wrong (a hook looping, a
- * db never pruned), and a name that silently doubles up would hide it.
+ * SCANNING FROM ZERO WASTES THE POOL: it issues names alphabetically and hands
+ * back the one released most recently, which `NAME_REUSE_MS` exists to prevent.
+ * A conversation uuid seeds it, so the same session asking twice gets the same
+ * answer. Exhaustion yields a numbered name rather than a silent double-up.
  */
 export function pickName(taken: ReadonlySet<string>, seed = ""): string {
   const start = seed === "" ? 0 : seedOffset(seed) % GIVEN_NAMES.length;
@@ -120,95 +86,52 @@ export function pickName(taken: ReadonlySet<string>, seed = ""): string {
 }
 
 /**
- * What the OPERATOR sees: "Luna — Tooling Master".
- *
- * NAME FIRST. It is the identifier — the thing that is unique, that peers type,
- * and that stays put — so it belongs where the eye lands when scanning a column
- * of eight. Leading with the role put the varying, non-unique part first and
- * made the roster read as a list of job titles that happened to have names
- * attached; a dash separates them so neither reads as part of the other.
- *
- * READ-ONLY, and that is load-bearing. `msg` takes the bare name; a peer that
- * copied this string would be quoting three words at a command that expects one.
- * (A name MAY contain a space — `validateAlias` permits it — but the em-dash and
- * the role are not part of it, so the composed string does not resolve.)
- * Nothing accepts this as input.
- *
- * `slug` is the topic handle standing in when no role is set — `Turing — Water
- * Dynamic` — which keeps what those slugs were already good at: saying what
- * someone works on. It is never Claude Code's `traffic-a9`; using that produced
- * "Traffic A9 Terrain Perf", a role nobody chose, built from the one label here
- * that is not stable.
- *
- * The suffix is dropped when it would repeat the name, so an agent whose chosen
- * name IS its role does not read as the same word twice.
- */
-/**
  * What a subagent is called: `Hopper's Minion #1`.
  *
- * DERIVED, never stored, so renaming a parent renames its minions with it —
- * see `Minion` for why that is the right way round.
- *
- * The number counts every minion this parent has spawned, so it climbs and
- * never resets. They are disposable and their numbers are not: a log line
- * naming `#2` must not later point at a different one.
- *
- * READ-ONLY, like `fullName`. Nothing accepts this as input — a minion cannot
- * be addressed, because only its parent can reach one. An agent that wants
- * something from a minion asks the PARENT.
+ * DERIVED, never stored, so renaming a parent renames its minions with it. The
+ * number never resets: a log line naming `#2` must not later point elsewhere.
+ * READ-ONLY — a minion cannot be addressed, so ask the PARENT.
  */
 export function minionName(parent: string, seq: number): string {
-  // `nameCase`, not `titleCase`: the owner's name has to stay recognisable as
-  // the name it is, and the roster indents this directly under it.
+  // `nameCase`, not `titleCase`: the roster indents this under the owner's own
+  // name, which has to stay recognisable.
   const owner = nameCase(parent);
-  // `Chris'` rather than `Chris's`, which is the one case where the rule is not
-  // just "add apostrophe-s". Nothing in the pool ends in s today; names can be
-  // chosen freely, so it is handled rather than assumed away.
+  // `Chris'`, not `Chris's`. No pool name ends in s, but a chosen one may.
   const possessive = owner.endsWith("s") ? `${owner}'` : `${owner}'s`;
   return `${possessive} Minion #${seq}`;
 }
 
 /**
- * A successor's name: `Vega, Hopper's Disciple`.
- *
- * USER RULING 2026-08-01: "I prefer 'Vega, Hopper's Disciple'. We should have a
- * little whimsy in our lives and keep that in the tool."
- *
- * IT IS ALSO THE TRUTHFUL FORM, which is why it is not merely decoration. A
- * successor holds the knowledge and NOT the transcript. Naming it `hopper`
- * would point `blame`, `--history` and every work row at a conversation that
- * did not do the work — the same failure as a name outliving what it named,
- * from the other direction. The disciple form carries both facts at once: the
- * live name you can address, and where the knowledge came from. A disciple is
- * by construction not the master, so the form cannot assert a continuity it
- * does not have.
- *
- * A RESUME NEEDS NO MARKING and gets none: same uuid, same transcript, same
- * everything the tool tracks. That is just `hopper`, which is why inheriting
- * one's own lineage returns the bare name.
+ * A successor's name: `Vega, Hopper's Disciple`. The user asked for the whimsy,
+ * and it is also the truthful form: a successor holds the knowledge and NOT the
+ * transcript, so naming it `hopper` would point `blame` at the wrong
+ * conversation. A resume needs no marking and returns the bare name.
  */
 export function discipleName(name: string, master: string): string {
   const own = nameCase(name);
   const from = master.trim();
   if (from === "" || from.toLowerCase() === name.trim().toLowerCase()) return own;
   const teacher = nameCase(from);
-  // `Chris'` rather than `Chris's` — the same rule `minionName` needs, and the
-  // one case where a possessive is not simply apostrophe-s.
+  // The possessive rule `minionName` needs.
   const possessive = teacher.endsWith("s") ? `${teacher}'` : `${teacher}'s`;
   return `${own}, ${possessive} Disciple`;
 }
 
+/**
+ * What the OPERATOR sees: "Luna — Tooling Master". NAME FIRST, because it is
+ * the unique part that peers type and that stays put.
+ *
+ * READ-ONLY: `msg` takes the bare name, so this composed string resolves to
+ * nobody. `slug` stands in when no role is set, and is the HANDLE rather than
+ * Claude Code's `traffic-a9`, which yields roles nobody chose.
+ */
 export function fullName(name: string, role: string, slug: string): string {
-  // The two halves take DIFFERENT casers, which is the whole point of the split:
-  // the suffix is prose and reads better with spaces (`Water Dynamic`), the name
-  // must stay typeable and keeps its separator (`Water-Dynamic`).
+  // The two halves take DIFFERENT casers: the suffix is prose and wants spaces
+  // (`Water Dynamic`), the name must stay typeable (`Water-Dynamic`).
   const suffix = role.trim() !== "" ? role.trim() : titleCase(slug);
   const given = nameCase(name);
-  // COMPARED WITHOUT SEPARATORS, because the two halves are cased by different
-  // functions on purpose: an unset role derives from the handle, so the slug
-  // `water-dynamic` becomes the name `Water-Dynamic` and the role `Water
-  // Dynamic`. An exact-match check saw two different strings and printed
-  // `Water-Dynamic — Water Dynamic`, which tells a reader nothing twice.
+  // Compared WITHOUT separators for that reason, or one slug renders as
+  // `Water-Dynamic — Water Dynamic`, telling the reader nothing twice.
   if (suffix === "" || bareName(suffix) === bareName(given)) return given;
   return `${given} — ${suffix}`;
 }
@@ -219,17 +142,10 @@ function bareName(text: string): string {
 }
 
 /**
- * `terrain-perf` -> `Terrain Perf`, without destroying what is already there.
- *
- * FOR PROSE — the role half of a roster line, where a slug is standing in for
- * words. It replaces separators with spaces, so it must NOT be used on a name:
- * `water-dynamic` would come back as `Water Dynamic`, which is exactly the
- * unaddressable two-word name that validation now refuses. Use `nameCase`.
- *
- * Capitalises INITIALS ONLY and leaves the rest of each word alone, because
- * lowercasing first would flatten the acronyms that actually appear here:
- * `a11y`, `GPU splat`. A name is not worth being clever about, but it is worth
- * not mangling.
+ * `terrain-perf` -> `Terrain Perf`. FOR PROSE ONLY, never a name: it turns
+ * separators into spaces, which yields the unaddressable two-word name that
+ * validation refuses. Use `nameCase`. Capitalises INITIALS ONLY, or acronyms
+ * like `a11y` and `GPU splat` get flattened.
  */
 export function titleCase(slug: string): string {
   return slug
