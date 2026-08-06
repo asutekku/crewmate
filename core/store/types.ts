@@ -52,30 +52,18 @@ export const MAX_MESSAGES = 2000;
  */
 export type MessageKind = "say" | "claim" | "done" | "note" | "breaks";
 
+/**
+ * THREE NAME FIELDS, resolved by `displayName` as alias, then handle, then
+ * name. `name` is Claude Code's `traffic-12`, which moves under a reader;
+ * `handle` is issued from a pool; `alias` is chosen. See `rosterName`.
+ */
 export interface Session {
   readonly sessionId: string;
-  /**
-   * Claude Code's own name for the session (`traffic-12`, `water-sim-f7`), when
-   * known. Preferred over `handle` everywhere a human or agent reads a name: it
-   * is the label you already see in your terminal, so the roster and your
-   * windows agree.
-   */
   readonly name: string;
-  /**
-   * The agent's GIVEN NAME, assigned from a pool at first registration and held
-   * for 60 hours after it was last seen. This is what peers type (`msg luna`).
-   * It outranks Claude Code's `traffic-XX`, which MOVES under a reader.
-   */
   readonly handle: string;
-  /**
-   * What the agent is FOR, in words: "Tooling Master", "Keeper of Wet Things".
-   * Set by the agent or the operator, and SHOWN TO PEERS TOO — with eight
-   * windows open a bare given name identifies nobody.
-   */
+  /** What the agent is FOR: "Tooling Master". Shown to peers as well. */
   readonly role: string;
   /**
-   * A name the agent chose for itself. Outranks both of the above.
-   *
    * ITS OWN COLUMN, not a write into `name`: `syncAgents` overwrites `name`
    * wholesale on every roster read, so a chosen name there would revert.
    */
@@ -84,63 +72,43 @@ export interface Session {
   readonly status: string;
   /** Why the session is stuck, when it is; "" otherwise. Beats `status`. */
   readonly blocked: string;
-  /** The session's working tree — differs per worktree within one repo. */
   readonly worktree: string;
   readonly branch: string;
   /**
    * Commits this checkout trails `baseBranch` by, or **-1 when not measured**.
-   *
-   * Sampled at SessionStart and on a cwd change rather than read live, so it is
-   * a HINT that may lag: the roster cannot afford a git subprocess per peer.
-   * `where` computes the same number fresh, because a direct question deserves
-   * a current answer.
+   * A HINT that may lag, sampled rather than read live; `where` recomputes it.
    */
   readonly behindBase: number;
-  /** What `behindBase` was measured against; "" when it could not be resolved. */
   readonly baseBranch: string;
   /**
-   * The lineage this session took up, if any — a lowercased agent name.
+   * The lineage this session took up — a lowercased agent name, or "".
    *
-   * A session that inherited displays as `Vega, Hopper's Disciple`, never as
-   * `hopper`: it has the knowledge and not the transcript, so naming it for the
-   * master would point `blame` at a conversation that did not do the work.
+   * A disciple displays as `Vega, Hopper's Disciple`, never as `hopper`: it has
+   * the knowledge and not the transcript, so `blame` must not point at it.
    */
   readonly lineageFrom: string;
   readonly intent: string;
-  /**
-   * Claude Code's conversation name. OPERATOR-FACING: it identifies a window on
-   * the user's screen, so it belongs in `who` and never in a peer injection.
-   */
+  /** OPERATOR-FACING: names a window on the user's screen, never injected. */
   readonly title: string;
-  /** A Haiku line describing current work; "" until the first refresh lands. */
   readonly summary: string;
   readonly summaryMs: number;
   readonly lastSeenMs: number;
   /**
-   * When this conversation last ENDED a turn; 0 if it never has.
-   *
-   * Against `lastSeenMs` it separates mid-turn from sat-at-a-prompt. Keyed by
-   * session, not by handle: handles are reused, so a session would inherit the
-   * turn ends of whoever held its name before it. See `agentState`.
+   * When this conversation last ENDED a turn; 0 if it never has. Against
+   * `lastSeenMs` it separates mid-turn from sat-at-a-prompt. Keyed by session,
+   * not handle, because handles are reused. See `agentState`.
    */
   readonly lastTurnMs: number;
   readonly startedMs: number;
 }
 
 /**
- * What an agent is CALLED — the single word peers type at `msg`.
- *
- * Precedence: a name the agent chose, else its given name, else Claude Code's
- * own label. Both of the first two are stable for the life of the conversation;
- * the third is not, which is why it is last.
+ * What an agent is CALLED — the single word peers type at `msg`. `alias` is
+ * optional in the SIGNATURE only, because `post` and the claim helpers pass a
+ * narrower shape; a `Session` always has the field.
  */
 export function displayName(s: Pick<Session, "name" | "handle"> & { readonly alias?: string }): string {
-  // A stored name with a space cannot be typed at `msg`, so it is repaired on
-  // the way out. `alias` is optional in the SIGNATURE only, because `post` and
-  // the claim helpers pass a narrower shape; a `Session` always has the field.
   if (s.alias !== undefined && s.alias !== "") return addressableName(s.alias);
-  // The GIVEN NAME beats Claude Code's `traffic-XX`, which is not stable — one
-  // conversation carried three of them in an afternoon.
   return addressableName(s.handle !== "" ? s.handle : s.name);
 }
 
@@ -172,8 +140,7 @@ export function operatorNames(sessions: readonly Session[]): (name: string) => s
   const byName = new Map<string, string>();
   for (const s of sessions) {
     const full = rosterName(s);
-    // Every string that could have been frozen for this agent maps to one
-    // display: its chosen name, its given name, and Claude Code's own label.
+    // Every string that could have been frozen for this agent maps to one display.
     for (const key of [s.alias, s.handle, s.name]) {
       if (key !== "") byName.set(key.toLowerCase(), full);
     }
@@ -227,7 +194,7 @@ export interface InjectionOmitted {
   /** `duplicate` | `unchanged` | `no room`. */
   readonly reason: string;
   readonly priority: number;
-  /** Whether the agent was expected to act on it — the inbox's filter. */
+  /** The inbox's filter. */
   readonly actionable: boolean;
 }
 
@@ -250,17 +217,13 @@ export interface InjectionLedgerRow {
 }
 
 export interface Claim {
-  /** Who holds it — needed to ADDRESS an overlap notice to them, not just name them. */
+  /** Who holds it — needed to ADDRESS an overlap notice, not just name one. */
   readonly sessionId: string;
   readonly handle: string;
-  /**
-   * The claimant's DISPLAY name, resolved alias -> handle -> `traffic-07` by
-   * `claimRows` — the same order as `displayName`, so an overlap warning names
-   * the agent the roster names.
-   */
+  /** Resolved by `claimRows` in `displayName`'s order, so the names agree. */
   readonly name: string;
   readonly path: string;
-  /** The claimant's working tree — same tree means a real on-disk collision. */
+  /** Same tree as yours means a real on-disk collision. */
   readonly worktree: string;
   readonly tsMs: number;
 }
@@ -273,15 +236,14 @@ export interface Claim {
  * identity of its own, so a renamed parent must rename its minions with it.
  */
 export interface Minion {
-  /** Claude Code's id for this subagent, stable across its Start and Stop. */
+  /** Stable across this subagent's Start and Stop. */
   readonly agentId: string;
   /** The PARENT's conversation uuid. Subagents have no session of their own. */
   readonly sessionId: string;
   /** 1-based, per parent, never reused. */
   readonly seq: number;
-  /** What the parent said it was for, when spawning. */
   readonly task: string;
-  /** `general-purpose`, `Explore`, … — which kind was spawned. */
+  /** `general-purpose`, `Explore`, … */
   readonly agentType: string;
   readonly startedMs: number;
 }

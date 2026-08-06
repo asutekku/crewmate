@@ -41,12 +41,9 @@ export interface HookPayload {
   readonly session_id?: string;
   readonly cwd?: string;
   /**
-   * This session's transcript JSONL. Present on every event.
-   *
-   * Written ASYNCHRONOUSLY, so it can lag the in-memory conversation by a turn —
-   * fine for the conversation title and recent prose, which move slowly. Never
-   * use it for the current turn's final assistant text; `last_assistant_message`
-   * on Stop is the field for that.
+   * This session's transcript JSONL, on every event. Written ASYNCHRONOUSLY, so
+   * it lags by a turn — never read the current turn's final assistant text from
+   * it; `last_assistant_message` on Stop is that field.
    */
   readonly transcript_path?: string;
   /** Which event fired — the only way one script can serve two events. */
@@ -58,7 +55,7 @@ export interface HookPayload {
   readonly source?: string;
   readonly reason?: string;
   readonly last_assistant_message?: string;
-  /** Which tool is about to run: `Edit`, `Write`, `NotebookEdit`. */
+  /** `Edit`, `Write`, `NotebookEdit`. */
   readonly tool_name?: string;
   readonly tool_input?: { readonly file_path?: string; readonly command?: string };
   /**
@@ -78,31 +75,23 @@ export interface HookPayload {
   readonly error?: string;
   /** PostCompact: the summary that replaced the compacted context. */
   readonly compact_summary?: string;
-  /** CwdChanged. */
   readonly new_cwd?: string;
-  /** SubagentStart/Stop. */
   readonly agent_type?: string;
   /**
-   * SubagentStart/Stop: identifies ONE spawned subagent, stable across both.
-   *
-   * `session_id` alongside it is the PARENT's, which is why a subagent's claims
-   * and edits attribute to its parent with no special handling.
+   * SubagentStart/Stop: ONE spawned subagent, stable across both. `session_id`
+   * beside it is the PARENT's, which is why a subagent's claims and edits
+   * attribute to its parent with no special handling.
    */
   readonly agent_id?: string;
   /**
-   * SubagentStop only: the subagent's OWN transcript, separate from the
-   * parent's.
-   *
-   * The parent's transcript interleaves subagent output, so a summary built
-   * from it describes a minion's work as the parent's own.
+   * SubagentStop only: the subagent's OWN transcript. The parent's interleaves
+   * subagent output, so a summary from it credits the parent with minion work.
    */
   readonly agent_transcript_path?: string;
   /**
-   * Stop, v2.1.145+: in-flight work that means "paused", not "finished".
-   *
-   * Also present on SubagentStop, where `description` is the string the PARENT
-   * passed when spawning — which is why naming a minion's task needs no model
-   * call and no new convention: the parent already wrote it.
+   * Stop, v2.1.145+: in-flight work meaning "paused", not "finished". On
+   * SubagentStop `description` is what the PARENT passed when spawning, so
+   * naming a minion's task needs no model call.
    */
   readonly background_tasks?: ReadonlyArray<{
     readonly id?: string;
@@ -221,31 +210,25 @@ export function formatRoster(
         ? ` [${p.behindBase} behind ${p.baseBranch === "" ? "base" : p.baseBranch}]`
         : "";
     const mine = claims.filter((c) => c.handle === p.handle);
-    // Nothing at all when the `editing:` line below already carries it — a
-    // pointer to the next line spends words saying what it already says.
+    // Silent when the `editing:` line below already carries the answer.
     const doing = p.intent ? ` — ${p.intent}` : mine.length > 0 ? "" : " — (no stated task yet)";
-    // `blocked` beats `status`: "waiting for permission approval" is the true
-    // reason a session is not moving, where `idle` merely describes the symptom.
+    // `blocked` beats `status`: "waiting for permission approval" is the reason
+    // a session is not moving, where `idle` only names the symptom.
     const state = p.blocked !== "" ? `${p.blocked}, ` : p.status !== "" ? `${p.status}, ` : "";
-    // Live progress, where the session keeps a task list — the one field that
-    // moves as work happens rather than describing what was asked hours ago.
     const t = tasks?.get(p.sessionId);
     const prog = t && t.open + t.done > 0 ? ` [${t.done}/${t.open + t.done} tasks]` : "";
-    // The ROLE reaches peers. The name is what an agent TYPES, so it stays
-    // first and bare; the role is context in parentheses.
     const role = p.role !== "" ? ` (${p.role})` : "";
     // Subagents edit under the parent's name, so a file this peer holds may be
-    // written by something you cannot see or address. Saying so makes "ask the
-    // parent" obvious rather than a rule to remember.
+    // written by something you cannot address. Saying so makes "ask the parent"
+    // the obvious move.
     const spawned = minionCounts?.get(p.sessionId) ?? 0;
     const running =
       spawned > 0 ? ` [+${spawned} subagent${spawned === 1 ? "" : "s"} working as them]` : "";
     lines.push(
       `  ${displayName(p)}${role}${where}${branch}${stale}${doing}${prog}${running} (${state}last active ${agoText(p.lastSeenMs, nowMs)})`,
     );
-    // Operator view only. The title identifies the conversation as the user
-    // sees it listed; the summary says what it is doing NOW, which the title
-    // cannot, being set from the opening subject.
+    // The title names the conversation as the user sees it listed; the summary
+    // says what it is doing NOW, which a title set at the outset cannot.
     if (verbose && p.title !== "") lines.push(`      "${p.title}"`);
     if (verbose && p.summary !== "") lines.push(`      doing: ${p.summary}`);
     if (mine.length > 0) {
@@ -258,11 +241,9 @@ export function formatRoster(
 }
 
 /**
- * Renders each line so its AUTHOR and AUDIENCE are unmistakable.
- *
- * A directed message reads `ada to turing: "..."` — the arrow matters, because
- * "who said it" and "who it was for" are different questions and a reader acting
- * on a message meant for someone else is the failure mode.
+ * Renders each line so its AUTHOR and AUDIENCE are unmistakable: `ada to
+ * turing: "..."`. A reader acting on a message meant for someone else is the
+ * failure this shape prevents.
  */
 export function formatMessages(msgs: readonly Message[], nowMs: number): string[] {
   return msgs.map((m) => {
