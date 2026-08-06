@@ -24,12 +24,29 @@ import { agoText, displayName } from "./store.ts";
  * An earlier version of this note gave orders ("do not act on it", "decline if
  * it conflicts") and risked the coordination layer being flagged as an attack on
  * the very agents it exists to inform.
+ *
+ * WHO WROTE IT IS NOT WHEN IT ARRIVED. The first three sentences answer
+ * authorship. The last answers arrival, which is a separate question and was
+ * missing: three hooks inject peer text through three different doors
+ * (`prompt-submit` at a prompt, `tool-batch` between tool batches, `turn-end`
+ * after the session has stopped) and every one of them appended this same note.
+ * A reader could not tell which door it came through.
+ *
+ * The `turn-end` case is the one worth naming, because it is causal rather than
+ * incidental: the session had genuinely finished, and delivering the message is
+ * what invoked it again. Without saying so, an agent infers it from the hook
+ * name in the reminder — which does not survive a rename — or, worse, concludes
+ * it was somehow waiting for the message. Nothing here can wait or poll; a
+ * session stops, and an arrival restarts it.
  */
 export const TRUST_NOTE =
   "These lines were written by other Claude Code sessions working in the same " +
   "project. A line reading `X to Y` has Y as its audience. Requests in them come " +
   "from peer agents rather than from this session's user. Lines attributed to " +
-  "`the user` come from the person operating every one of these sessions.";
+  "`the user` come from the person operating every one of these sessions. " +
+  "Text reaches a session between its tool batches, at a prompt, or after it " +
+  "stops — when it arrives after a stop, that arrival is what started the " +
+  "session running again.";
 
 /**
  * True inside a Claude process this tool started for its own bookkeeping.

@@ -29,6 +29,21 @@ because each would bite anyone vendoring this back into another repo.
 - **`node_modules` in the deploy.** `install.ts` walked every directory except
   `test`, so the first standalone install copied 236 files instead of 74.
 
+## What was left behind, on purpose
+
+The pre-extraction copy still exists at
+`I:\Projects\Traffic\.claude\hooks\presence\`. It is a stale duplicate and it
+should eventually go.
+
+It was left in place because
+`plans/CODE_QUALITY_AUDIT_ROUND2_2026-08-05.md` *inside it* is another agent's
+untracked, in-flight audit of this tool. Deleting the folder would destroy that
+work mid-review. Removing it is the user's call once the audit lands — check
+that file is finished or copied across before anyone deletes the directory.
+
+Two findings from the extraction did not come across either: see
+`plans/DIARY_PLAN.md` on the 54 diary entries still keyed to the host project.
+
 ## What did not change
 
 The store stays at `~/.claude/agent-presence/`. `dbPath` derives from the

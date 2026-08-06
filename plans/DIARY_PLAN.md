@@ -132,6 +132,24 @@ from the repo), but it is the reason not to hand-roll a second identity scheme
 on top: fix the resolver if it ever matters, do not add a column that disagrees
 with the filename.
 
+### Open: 54 findings about this tool are in the wrong project
+
+MEASURED 2026-08-05, when this tool was extracted from the game repo into its
+own: **the diary did not come with it.** 54 findings about crewmates live in
+`I:\Projects\Traffic`'s db, keyed to that project — the CRLF trap,
+`PRESENCE_TEST_DB` freezing at import, the transcript-slug bug, and about twenty
+more. A session starting in this repo has none of them.
+
+**32 of the 54 are `--scope`d to the tool** and would qualify for migration.
+That is the scope mechanism failing for its own author's findings, which is a
+defect rather than an inconvenience: a scoped finding is a claim about *the
+tool*, and the tool moved.
+
+Not decided. Migration was offered to the user and the conversation ended before
+an answer, so **ask before doing it.** Whatever the answer, the general case
+stands: extracting a project should be able to carry its scoped findings, and
+nothing today does that.
+
 **Personal diary: YES, and this is the interesting half.** The operator wants it
 globally available — what Hopper learned about the user should follow the user
 to another repo. But *"prefers the numbers in the commit message"* travels,

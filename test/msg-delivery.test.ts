@@ -22,6 +22,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { deliveryNote } from "../cli/messaging.ts";
+import { TRUST_NOTE } from "../core/shared.ts";
 import type { Session } from "../core/store.ts";
 
 const NOW = 1_700_000_000_000;
@@ -85,5 +86,59 @@ describe("msg says what will actually happen to the message", () => {
     expect(deliveryNote(recipient(200, "busy"), NOW)).toBe(
       "Delivered after their current turn ends.",
     );
+  });
+});
+
+/**
+ * WHAT THE TRUST NOTE PROMISES ABOUT ARRIVAL.
+ *
+ * `TRUST_NOTE` is appended by all three injecting hooks, so it is the only text
+ * every reader of peer messages is guaranteed to see. It answers authorship in
+ * its first sentences; the last answers ARRIVAL, which is a different question
+ * and was absent until 2026-08-06.
+ *
+ * Pinned because nothing else asserts this string — the same gap `audiences.md`
+ * had, where a hand-maintained claim drifted from its source until a reader
+ * quoted "33 verbs" at a table holding 51. Here the claim is "three doors", and
+ * the doors are files on disk that can be added to.
+ */
+describe("the trust note describes how text actually arrives", () => {
+  const HOOK_DOORS = ["prompt-submit.ts", "tool-batch.ts", "turn-end.ts"];
+
+  test("every hook that injects peer text appends the note", async () => {
+    // If a fourth door opens without this note, its readers get peer text with
+    // no framing at all — the failure the note exists to prevent.
+    for (const door of HOOK_DOORS) {
+      const source = await Bun.file(`${import.meta.dir}/../hooks/${door}`).text();
+      expect(source).toContain("TRUST_NOTE");
+    }
+  });
+
+  test("no other hook injects peer messages without saying where it came from", async () => {
+    // Guards the count, not just the members: a new injecting hook must either
+    // append the note or be a deliberate exception recorded here.
+    const glob = new Bun.Glob("*.ts");
+    const injecting: string[] = [];
+    for await (const file of glob.scan(`${import.meta.dir}/../hooks`)) {
+      const source = await Bun.file(`${import.meta.dir}/../hooks/${file}`).text();
+      if (source.includes("formatMessages(")) injecting.push(file);
+    }
+    expect(injecting.sort()).toEqual([...HOOK_DOORS].sort());
+  });
+
+  test("the note names all three arrival points and the causal one", () => {
+    // The `turn-end` case is causal rather than incidental: the session had
+    // stopped, and the delivery is what invoked it again. An agent that reads
+    // only "you have mail" concludes it was waiting — nothing here can wait.
+    expect(TRUST_NOTE).toContain("between its tool batches");
+    expect(TRUST_NOTE).toContain("at a prompt");
+    expect(TRUST_NOTE).toContain("after it stops");
+    expect(TRUST_NOTE).toMatch(/arrival is what started the session running again/);
+  });
+
+  test("it still answers authorship, which arrival does not replace", () => {
+    // Both halves earn their space; a rewrite that drops either is a regression.
+    expect(TRUST_NOTE).toContain("written by other Claude Code sessions");
+    expect(TRUST_NOTE).toContain("rather than from this session's user");
   });
 });
