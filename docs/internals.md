@@ -42,6 +42,7 @@ replaces `bin/` wholesale so a module that moves cannot leave a stale twin.
 | `store/schema.ts`     | Tables, indexes, pragmas. Every migration lands here.                                                                                     |
 | `store/sessions.ts`   | Register, heartbeat, prune, and the name-ownership guard.                                                                                 |
 | `store/ownership.ts`  | Which session owns a name, and what `findByName` resolves.                                                                                |
+| `store/past.ts`       | What a session leaves behind, so a dropped conversation can still be named.                                                               |
 | `store/activity.ts`   | Claims, the edit log, tasks, and subagent rows.                                                                                           |
 | `store/messages.ts`   | Message rows and the per-session delivery cursor.                                                                                        |
 | `store/injection.ts`  | Exposure ledger, feature events, code versions — what a session has already been shown.                                                   |
@@ -52,6 +53,7 @@ replaces `bin/` wholesale so a module that moves cannot leave a stale twin.
 | `colour.ts`           | ANSI for the CLI only. Never reaches an agent's context.                                                                                  |
 | `agents.ts`           | Reads `claude agents --json` for real names + idle/busy.                                                                                  |
 | `transcript.ts`       | Bounded tail read of a session's own JSONL — conversation title, recent prose.                                                            |
+| `transcript-search.ts` | Streamed full-text scan of past conversations: byte prefilter, then prose only.                                                          |
 | `summary.ts`          | Prompts Haiku for a "what is it doing now" line; spawns, never waits.                                                                     |
 | `summarize-worker.ts` | The detached process that call runs in, so no hook ever blocks on it.                                                                     |
 | `layout.ts`           | Roster layout arithmetic — widths, file summarising, background processes.                                                                |

@@ -97,6 +97,7 @@ export const VERBS: readonly Verb[] = [
   { verb: "clearances", audience: "oversight", args: "[--all]", blurb: "every clearance still in force", group: "presence" },
   { verb: "files", audience: "human", args: "<agent> [--hours 24]", blurb: "every file an agent has touched, and why", group: "presence" },
   { verb: "blame", audience: "human", args: "<path>", blurb: "who has been in this file, newest first", group: "presence" },
+  { verb: "sessions", audience: "human", args: "<words> [--all] [--limit n]", blurb: "find a past conversation by what was said in it, and resume it", group: "presence" },
   // "dead" was a PROMISE THE CODE DOES NOT KEEP: there is no liveness check, so
   // `quit <live peer>` deregisters a working agent mid-task. `docs/views.md` is
   // honest about this at length ("deregisters, it does not kill", and why

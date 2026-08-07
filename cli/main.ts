@@ -17,6 +17,7 @@ import { createPersonalCommands } from "./personal.ts";
 import { createQuestionCommands } from "./questions.ts";
 import { CommandRegistry } from "./registry.ts";
 import { createRosterCommands } from "./roster.ts";
+import { createSessionCommands } from "./sessions.ts";
 import type { CliContext, CommandFactory } from "./types.ts";
 import { createWorkCommands } from "./work.ts";
 
@@ -28,6 +29,7 @@ const COMMAND_FAMILIES: readonly CommandFactory[] = [
   createPersonalCommands,
   createMessagingCommands,
   createRosterCommands,
+  createSessionCommands,
   createAdminCommands,
   createDiagnosticCommands,
   createInjectionCommands,

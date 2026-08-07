@@ -164,6 +164,7 @@ a verb is dispatched without appearing here.
 | `clearances [--all]` | every clearance still in force |
 | `files <agent> [--hours 24]` | every file an agent has touched, and why |
 | `blame <path>` | who has been in this file, newest first |
+| `sessions <words> [--all] [--limit n]` | find a past conversation by what was said in it, and resume it |
 | `quit <name> [--force]` | drop a session off the roster; no liveness check |
 | `clear [--force]` | wipe the roster and claims; the log is kept |
 | `export [path]` | copy the store somewhere safe before anything destructive |

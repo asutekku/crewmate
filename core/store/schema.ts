@@ -109,6 +109,27 @@ export function openDb(dbPath: string): Database {
     -- Two agents answering to one name makes the whole roster a lie, so the
     -- constraint is enforced by the schema rather than trusted from the code.
     CREATE UNIQUE INDEX IF NOT EXISTS sessions_handle ON sessions (handle);
+    -- What a session LEAVES BEHIND, so a search can name a conversation the
+    -- roster has already forgotten. Written wherever a sessions row is deleted:
+    -- a clean exit and the stale sweep both archive first.
+    --
+    -- NO UNIQUE INDEX ON handle, unlike sessions: a name returns to the pool
+    -- and is reissued, so past holders of one name must coexist here. Archiving
+    -- into sessions instead would make that index reject the second holder.
+    CREATE TABLE IF NOT EXISTS past_sessions (
+      session_id   TEXT PRIMARY KEY,
+      handle       TEXT NOT NULL DEFAULT '',
+      alias        TEXT NOT NULL DEFAULT '',
+      role         TEXT NOT NULL DEFAULT '',
+      worktree     TEXT NOT NULL DEFAULT '',
+      branch       TEXT NOT NULL DEFAULT '',
+      title        TEXT NOT NULL DEFAULT '',
+      summary      TEXT NOT NULL DEFAULT '',
+      transcript   TEXT NOT NULL DEFAULT '',
+      started_ms   INTEGER NOT NULL DEFAULT 0,
+      -- Last heartbeat, which is what dates the row for a search.
+      ended_ms     INTEGER NOT NULL DEFAULT 0
+    );
     CREATE TABLE IF NOT EXISTS messages (
       id        INTEGER PRIMARY KEY AUTOINCREMENT,
       ts_ms     INTEGER NOT NULL,

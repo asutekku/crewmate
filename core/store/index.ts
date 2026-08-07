@@ -20,6 +20,7 @@ import { ActivityStore } from "./activity.ts";
 import { hasUnreadMessages, MessageStore, type StoreDiagnostic } from "./messages.ts";
 import { InjectionStore, type FeatureEventInput } from "./injection.ts";
 import { SessionStore } from "./sessions.ts";
+import { PastSessionStore } from "./past.ts";
 import {
   CLAIM_REANNOUNCE_MS,
   CLAIM_TTL_MS,
@@ -95,6 +96,8 @@ export class Store {
 
   /** Which conversation owns which name. See `ownership.ts`. */
   readonly owners: OwnershipStore;
+  /** Sessions the roster has dropped. See `past.ts`. */
+  readonly past: PastSessionStore;
   private readonly transcriptDirPath: string;
 
   // Sub-stores are stateless wrappers over the one connection: built once, not
@@ -106,6 +109,7 @@ export class Store {
     this.transcriptDirPath = projectRoot === "" ? "" : projectTranscriptDir(projectRoot);
     this.sessions = new SessionStore(db, STALE_MS, this.transcriptDirPath);
     this.owners = new OwnershipStore(db);
+    this.past = new PastSessionStore(db);
     this.work = new WorkStore(db);
     this.diary = new DiaryStore(db);
     this.questions = new QuestionStore(db);
@@ -259,7 +263,11 @@ export class Store {
     return this.sessions.findBySession(sessionId);
   }
   unregister(sessionId: string, nowMs = Date.now()): void {
-    const unregister = this.db.transaction(() => this.sessions.unregister(sessionId, nowMs));
+    const unregister = this.db.transaction(() => {
+      // ARCHIVE FIRST, while the row is still there to copy.
+      this.past.archive(sessionId, nowMs);
+      this.sessions.unregister(sessionId, nowMs);
+    });
     unregister.immediate();
   }
   /**
@@ -291,6 +299,7 @@ export class Store {
       const session = this.findBySession(sessionId);
       if (!session) return false;
       this.post(session.handle, "done", "left the roster", nowMs);
+      this.past.archive(sessionId, nowMs);
       this.sessions.unregister(sessionId, nowMs);
       return true;
     });
@@ -528,6 +537,9 @@ export class Store {
       const dead = `SELECT session_id FROM sessions WHERE last_seen_ms <= ?`;
       this.db.query(`DELETE FROM claims WHERE session_id IN (${dead})`).run(cutoff);
       this.db.query(`DELETE FROM tasks WHERE session_id IN (${dead})`).run(cutoff);
+      // THE CRASH PATH: a killed terminal never runs SessionEnd, so this sweep
+      // is the only thing that archives it. Before the DELETE, as everywhere.
+      this.past.archiveStale(cutoff, nowMs);
       this.db.query(`DELETE FROM sessions WHERE last_seen_ms <= ?`).run(cutoff);
       // Edit history outlives everything else here — it is the only table that
       // answers a question about the PAST, and its horizon is configurable
