@@ -48,8 +48,8 @@ Two were found running for 48 hours in worktrees no longer in use.
 
 ```
 3 background process(es) — no window, not on the roster:
-    pid 37476   footprint-merge-ef footprint-merge  started 48h ago
-    pid 46020   industry-chains-c7 industry-demand  started 48h ago
+    pid 37476   luna    footprint-merge  started 48h ago
+    pid 46020   rowan   industry-demand  started 48h ago
 ```
 
 The pid is the point — it is the only handle you have on a process with no
@@ -83,7 +83,7 @@ looks empty.
   does not move; this line does
 
 ```
-traffic-ca  "Explore cheap agent communication solutions"   · just now
+vega        "Explore cheap agent communication solutions"   · just now
     doing Wiring transcript titles into the roster
     editing .claude/hooks/presence/core/transcript.ts, …
 ```
@@ -117,13 +117,13 @@ where escape codes cost tokens and buy nothing.
 ## Who touched what
 
 ```sh
-crew files terrain-perf          # every file that agent has touched  [--hours 24]
+crew files rowan                 # every file that agent has touched  [--hours 24]
 crew blame src/gen/terrain.ts    # who has been in this file, newest first
 ```
 
 ```
-$ crew files terrain-perf
-terrain-perf — 6 file(s) in 24h  (session ended — this is history)
+$ crew files rowan
+rowan — 6 file(s) in 24h  (session ended — this is history)
   ▸ terrain gen perf: dedup shore field, fix erode wrap  1/3
     now  fix the horizontal wrap in erode
      8m ago  src/gen/terrain.ts ×3
@@ -132,9 +132,9 @@ terrain-perf — 6 file(s) in 24h  (session ended — this is history)
 
 $ crew blame src/gen/terrain.ts
 src/gen/terrain.ts
-     9m ago  terrain-perf   Edit [Traffic]
-    19m ago  water-dynamic  Edit [water-sim-timberborn]
-    23m ago  terrain-perf   Edit [Traffic]
+     9m ago  rowan  Edit [Traffic]
+    19m ago  luna   Edit [water-sim-timberborn]
+    23m ago  rowan  Edit [Traffic]
 ```
 
 **Git cannot answer this.** 95 commits landed in this repo in one day, every one

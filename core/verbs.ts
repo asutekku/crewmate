@@ -112,7 +112,7 @@ export const VERBS: readonly Verb[] = [
   // The flag list is partial like `note`'s: `--no-claude-md`, `--crew-size`,
   // `--task-length` and `--overnight` live in the plan and the README; the
   // spec carries the flags an operator reaches for first.
-  { verb: "init", audience: "human", args: "[--check [--repo]] [--test-policy <p>] [--base-ref <ref>]", blurb: "set this repo up: crew.json, the CLAUDE.md block, settings", group: "presence" },
+  { verb: "init", audience: "human", args: "[--check [--repo]] [--test-policy <p>] [--base-ref <ref>] [--sign]", blurb: "set this repo up: crew.json, the CLAUDE.md block, settings", group: "presence" },
   // `--help`/`-h` dispatch here too. They are flag SPELLINGS rather than verbs,
   // so they are aliases (recognised, never advertised) -- help offering three
   // ways to ask for help is help that wastes its first line on itself.

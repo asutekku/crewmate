@@ -4,12 +4,12 @@ Presence and coordination for several Claude Code sessions working in one
 project at the same time. Sessions are otherwise completely blind to each other.
 
 ```
-You are "traffic-12" in Traffic's shared presence log.
+Your name is Vega.
+
 2 other agent(s) active:
-  traffic-16 — Fix the water shore fade regression (busy, last active just now)
+  luna (Water Dynamics) — Fix the shore fade regression (busy, last active just now)
       editing: src/city/derive.ts
-  industry-chains-c7 [worktree industry-demand] on worktree-industry-demand
-      — Industry chain tests (idle, last active 3m ago)
+  rowan [worktree industry-demand] on industry-demand — Industry chain tests (idle, last active 3m ago)
 ```
 
 Each session sees who is live, what each one said it is doing, which files they
@@ -116,6 +116,60 @@ crew note "..." --scope src/  # leave a finding for whoever edits next
 meant for agents and arrive through a hook rather than a keystroke — see
 [Audiences](docs/audiences.md) for the split.
 
+## Agents talking to each other
+
+Names are what make this usable: `luna` is typed, and it still means the same
+session tomorrow. An agent sends a message with no ceremony —
+
+```sh
+crew msg luna "renaming Store.claim to claimPath — you have store/index.ts open"
+```
+
+— and it arrives in Luna's context between tool batches, seconds later, without
+Luna asking:
+
+```
+1 update(s) from other agents while you were working:
+  [just now] vega to luna: renaming Store.claim to claimPath — you have store/index.ts open
+```
+
+Author and audience are always rendered, because an agent acting on a message
+meant for someone else is the failure that shape prevents.
+
+**When an answer is owed**, `ask` records the debt rather than hoping:
+
+```sh
+crew ask rowan "is the migration idempotent, or do I need to guard the insert?"
+crew asks                       # what is waiting on me, and what I wait for
+crew answer 7 "idempotent — it upserts on the natural key"
+```
+
+**When a commitment is worth holding you to**, the ledger is append-only and
+survives the session that made the entry:
+
+```sh
+crew promise luna "not touching core/store/ until you land the rename" --refrain --until 4h
+crew handoff rowan "industry chain tests"    # propose moving responsibility
+crew breaks "Store.claim is now claimPath"   # reaches only agents in those files
+crew obligations                             # everything outstanding
+```
+
+`breaks` is the one to reach for before a rename lands: it finds the agents who
+edited the same files and tells them, so nobody learns from a red test.
+
+**When the finding outlives the conversation**, file it instead of sending it:
+
+```sh
+crew note "SQLite WAL needs the dir writable, not just the file" --scope core/store
+```
+
+That resurfaces on its own for the next agent to edit `core/store/`, months
+later, in any worktree — which a message cannot do.
+
+**Nothing wakes an idle session.** A message to an agent sitting at a prompt
+waits until its human prompts it. Delivery timing is in the table below, and
+the reasoning is in [Views](docs/views.md).
+
 ## What each agent sees
 
 Four hooks put information in front of a session without it asking.
@@ -132,8 +186,9 @@ Four hooks put information in front of a session without it asking.
 
 A session's roster line is a short, non-verbatim topic derived from its first
 prompt, never the prompt itself, and it is dropped entirely if the prompt trips
-a credential pattern. Names come from Claude Code itself, so the roster matches
-the session names on your terminals.
+a credential pattern. Every agent is given a name — `luna`, `vega`, `rowan` —
+and told it at session start, so peers have something to type at `msg` and you
+have something to say out loud. See [Naming](docs/naming.md).
 
 ## What it gives you
 
@@ -200,7 +255,7 @@ a verb is dispatched without appearing here.
 | `quit <name> [--force]` | drop a session off the roster; no liveness check |
 | `clear [--force]` | wipe the roster and claims; the log is kept |
 | `export [path]` | copy the store somewhere safe before anything destructive |
-| `init [--check [--repo]] [--test-policy <p>] [--base-ref <ref>]` | set this repo up: crew.json, the CLAUDE.md block, settings |
+| `init [--check [--repo]] [--test-policy <p>] [--base-ref <ref>] [--sign]` | set this repo up: crew.json, the CLAUDE.md block, settings |
 | `help` | this list |
 
 ### What you are doing
