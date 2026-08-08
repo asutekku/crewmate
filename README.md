@@ -30,7 +30,13 @@ Works across git worktrees (every worktree of a repo shares one roster), across 
 
 ## Install
 
-Requires [Bun](https://bun.sh) 1.2 or newer.
+Requires [Bun](https://bun.sh) 1.2 or newer — the hooks run under `bun`, so it stays a runtime dependency however you install.
+
+```sh
+bunx crewmates           # install / update, no clone
+```
+
+From a clone, which is also how you update after editing:
 
 ```sh
 bun install.ts           # install / update

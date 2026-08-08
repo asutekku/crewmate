@@ -1,3 +1,5 @@
+#!/usr/bin/env bun
+
 /**
  * Installs these hooks user-wide: copies the scripts to
  * `~/.claude/agent-presence/bin/` and registers them in `~/.claude/settings.json`.
