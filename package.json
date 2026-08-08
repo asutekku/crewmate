@@ -6,10 +6,17 @@
   "license": "MIT",
   "author": "Aku Mäkelä",
   "type": "module",
-  "bin": {
-    "crew": "./cli.ts"
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/asutekku/crewmate.git"
   },
-  "files": ["cli.ts", "install.ts", "cli/", "core/", "hooks/", "docs/", "README.md", "LICENSE"],
+  "homepage": "https://github.com/asutekku/crewmate#readme",
+  "bugs": "https://github.com/asutekku/crewmate/issues",
+  "bin": {
+    "crew": "./cli.ts",
+    "crewmates": "./install.ts"
+  },
+  "files": ["cli.ts", "install.ts", "cli/", "core/", "hooks/", "README.md", "LICENSE"],
   "scripts": {
     "install-hooks": "bun install.ts",
     "test": "bun test",

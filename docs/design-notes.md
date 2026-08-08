@@ -115,3 +115,11 @@ Ten minutes of a turn spent re-deriving what the harness sends for free: a backg
 
 **The table is the source, the test is the guarantee.** Usage was once a hand-maintained literal and drifted to 13 of the then-33 verbs — `note`, `recall`, `remember`, `breaks`, `needs`, `blame` and more existed, worked, and appeared in no help output. That matters more here than in an ordinary CLI: this tool is discovered at runtime by agents rather than read as a manual, so the only verbs an agent learns are the ones some hook mentions. Two shipped features had been used by nobody but their author. `verbs.test.ts` asserting every `case` label appears in the table is what keeps this true. Per-verb usage lives there too, replacing 21 separate `usage: cli.ts <verb>` literals, and `CLI` replaced 85 hardcoded invocation strings across 10 files.
 
+
+## Signing commits
+
+**Deny rather than warn, because the artifact is permanent.** `crew init --sign` puts the trailer rule in the CLAUDE.md block and `pre-bash` enforces it, refusing a commit that carries no trailer or one naming another agent. An unsigned commit is repairable only by rewriting history; a denied one costs a retry.
+
+**An unreadable message is never judged.** `--amend --no-edit`, `-F -`, and — the case a real commit found — a message file the same command has yet to write, as in `printf … > msg && git commit -F msg`. `PreToolUse` runs before the redirect, so the bytes on disk are the previous commit's. Reading them would block a correct commit over someone else's text.
+
+**`commit.sessionUrl` is off by default.** The `Claude-Session:` link is permanent and points at a private transcript — not something to publish from a shared remote. `--session-url` opts back in.
