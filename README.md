@@ -4,8 +4,9 @@
 
 **Presence and coordination for several Claude Code sessions working in one project at the same time.**
 
+[![CI](https://img.shields.io/github/actions/workflow/status/asutekku/crewmate/ci.yml?branch=main&style=flat-square&label=ci)](https://github.com/asutekku/crewmate/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/crewmates?style=flat-square&color=cb3837&logo=npm&logoColor=white)](https://www.npmjs.com/package/crewmates)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](LICENSE)
-[![Bun](https://img.shields.io/badge/bun-%E2%89%A5%201.2-fbf0df.svg?style=flat-square&logo=bun&logoColor=black)](https://bun.sh)
 [![Claude Code](https://img.shields.io/badge/for-Claude%20Code-d97757.svg?style=flat-square)](https://claude.com/claude-code)
 [![Platforms](https://img.shields.io/badge/windows%20%C2%B7%20macos%20%C2%B7%20linux-555.svg?style=flat-square)](#install)
 
