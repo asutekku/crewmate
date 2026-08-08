@@ -260,7 +260,7 @@ async function installShim(): Promise<void> {
   if (process.platform === "win32") {
     await Bun.write(`${SHIM_DIR}/crew.cmd`, `@echo off\r\nbun "${target}" %*\r\n`);
   } else {
-    await Bun.spawnSync(["chmod", "+x", `${SHIM_DIR}/crew`]);
+    Bun.spawnSync(["chmod", "+x", `${SHIM_DIR}/crew`]);
   }
   console.log(`Installed \`crew\` to ${SHIM_DIR}`);
   if (!(process.env["PATH"] ?? "").split(process.platform === "win32" ? ";" : ":").some((p) => p.replace(/\\/g, "/").replace(/\/$/, "").toLowerCase() === SHIM_DIR.toLowerCase())) {
