@@ -35,6 +35,7 @@ Requires [Bun](https://bun.sh) 1.2 or newer — the hooks run under `bun`, so it
 
 ```sh
 bunx crewmates           # install / update, no clone
+bunx crewmates --help    # what it will do, without doing it
 ```
 
 From a clone, which is also how you update after editing:

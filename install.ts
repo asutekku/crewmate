@@ -332,6 +332,22 @@ async function remove(): Promise<void> {
   console.log(`Removed ${removed} hook registration(s). Scripts left in ${BIN}.`);
 }
 
+const USAGE = `crewmates — presence and coordination for parallel Claude Code sessions
+
+  bunx crewmates            install or update
+  bunx crewmates --force    re-register the hooks as well
+  bunx crewmates --remove   uninstall
+
+Installs user-wide: scripts to ~/.claude/agent-presence/bin, a \`crew\` command
+to ~/.local/bin, and hooks in ~/.claude/settings.json. Restart sessions after.`;
+
 const args = new Set(Bun.argv.slice(2));
-if (args.has("--remove")) await remove();
+// An unknown flag must not install by accident: this writes to a global
+// settings file, so a typo is expensive and silence is the wrong answer.
+const unknown = [...args].filter((a) => !["--force", "--remove", "--help", "-h"].includes(a));
+if (args.has("--help") || args.has("-h")) console.log(USAGE);
+else if (unknown.length > 0) {
+  console.error(`unknown option: ${unknown.join(" ")}\n\n${USAGE}`);
+  process.exitCode = 2;
+} else if (args.has("--remove")) await remove();
 else await install(args.has("--force"));
