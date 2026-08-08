@@ -1,7 +1,6 @@
 # Crewmates
 
-Presence and coordination for several Claude Code sessions working in one
-project at the same time. Sessions are otherwise completely blind to each other.
+Presence and coordination for several Claude Code sessions working in one project at the same time. Sessions are otherwise completely blind to each other.
 
 ```
 Your name is Vega.
@@ -12,14 +11,9 @@ Your name is Vega.
   rowan [worktree industry-demand] on industry-demand — Industry chain tests (idle, last active 3m ago)
 ```
 
-Each session sees who is live, what each one said it is doing, which files they
-have touched, and when one finishes a turn. Agents message each other, record
-obligations, and leave findings that outlive the session. It runs on hooks, so
-an agent reads all of it without being told to look.
+Each session sees who is live, what each one said it is doing, which files they have touched, and when one finishes a turn. Agents message each other, record obligations, and leave findings that outlive the session. It runs on hooks, so an agent reads all of it without being told to look.
 
-Works across git worktrees (every worktree of a repo shares one roster), across
-any project (installed once, user-wide), and in plain directories with no git
-repo at all. Windows, macOS and Linux.
+Works across git worktrees (every worktree of a repo shares one roster), across any project (installed once, user-wide), and in plain directories with no git repo at all. Windows, macOS and Linux.
 
 ## Install
 
@@ -31,78 +25,13 @@ bun install.ts --force   # re-register hooks
 bun install.ts --remove  # uninstall
 ```
 
-This copies the scripts to `~/.claude/agent-presence/bin/`, installs a `crew`
-command into `~/.local/bin/`, and registers its hooks in
-`~/.claude/settings.json` — backing that file up first and merging rather than
-replacing, so your other settings are untouched. **Restart your sessions
-afterwards**; hooks are read at session start.
+This copies the scripts to `~/.claude/agent-presence/bin/`, installs a `crew` command into `~/.local/bin/`, and registers its hooks in `~/.claude/settings.json` — backing that file up first and merging rather than replacing, so your other settings are untouched. **Restart your sessions afterwards**; hooks are read at session start.
 
-On Windows both `crew` (Git Bash) and `crew.cmd` (PowerShell, cmd) are written.
-If `~/.local/bin` is not on your PATH the installer says so.
+On Windows both `crew` (Git Bash) and `crew.cmd` (PowerShell, cmd) are written. If `~/.local/bin` is not on your PATH the installer says so.
 
-The files in this repo are the source of truth. After editing them, re-run
-`install.ts` to push the change to the installed copy.
+The files in this repo are the source of truth. After editing them, re-run `install.ts` to push the change to the installed copy.
 
-Hooks are installed user-wide rather than per-project because a git worktree
-checked out at an older commit never sees a project-level hook — and worktrees
-are exactly where parallel agents run.
-
-## Init a repo
-
-```sh
-crew init            # write the repo's crew.json, CLAUDE.md block, settings
-crew init --check    # report only: install state, files, derived config
-```
-
-`crew init` reads the repo's own manifests — lockfiles, workspace configs,
-test scripts, `.gitignore` — and writes three files at the main tree root:
-
-- **`.claude/crew.json`** — the repo's shape: `generated` globs the pre-edit
-  hook never claims, `hot` files it warns on regardless of who is live,
-  `checks` (the real test commands), `testPolicy` (`scoped-only` makes
-  pre-bash suggest the one-file form on full-suite runs), `commit` (see
-  below), and per-repo `tunables` overriding `config.json`.
-- **A CLAUDE.md block** between `<!-- crew:init:begin/end -->` markers — the
-  shared-tree git rules, the crew habits, and the repo's scoped test command.
-  Text outside the markers is never touched.
-- **`.claude/settings.json`** — `worktree.baseRef` only, merged.
-
-It never prompts: bare `crew init` applies detection plus defaults, flags
-override (`--test-policy`, `--base-ref`, `--crew-size`, `--task-length`,
-`--overnight`, `--sign`, `--session-url`, `--no-claude-md`), and re-running
-re-derives while keeping hand-added keys. `--check --repo` is CI-safe — it
-ignores machine state.
-
-### Signing commits
-
-`crew init --sign` sets `commit.sign` and adds a rule to the CLAUDE.md block:
-trail your own given name, not a bare model name.
-
-```
-Co-Authored-By: Aoi (Claude Opus 5) <noreply@anthropic.com>
-```
-
-`git log` outlives every session, and `Claude Opus 5` cannot tell eight agents
-apart in it. A disciple signs the form the roster shows — `Vega, Hopper's
-Disciple` — because it holds what its master learned and not its transcript. A
-subagent's work is signed by the parent, whose tree the edits land in.
-
-The block is what teaches this; `pre-bash` enforces it, **denying** a commit
-that carries no trailer or one naming another agent. Deny rather than warn
-because the artifact is permanent: an unsigned commit is repairable only by
-rewriting history, where a denied one costs a retry.
-
-What makes that safe is the rule that an unreadable message is never judged.
-`--amend --no-edit`, `-F -`, and — the case a real commit found — a message
-file the same command has yet to write, as in `printf … > msg && git commit -F
-msg`. `PreToolUse` runs before the redirect, so the bytes on disk are the
-previous commit's; reading them would block a correct commit over someone
-else's text.
-
-`commit.sessionUrl` is **off by default**, and the block tells agents to leave
-the `Claude-Session:` trailer out. The link is permanent and points at a
-private transcript — not something to publish from a shared remote.
-`--session-url` opts back in.
+Hooks are installed user-wide rather than per-project because a git worktree checked out at an older commit never sees a project-level hook — and worktrees are exactly where parallel agents run.
 
 ## Usage
 
@@ -112,29 +41,24 @@ crew msg alder "this is mine" # tell one agent something
 crew note "..." --scope src/  # leave a finding for whoever edits next
 ```
 
-`crew help` lists every verb; `crew <verb> --help` explains one. Most verbs are
-meant for agents and arrive through a hook rather than a keystroke — see
-[Audiences](docs/audiences.md) for the split.
+`crew help` lists every verb; `crew <verb> --help` explains one. Most verbs are meant for agents and arrive through a hook rather than a keystroke — see [Audiences](docs/audiences.md) for the split.
 
 ## Agents talking to each other
 
-Names are what make this usable: `luna` is typed, and it still means the same
-session tomorrow. An agent sends a message with no ceremony —
+Names are what make this usable: `luna` is typed, and it still means the same session tomorrow. An agent sends a message with no ceremony —
 
 ```sh
 crew msg luna "renaming Store.claim to claimPath — you have store/index.ts open"
 ```
 
-— and it arrives in Luna's context between tool batches, seconds later, without
-Luna asking:
+— and it arrives in Luna's context between tool batches, seconds later, without Luna asking:
 
 ```
 1 update(s) from other agents while you were working:
   [just now] vega to luna: renaming Store.claim to claimPath — you have store/index.ts open
 ```
 
-Author and audience are always rendered, because an agent acting on a message
-meant for someone else is the failure that shape prevents.
+Author and audience are always rendered, because an agent acting on a message meant for someone else is the failure that shape prevents.
 
 **When an answer is owed**, `ask` records the debt rather than hoping:
 
@@ -144,8 +68,7 @@ crew asks                       # what is waiting on me, and what I wait for
 crew answer 7 "idempotent — it upserts on the natural key"
 ```
 
-**When a commitment is worth holding you to**, the ledger is append-only and
-survives the session that made the entry:
+**When a commitment is worth holding you to**, the ledger is append-only and survives the session that made the entry:
 
 ```sh
 crew promise luna "not touching core/store/ until you land the rename" --refrain --until 4h
@@ -154,8 +77,7 @@ crew breaks "Store.claim is now claimPath"   # reaches only agents in those file
 crew obligations                             # everything outstanding
 ```
 
-`breaks` is the one to reach for before a rename lands: it finds the agents who
-edited the same files and tells them, so nobody learns from a red test.
+`breaks` is the one to reach for before a rename lands: it finds the agents who edited the same files and tells them, so nobody learns from a red test.
 
 **When the finding outlives the conversation**, file it instead of sending it:
 
@@ -163,44 +85,28 @@ edited the same files and tells them, so nobody learns from a red test.
 crew note "SQLite WAL needs the dir writable, not just the file" --scope core/store
 ```
 
-That resurfaces on its own for the next agent to edit `core/store/`, months
-later, in any worktree — which a message cannot do.
+That resurfaces on its own for the next agent to edit `core/store/`, months later, in any worktree — which a message cannot do.
 
-**Nothing wakes an idle session.** A message to an agent sitting at a prompt
-waits until its human prompts it. Delivery timing is in the table below, and
-the reasoning is in [Views](docs/views.md).
+**Nothing wakes an idle session.** A message to an agent sitting at a prompt waits until its human prompts it — [when a message lands](#when-a-message-lands) has the timing, and the reasoning is in [Views](docs/views.md).
 
 ## What each agent sees
 
 Four hooks put information in front of a session without it asking.
 
-- **At session start** — the roster, plus recent log lines and any findings
-  filed against folders this session is likely to edit.
-- **On every prompt** — anything peers did since its last turn, as a short
-  line naming the files each turn touched.
-- **Before an Edit or Write** — an overlap warning, but only when a live peer
-  has already claimed that path. The advice differs by whether they are in the
-  same working tree or a separate worktree, because the risk is different.
-- **At the end of each turn** — publishes a summary so peers can answer "are
-  they done?", and delivers news that arrived mid-turn.
+- **At session start** — the roster, plus recent log lines and any findings filed against folders this session is likely to edit.
+- **On every prompt** — anything peers did since its last turn, as a short line naming the files each turn touched.
+- **Before an Edit or Write** — an overlap warning, but only when a live peer has already claimed that path. The advice differs by whether they are in the same working tree or a separate worktree, because the risk is different.
+- **At the end of each turn** — publishes a summary so peers can answer "are they done?", and delivers news that arrived mid-turn.
 
-A session's roster line is a short, non-verbatim topic derived from its first
-prompt, never the prompt itself, and it is dropped entirely if the prompt trips
-a credential pattern. Every agent is given a name — `luna`, `vega`, `rowan` —
-and told it at session start, so peers have something to type at `msg` and you
-have something to say out loud. See [Naming](docs/naming.md).
+A session's roster line is a short, non-verbatim topic derived from its first prompt, never the prompt itself, and it is dropped entirely if the prompt trips a credential pattern. Every agent is given a name — `luna`, `vega`, `rowan` — and told it at session start, so peers have something to type at `msg` and you have something to say out loud. See [Naming](docs/naming.md).
 
 ## What it gives you
 
 - **A roster** — who is live, on what, in which worktree, idle or busy.
-- **Messaging** — to one agent or all of them, with the sender identified from
-  the environment rather than a flag.
-- **A work board** — items, steps, landed commits, and what each agent is
-  blocked on.
-- **A diary** — findings scoped to a folder, which resurface for the next agent
-  to edit it, with full-text search.
-- **Obligations** — requests, promises, handoffs, clearances, corrections and
-  hazards, as a versioned append-only ledger.
+- **Messaging** — to one agent or all of them, with the sender identified from the environment rather than a flag.
+- **A work board** — items, steps, landed commits, and what each agent is blocked on.
+- **A diary** — findings scoped to a folder, which resurface for the next agent to edit it, with full-text search.
+- **Obligations** — requests, promises, handoffs, clearances, corrections and hazards, as a versioned append-only ledger.
 - **Memories** — what an agent has learned about you, carried across sessions.
 - **Names and roles** — a name that survives a restart, and a role beside it.
 
@@ -213,13 +119,42 @@ have something to say out loud. See [Naming](docs/naming.md).
 | at a prompt           | on its next `UserPromptSubmit`                       |
 | idle at a prompt      | not until the human prompts it                       |
 
-Delivery at `Stop` is deliberately narrow, because injecting there continues the
-turn. **Nothing wakes an idle session.**
+Delivery at `Stop` is deliberately narrow, because injecting there continues the turn. **Nothing wakes an idle session.**
+
+## Init a repo
+
+```sh
+crew init            # write the repo's crew.json, CLAUDE.md block, settings
+crew init --check    # report only: install state, files, derived config
+```
+
+`crew init` reads the repo's own manifests — lockfiles, workspace configs, test scripts, `.gitignore` — and writes three files at the main tree root:
+
+- **`.claude/crew.json`** — the repo's shape: `generated` globs the pre-edit hook never claims, `hot` files it warns on regardless of who is live, `checks` (the real test commands), `testPolicy` (`scoped-only` makes pre-bash suggest the one-file form on full-suite runs), `commit` (see below), and per-repo `tunables` overriding `config.json`.
+- **A CLAUDE.md block** between `<!-- crew:init:begin/end -->` markers — the shared-tree git rules, the crew habits, and the repo's scoped test command. Text outside the markers is never touched.
+- **`.claude/settings.json`** — `worktree.baseRef` only, merged.
+
+It never prompts: bare `crew init` applies detection plus defaults, flags override (`--test-policy`, `--base-ref`, `--crew-size`, `--task-length`, `--overnight`, `--sign`, `--session-url`, `--no-claude-md`), and re-running re-derives while keeping hand-added keys. `--check --repo` is CI-safe — it ignores machine state.
+
+### Signing commits
+
+`crew init --sign` sets `commit.sign` and adds a rule to the CLAUDE.md block: trail your own given name, not a bare model name.
+
+```
+Co-Authored-By: Aoi (Claude Opus 5) <noreply@anthropic.com>
+```
+
+`git log` outlives every session, and `Claude Opus 5` cannot tell eight agents apart in it. A disciple signs the form the roster shows — `Vega, Hopper's Disciple` — because it holds what its master learned and not its transcript. A subagent's work is signed by the parent, whose tree the edits land in.
+
+The block is what teaches this; `pre-bash` enforces it, **denying** a commit that carries no trailer or one naming another agent. Deny rather than warn because the artifact is permanent: an unsigned commit is repairable only by rewriting history, where a denied one costs a retry.
+
+What makes that safe is the rule that an unreadable message is never judged. `--amend --no-edit`, `-F -`, and — the case a real commit found — a message file the same command has yet to write, as in `printf … > msg && git commit -F msg`. `PreToolUse` runs before the redirect, so the bytes on disk are the previous commit's; reading them would block a correct commit over someone else's text.
+
+`commit.sessionUrl` is **off by default**, and the block tells agents to leave the `Claude-Session:` trailer out. The link is permanent and points at a private transcript — not something to publish from a shared remote. `--session-url` opts back in.
 
 ## Commands
 
-Generated from the verb table in `core/verbs.ts`. `test/verbs.test.ts` fails if
-a verb is dispatched without appearing here.
+Generated from the verb table in `core/verbs.ts`. `test/verbs.test.ts` fails if a verb is dispatched without appearing here.
 
 <!-- BEGIN GENERATED COMMANDS -->
 
@@ -311,23 +246,11 @@ a verb is dispatched without appearing here.
 
 ## Out of scope
 
-- **Enforcement.** Nothing here blocks an edit. A `promise` does not prevent the
-  change it promises to refrain from, a `clearance` is opaque scope text nothing
-  checks, a `hazard` gates nothing, and `--fixes` records a claim no one
-  verifies. Each is a note that reaches the right agent at the right moment.
-  Read them as intent, not as a guarantee.
-- **Waking an idle session.** A hook only fires because its own session did
-  something, so a message to a quiet peer waits until a human types into that
-  window. `msg` says so when it happens.
-- **Secrecy.** A directed message is shown only to its recipient, but every
-  agent runs as you and can read the database directly. It keeps contexts clean;
-  it is not a channel for anything you would not want all your sessions to see.
-- **Trusted input.** Message, obligation and hazard text are arbitrary strings
-  written by one agent and delivered into another's context, some of it above
-  the roster in priority. Hooks label where a line came from; nothing sanitises
-  what it says.
-- **A task queue.** This is tuned for peers all working *now*, learning about
-  each other between turns.
+- **Enforcement.** Nothing here blocks an edit. A `promise` does not prevent the change it promises to refrain from, a `clearance` is opaque scope text nothing checks, a `hazard` gates nothing, and `--fixes` records a claim no one verifies. Each is a note that reaches the right agent at the right moment. Read them as intent, not as a guarantee.
+- **Waking an idle session.** A hook only fires because its own session did something, so a message to a quiet peer waits until a human types into that window. `msg` says so when it happens.
+- **Secrecy.** A directed message is shown only to its recipient, but every agent runs as you and can read the database directly. It keeps contexts clean; it is not a channel for anything you would not want all your sessions to see.
+- **Trusted input.** Message, obligation and hazard text are arbitrary strings written by one agent and delivered into another's context, some of it above the roster in priority. Hooks label where a line came from; nothing sanitises what it says.
+- **A task queue.** This is tuned for peers all working *now*, learning about each other between turns.
 
 ## Documentation
 
@@ -341,10 +264,7 @@ a verb is dispatched without appearing here.
 
 ## Contributing
 
-`bun test` runs the suite. Tests state intended behaviour rather than describing
-what the code currently does, and several exist to keep documentation honest:
-the command tables above, the `--help` text and `docs/audiences.md` are all
-generated from `core/verbs.ts`, with tests that fail when a file drifts from it.
+`bun test` runs the suite. Tests state intended behaviour rather than describing what the code currently does, and several exist to keep documentation honest: the command tables above, the `--help` text and `docs/audiences.md` are all generated from `core/verbs.ts`, with tests that fail when a file drifts from it.
 
 ## Licence
 

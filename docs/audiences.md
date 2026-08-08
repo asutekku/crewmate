@@ -2,29 +2,14 @@
 
 [← README](../README.md)
 
-**Nothing here is gated by caller.** Every verb works whether a human types it
-in a terminal or an agent shells out to it. There is no `--agent-only` flag and
-no human check anywhere in `cli/`. This table is therefore not a permission
-model — it is a statement of **who is told a verb exists, and who has a reason
-to run it**:
+**Nothing here is gated by caller.** Every verb works whether a human types it in a terminal or an agent shells out to it. There is no `--agent-only` flag and no human check anywhere in `cli/`. This table is therefore not a permission model — it is a statement of **who is told a verb exists, and who has a reason to run it**:
 
-- **agents** learn verbs from the session-start block (`core/sessionBlock.ts`)
-  and from hook injections (`hooks/*.ts`)
+- **agents** learn verbs from the session-start block (`core/sessionBlock.ts`) and from hook injections (`hooks/*.ts`)
 - **you** learn them from `crew help` and from [docs/](.)
 
-**The tables below are generated** from `core/verbs.ts` by
-`test/tools/regen-audiences.ts`, and `test/audiences.test.ts` fails when they
-drift. They used to be hand-written prose, which drifted immediately — this file
-once mis-stated its own totals, and the plan written to fix that reproduced the
-error inside itself.
+**The tables below are generated** from `core/verbs.ts` by `test/tools/regen-audiences.ts`, and `test/audiences.test.ts` fails when they drift. They used to be hand-written prose, which drifted immediately — this file once mis-stated its own totals, and the plan written to fix that reproduced the error inside itself.
 
-**The captured output below is generated too**, by
-`test/tools/capture-audiences.ts`, against a throwaway store seeded with
-fixtures. The blocks appear in the order the commands ran — not arranged
-afterwards by topic, which is what an earlier hand-collated revision did. That
-revision was real block by block and false as a document: a careful reader
-cross-checking two captures from different moments inferred two defects that do
-not exist.
+**The captured output below is generated too**, by `test/tools/capture-audiences.ts`, against a throwaway store seeded with fixtures. The blocks appear in the order the commands ran — not arranged afterwards by topic, which is what an earlier hand-collated revision did. That revision was real block by block and false as a document: a careful reader cross-checking two captures from different moments inferred two defects that do not exist.
 
 Regenerate both with:
 
@@ -33,10 +18,7 @@ bun test/tools/regen-audiences.ts    # the tables
 bun test/tools/capture-audiences.ts  # the captured output
 ```
 
-A verb an agent is never told about is a verb agents never use — measured, and
-the reason `core/verbs.ts` exists at all: the hand-maintained usage string had
-drifted to 13 of the then-33 verbs, and two shipped features had been used by
-nobody but their author.
+A verb an agent is never told about is a verb agents never use — measured, and the reason `core/verbs.ts` exists at all: the hand-maintained usage string had drifted to 13 of the then-33 verbs, and two shipped features had been used by nobody but their author.
 
 <!-- BEGIN GENERATED AUDIENCES -->
 
