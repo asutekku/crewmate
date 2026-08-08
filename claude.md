@@ -1,5 +1,3 @@
-Always talk in ASD-STE100 Simplified Technical English.
-
 ## Code requirements
 - Code should be self explaining so do not overcomment. Overcommenting has the risk of introducing stale comments which are extremely dangerous for you misunderstanding
 - Keep comments at max 3 lines in ASD-STE100 Simplified English to avoid vagueness

@@ -31,13 +31,6 @@ const SETTINGS = `${HOME}/.claude/settings.json`;
 const HERE = `${dirname(fileURLToPath(import.meta.url)).replace(/\\/g, "/")}/`;
 
 /**
- * Every module to deploy, as a path RELATIVE to this directory.
- *
- * DISCOVERED, NOT LISTED: a hardcoded list silently drops a newly added module,
- * and the failure lands at hook-run time as "Cannot find module" rather than at
- * install time. `test/` is skipped wholesale.
- */
-/**
  * Directories the deploy never walks.
  *
  * `node_modules` matters as much as `test`: the standalone repo has a real
