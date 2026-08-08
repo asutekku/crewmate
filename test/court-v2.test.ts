@@ -1,7 +1,6 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, test } from "bun:test";
 import {
-  actAgreement, alignActs, categoricalAgreement, evaluateGate, seededSample, sha256, spanOverlap, validateAnnotations,
+  actAgreement, alignActs, categoricalAgreement, evaluateGate, seededSample, spanOverlap, validateAnnotations,
   type Act, type Annotation, type Evidence, type SourceMessage,
 } from "./tools/court-v2.ts";
 
@@ -177,56 +176,4 @@ describe("P1 gate is executable rather than editorial", () => {
     const g=evaluateGate({dimensions:[{name:"anchors",applicable:20,rawAgreement:0.1,kappa:0}],actTypeF1:1,regressionPassed:true,deferredDimensions:["anchors"]});
     expect(g.passed).toBe(true); expect(g.deferred).toEqual(["anchors"]); expect(g.failures).toEqual([]);
   });
-});
-
-describe("frozen inputs", () => {
-  const root = `${import.meta.dir}/../plans/court-audit`;
-  const manifest = JSON.parse(readFileSync(`${root}/audit-v2-manifest.json`,"utf8"));
-  test("rubric and corpus hashes match the freeze", () => {
-    expect(sha256(readFileSync(`${root}/rubric-v2.md`,"utf8"))).toBe(manifest.rubricSha256);
-    expect(sha256(readFileSync(`${root}/audit-source.json`,"utf8"))).toBe(manifest.sourceSha256);
-  });
-  test("analysis, regression, holdout and exclusions are disjoint where required", () => {
-    const analysed=new Set(manifest.analysedIds); const excluded=new Set(manifest.excluded.map((x:any)=>x.id));
-    const regression=new Set(manifest.regressionIds); const holdout=new Set(manifest.reviewerHoldout.selectedIds);
-    expect(analysed.size).toBe(45); expect(excluded.size).toBe(5); expect(regression.size).toBe(15); expect(holdout.size).toBe(15);
-    expect([...excluded].some((id)=>analysed.has(id))).toBe(false);
-    expect([...holdout].some((id)=>regression.has(id))).toBe(false);
-  });
-  test("holdout is exactly the recorded algorithm output", () => {
-    const h=manifest.reviewerHoldout;
-    expect(seededSample(h.orderedPopulation,15,h.seed)).toEqual(h.selectedIds);
-  });
-  test("generated P1 artifacts agree on version and record a passing executable gate",()=>{
-    const regression=JSON.parse(readFileSync(`${root}/audit-v2-regression.json`,"utf8"));
-    const agreement=JSON.parse(readFileSync(`${root}/audit-v2-agreement.json`,"utf8"));
-    expect(regression.rubricVersion).toBe(manifest.rubricVersion);expect(regression.passed).toBe(true);
-    expect(agreement.rubricVersion).toBe(manifest.rubricVersion);expect(agreement.gate.passed).toBe(true);
-    expect([...agreement.gate.deferred].sort()).toEqual(Object.keys(manifest.deferredFromP2).sort());
-  });
-});
-
-describe("primary pass is complete and closes every known v1 hole", () => {
-  const root=`${import.meta.dir}/../plans/court-audit`;
-  const sourceRows=JSON.parse(readFileSync(`${root}/audit-source.json`,"utf8"));
-  const sources=new Map<number,SourceMessage>(sourceRows.map((x:SourceMessage)=>[x.id,x]));
-  const manifest=JSON.parse(readFileSync(`${root}/audit-v2-manifest.json`,"utf8"));
-  const primary=JSON.parse(readFileSync(`${root}/audit-v2-primary.json`,"utf8")) as Annotation[];
-  const m=(id:number)=>primary.find((x)=>x.id===id)!;
-  const types=(id:number)=>m(id).acts.map((x)=>x.type);
-  test("all 45 labels pass the same strict validator used for the holdout",()=>expect(validateAnnotations(primary,sources,manifest.analysedIds)).toEqual([]));
-  test("#36 separates clearance, question and promise",()=>expect(types(36)).toEqual(expect.arrayContaining(["grant","question","promise"])));
-  test("#40 records a third-party report without inventing its act",()=>{expect(m(40).provenance.some((x)=>x.kind==="reported_third_party")).toBe(true);expect(types(40)).not.toContain("request");});
-  test("#97 records forbearance as refrain",()=>expect(m(97).acts.find((x)=>x.type==="promise")?.commitmentMode).toBe("refrain"));
-  test("#110 keeps hazard independent of request and promise",()=>{expect(m(110).hazards.length).toBeGreaterThan(0);expect(types(110)).toEqual(expect.arrayContaining(["request","promise"]));});
-  test("#112 attaches constraints to clearance",()=>{const g=m(112).acts.find((x)=>x.type==="grant");expect(g?.constraints?.length).toBeGreaterThanOrEqual(2);});
-  test("#141 response linkage does not resolve its own question",()=>{const q=m(141).acts.find((a)=>a.type==="question");const o=m(141).actOutcomes.find((x)=>x.actId===q?.id);expect(m(141).responses.length).toBeGreaterThan(0);expect(o?.value).toBe("unassessable");expect(o?.evidence.spans.every((s)=>s.messageId===141)).toBe(true);});
-  test("#146 preserves branches and refrain separately",()=>{expect(m(146).acts.find((x)=>x.type==="question")?.condition?.branch).toContain("stale claim");expect(m(146).acts.find((x)=>x.type==="promise")?.commitmentMode).toBe("refrain");});
-  test("#155 is a transport erratum, not supersession",()=>{expect(m(155).acts[0]?.correctionType).toBe("self_erratum");expect(m(155).sourceCaveats.join(" ")).toContain("transport");});
-  test("#161 preserves assigned and orphaned work",()=>expect(m(161).acts.map((x)=>x.responsibility.kind)).toEqual(expect.arrayContaining(["assigned","unassigned"])));
-  test("#249 preserves sender declaration conflict without manufacturing a request",()=>{expect(m(249).declarations.some((x)=>x.conflict)).toBe(true);expect(types(249)).not.toContain("request");expect(m(249).provenance.some((x)=>x.kind==="inferred_signal")).toBe(true);});
-  test("#262 conditional offer includes refrain promise",()=>expect(m(262).acts.find((x)=>x.type==="promise")?.commitmentMode).toBe("refrain"));
-  test("#284/#289/#295 preserve return, withdrawal and orphan separately",()=>{expect(types(284)).toContain("handoff");expect(m(289).acts.some((x)=>x.type==="promise"&&x.commitmentMode==="refrain")).toBe(true);expect(m(295).acts.some((x)=>x.responsibility.kind==="unassigned")).toBe(true);});
-  test("#399 warning is independent of behaviour correction",()=>{expect(m(399).hazards.length).toBeGreaterThan(0);expect(types(399)).toContain("correction");});
-  test("every annotation has exactly one recipient priority",()=>expect(primary.every((x)=>x.priorities.length===1)).toBe(true));
 });

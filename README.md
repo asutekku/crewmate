@@ -260,7 +260,6 @@ Generated from the verb table in `core/verbs.ts`. `test/verbs.test.ts` fails if 
 - [Operating](docs/operating.md) — configuration, measured cost, known limits
 - [Internals](docs/internals.md) — every file and its role, tests, failure modes
 - [Design notes](docs/design-notes.md) — why the awkward parts are the way they are
-- [Extracting](docs/extracting.md) — moving this into its own repo, with its history
 
 ## Contributing
 

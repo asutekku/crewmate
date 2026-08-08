@@ -71,14 +71,16 @@ Pasted terminal output is rejected for the same reason: leaving the slot open me
 
 ## Planned
 
-Plans live in **[plans/](plans/)** — see [plans/README.md](plans/README.md) for the index and the reading order.
+Where the work is going, and what is deliberately not moving:
 
-| Plan                                               | Covers                                                | Status                       |
-| -------------------------------------------------- | ----------------------------------------------------- | ---------------------------- |
-| [DIARY_PLAN.md](plans/DIARY_PLAN.md)               | shared findings, topics, tags, scopes, FTS            | shipped                      |
-| [WORK_RECORDS_PLAN.md](plans/WORK_RECORDS_PLAN.md) | the work board, landed commits, breaks/needs          | shipped                      |
-| [COORDINATION_PLAN.md](plans/COORDINATION_PLAN.md) | generated `--help`, questions, bug state + `--fixes`  | P0 done, P1–P2 pending       |
-| [LINEAGE_PLAN.md](plans/LINEAGE_PLAN.md)           | memory that outlives a uuid, disciple naming, handoff | pending                      |
-| [AFFINITY_PLAN.md](plans/AFFINITY_PLAN.md)         | which agents work well together                       | deferred — measured, no data |
+| Area                                                        | Status                       |
+| ----------------------------------------------------------- | ---------------------------- |
+| shared findings, topics, tags, scopes, FTS                  | shipped                      |
+| the work board, landed commits, breaks/needs                | shipped                      |
+| obligations, message semantics, the injection budget        | shipped                      |
+| `crew init` — per-repo config, the CLAUDE.md block           | shipped                      |
+| generated `--help`, questions, bug state + `--fixes`        | partly shipped               |
+| memory that outlives a uuid, disciple naming, handoff       | partly shipped               |
+| which agents work well together                             | deferred — measured, no data |
 
-A plan's checkboxes are re-measured **against the code**, never against what the plan last said about itself. `WORK_RECORDS_PLAN.md` once carried four `[x] IMPLEMENTED` markers for phases nobody had written.
+Status is re-measured **against the code**, never against what a spec last said about itself. An internal plan once carried four `[x] IMPLEMENTED` markers for phases nobody had written, which is why the claim above is worth distrusting until you have run the verb.

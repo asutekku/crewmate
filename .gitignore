@@ -1,3 +1,15 @@
 .claude/worktrees/
 node_modules/*
 node_modules
+docs/hooks.md
+
+# Working material, kept locally. Specs, idea sketches, audits of our own
+# docs and the extraction notes: none of it tells a downloader how to use
+# the tool.
+plans/
+ideas/
+docs/extracting.md
+docs/audiences-review.md
+
+# Tests that read the above. `bun test` still discovers them locally.
+*.local.test.ts
