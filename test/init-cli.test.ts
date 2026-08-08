@@ -7,7 +7,7 @@
  * the handler needs, so no database and no env var are involved at all.
  */
 
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, test } from "bun:test";
 
@@ -299,7 +299,9 @@ describe("the init handler on a temp root", () => {
   test("an existing lowercase claude.md is edited, not shadowed", () => {
     const root = fresh({ "claude.md": "# Hand rules\n", "package.json": "{}" });
     runInit(root, []);
-    expect(existsSync(`${root}/CLAUDE.md`)).toBe(existsSync(`${root}/claude.md`));
+    // One file, still the lowercase one. Comparing existsSync on both spellings
+    // proves nothing where the filesystem is case-insensitive.
+    expect(readdirSync(root).filter((n) => n.toLowerCase() === "claude.md")).toEqual(["claude.md"]);
     const text = readFileSync(`${root}/claude.md`, "utf8");
     expect(text.startsWith("# Hand rules")).toBe(true);
     expect(text).toContain(BLOCK_BEGIN);

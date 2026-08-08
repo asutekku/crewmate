@@ -3,12 +3,15 @@ import { describe, expect, test } from "bun:test";
 import { canonicalTrackedPath, resolveTrustedPath } from "../cli/paths.ts";
 
 describe("trusted CLI paths", () => {
-  const root = "C:/projects/traffic";
+  // `resolve` is platform-dependent, so the root must be absolute on the host
+  // running the test: a Windows-shaped root is relative everywhere else.
+  const root = process.platform === "win32" ? "C:/projects/traffic" : "/projects/traffic";
+  const sibling = `${root}-old/file.ts`;
 
   test.each([
     ["src/file.ts", "src/file.ts"],
     ["src\\file.ts", "src/file.ts"],
-    ["C:/projects/traffic/src/file.ts", "src/file.ts"],
+    [`${root}/src/file.ts`, "src/file.ts"],
   ])("accepts an in-root path %s", (raw, expected) => {
     expect(resolveTrustedPath(raw, root)).toMatchObject({
       ok: true,
@@ -16,12 +19,9 @@ describe("trusted CLI paths", () => {
     });
   });
 
-  test.each([
-    "../traffic-old/file.ts",
-    "C:/projects/traffic-old/file.ts",
-    "../../outside",
-  ])("rejects sibling and traversal path %s", (raw) =>
-    expect(resolveTrustedPath(raw, root).ok).toBeFalse(),
+  test.each(["../traffic-old/file.ts", sibling, "../../outside"])(
+    "rejects sibling and traversal path %s",
+    (raw) => expect(resolveTrustedPath(raw, root).ok).toBeFalse(),
   );
 
   test("rejects a physical symlink escape even when the lexical path is inside", () => {

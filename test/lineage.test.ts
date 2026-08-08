@@ -325,9 +325,16 @@ describe("the column survives a live db", () => {
       p.remember(HOPPER_UUID, "hopper", ok("written before"), "Traffic", false, 1, "hopper");
     });
     withPersonal((p) => {
-      (p as unknown as { db: { exec(q: string): void } }).db.exec(
-        `DROP INDEX IF EXISTS memories_lineage; ALTER TABLE memories DROP COLUMN lineage`,
-      );
+      // Rebuilt without the column rather than `DROP COLUMN`: older SQLite
+      // re-parses the schema after a drop and fails on the remaining index.
+      (p as unknown as { db: { exec(q: string): void } }).db.exec(`
+        DROP INDEX IF EXISTS memories_lineage;
+        CREATE TABLE memories_pre AS
+          SELECT id, ts_ms, session_id, agent, title, body, tags, project, is_global
+          FROM memories;
+        DROP TABLE memories;
+        ALTER TABLE memories_pre RENAME TO memories;
+      `);
     });
     withPersonal((p) => {
       // Migrated on reopen: the old row survives with an empty lineage, and a

@@ -31,7 +31,15 @@ function fixture(crewJson: Record<string, unknown>): { root: string; db: string 
 }
 
 afterEach(() => {
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  // Best effort: the hook subprocess may still hold the db open, and Windows
+  // refuses to unlink an open file. A temp dir left behind must not fail a test.
+  for (const root of roots.splice(0)) {
+    try {
+      rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    } catch {
+      /* the OS reclaims it */
+    }
+  }
 });
 
 function runHook(root: string, db: string, filePath: string): string {

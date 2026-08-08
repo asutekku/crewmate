@@ -97,9 +97,17 @@ describe("an existing db gains the column", () => {
       s.work.open(A, "ambrose", "pre-existing work", ["a"], 1000);
     });
     withStore(path, (s) => {
-      (s as unknown as { db: { exec(q: string): void } }).db.exec(
-        `DROP INDEX IF EXISTS work_plan; ALTER TABLE work DROP COLUMN plan_doc`,
-      );
+      // Rebuilt without the column rather than `DROP COLUMN`: older SQLite
+      // re-parses the schema after a drop and fails on the remaining index.
+      (s as unknown as { db: { exec(q: string): void } }).db.exec(`
+        DROP INDEX IF EXISTS work_plan;
+        CREATE TABLE work_pre AS
+          SELECT work_id, agent_id, agent_name, subject, started_ms, closed_ms,
+                 outcome, updated_ms, asked_turn_ms, auto
+          FROM work;
+        DROP TABLE work;
+        ALTER TABLE work_pre RENAME TO work;
+      `);
     });
 
     // Reopening must migrate rather than throw, and the old row must survive.
