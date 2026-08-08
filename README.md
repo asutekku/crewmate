@@ -1,10 +1,10 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/asutekku/crewmate/main/docs/header.png" alt="Crewmates" width="440">
+<img src="https://raw.githubusercontent.com/asutekku/crewmates/main/docs/header.png" alt="Crewmates" width="440">
 
 **Presence and coordination for several Claude Code sessions working in one project at the same time.**
 
-[![CI](https://img.shields.io/github/actions/workflow/status/asutekku/crewmate/ci.yml?branch=main&style=flat-square&label=ci)](https://github.com/asutekku/crewmate/actions/workflows/ci.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/asutekku/crewmates/ci.yml?branch=main&style=flat-square&label=ci)](https://github.com/asutekku/crewmates/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/crewmates?style=flat-square&color=cb3837&logo=npm&logoColor=white)](https://www.npmjs.com/package/crewmates)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/for-Claude%20Code-d97757.svg?style=flat-square)](https://claude.com/claude-code)

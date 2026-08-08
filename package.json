@@ -8,10 +8,10 @@
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/asutekku/crewmate.git"
+    "url": "git+https://github.com/asutekku/crewmates.git"
   },
-  "homepage": "https://github.com/asutekku/crewmate#readme",
-  "bugs": "https://github.com/asutekku/crewmate/issues",
+  "homepage": "https://github.com/asutekku/crewmates#readme",
+  "bugs": "https://github.com/asutekku/crewmates/issues",
   "bin": {
     "crew": "./cli.ts",
     "crewmates": "./install.ts"
