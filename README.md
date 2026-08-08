@@ -29,6 +29,37 @@ Each session sees who is live, what each one said it is doing, which files they 
 
 Works across git worktrees (every worktree of a repo shares one roster), across any project (installed once, user-wide), and in plain directories with no git repo at all.
 
+## Isn't this built into Claude Code now?
+
+Claude Code has [cross-session messaging](https://code.claude.com/docs/en/cross-session-messaging): `SendMessage` and `ListAgents`, so one session can send another a line of text. The two stack. That is a channel; this is the coordination layer that decides there is anything worth saying.
+
+|                                         | Cross-session messaging                      | Crewmates                                              |
+| --------------------------------------- | -------------------------------------------- | ------------------------------------------------------ |
+| Send text to a peer                     | `SendMessage`, by name                       | `crew msg`, by name                                    |
+| Learning who else is here               | `/list-agents`, when Claude thinks to run it | pushed in at session start, unasked                    |
+| Roles, and what each peer is working on | —                                            | roster line per agent, from its own `doing`            |
+| Files a peer has open                   | working directory only                       | per-path, warned before _your_ Edit lands on it        |
+| Replies you are owed                    | —                                            | `ask` / `answer`, tracked until closed                 |
+| Commitments between agents              | —                                            | `promise`, `handoff`, `breaks`, append-only            |
+| Findings after the session ends         | —                                            | `crew note --scope`, resurfaces for whoever edits next |
+| Reaches sessions on other machines      | replies only, via Remote Control             | not supported                                          |
+| Survives the session that wrote it      | no, live sessions only                       | yes, SQLite under `~/.claude/`                         |
+| Windows                                 | mac and Linux only                           | yes                                                    |
+| With telemetry off                      | feature turns off                            | unaffected                                             |
+| Provider                                | not on Bedrock, Vertex, Foundry              | any                                                    |
+
+The overlap is `crew msg`, one verb. Four differences carry the rest:
+
+**Presence is pushed, not pulled.** `/list-agents` is a tool Claude runs when it decides to, which means it usually doesn't — and an agent that has to _choose_ to look for peers starts editing first. Crewmates puts the roster in the context at session start, through hooks, before there is any reason to ask.
+
+**It watches paths, not just names.** The listing gives you a session's working directory. Crewmates knows which files each agent has claimed and warns the one about to write to a claimed path, at the moment of the write. Nobody has to notice the collision for it to be caught.
+
+**It outlives the session.** A message needs a live recipient. `crew note "WAL needs the dir writable" --scope core/store` surfaces for whoever edits `core/store/` next month, in any worktree, long after every session here has exited. That is what a channel structurally cannot do.
+
+**It doesn't phone home, and doesn't stop working when you don't either.** Crewmates makes no network calls and has no runtime dependencies: hooks, a `crew` binary, one SQLite file under `~/.claude/`. Cross-session messaging delivers locally over a socket, but it is gated behind Anthropic's feature-flag service — set `DISABLE_TELEMETRY`, `DO_NOT_TRACK`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` or `DISABLE_GROWTHBOOK` and it never turns on. The setups most likely to run several agents in one checkout — air-gapped, privacy-hardened, or on Bedrock, Vertex or Foundry — are the ones that don't get it.
+
+Messaging needs Claude Code v2.1.224+, macOS or Linux, a first-party provider, and telemetry left on. Crewmates needs Bun. Where both run, they stack — the channel carries text, this carries everything that makes the text worth sending.
+
 ## Install
 
 Requires [Bun](https://bun.sh) 1.2 or newer — the hooks run under `bun`, so it stays a runtime dependency however you install.
@@ -116,12 +147,12 @@ A session's roster line is a short, non-verbatim topic derived from its first pr
 
 ### When a message lands
 
-| Recipient is          | Arrives                                              |
-| --------------------- | ---------------------------------------------------- |
-| mid-turn, using tools | between tool batches (`PostToolBatch`) — seconds     |
-| ending a turn         | at `Stop`, but only if addressed to it               |
-| at a prompt           | on its next `UserPromptSubmit`                       |
-| idle at a prompt      | not until the human prompts it                       |
+| Recipient is          | Arrives                                          |
+| --------------------- | ------------------------------------------------ |
+| mid-turn, using tools | between tool batches (`PostToolBatch`) — seconds |
+| ending a turn         | at `Stop`, but only if addressed to it           |
+| at a prompt           | on its next `UserPromptSubmit`                   |
+| idle at a prompt      | not until the human prompts it                   |
 
 Delivery at `Stop` is deliberately narrow, because injecting there continues the turn. **Nothing wakes an idle session.**
 
@@ -160,87 +191,87 @@ Generated from the verb table in `core/verbs.ts`. `test/verbs.test.ts` fails if 
 
 ### Who is here
 
-| Command | Does |
-|---|---|
-| `who [--raw]` | the roster: who is live, on what, where |
-| `log [n] [--raw]` | recent messages from every agent |
-| `say <text>` | tell every agent something |
-| `msg <name> "<text>" [--from <name>]` | tell one agent something |
-| `where` | this session's repo, worktree, branch and drift from base |
-| `stats` | what the store holds, over how large a sample |
-| `injection [--agent <name> \| --session <id>]` | what session start puts in context, and what it left out |
-| `inbox [--agent <name> \| --session <id>]` | items omitted from your context for length |
-| `ask <name> "<question>"` | ask a peer something and record that a reply is owed |
-| `answer <id> "<answer>"` | answer a question asked of you (id from `asks`) |
-| `asks` | questions waiting on you, and what you are waiting for |
-| `request <name> "<text>"` | record a proposed obligation for a peer |
-| `promise <name> "<text>" [--refrain --until 4h\|<text>]` | bind yourself to perform or refrain |
-| `handoff <name> "<subject>"` | propose moving responsibility to a peer |
-| `grant <name> "<scope>"` | grant explicit clearance over opaque scope text |
-| `correct <name> <self\|peer\|implementation> "<text>"` | record an explicit typed correction |
-| `hazard <name> "<subject>" "<warning>"` | record a warning independently of obligations |
-| `act <name> --json <file>` | atomically create a compound structured message |
-| `obligation <id> [event] [flags]` | inspect or append a versioned obligation event |
-| `obligations [--agent <name>] [--all]` | everything outstanding across the ledger |
-| `clearance <id> [revoke\|expire] [flags]` | inspect, revoke or expire a clearance |
-| `clearances [--all]` | every clearance still in force |
-| `files <agent> [--hours 24]` | every file an agent has touched, and why |
-| `blame <path>` | who has been in this file, newest first |
-| `sessions <words> [--all] [--limit n]` | find a past conversation by what was said in it, and resume it |
-| `quit <name> [--force]` | drop a session off the roster; no liveness check |
-| `clear [--force]` | wipe the roster and claims; the log is kept |
-| `export [path]` | copy the store somewhere safe before anything destructive |
-| `init [--check [--repo]] [--test-policy <p>] [--base-ref <ref>] [--sign]` | set this repo up: crew.json, the CLAUDE.md block, settings |
-| `help` | this list |
+| Command                                                                   | Does                                                           |
+| ------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `who [--raw]`                                                             | the roster: who is live, on what, where                        |
+| `log [n] [--raw]`                                                         | recent messages from every agent                               |
+| `say <text>`                                                              | tell every agent something                                     |
+| `msg <name> "<text>" [--from <name>]`                                     | tell one agent something                                       |
+| `where`                                                                   | this session's repo, worktree, branch and drift from base      |
+| `stats`                                                                   | what the store holds, over how large a sample                  |
+| `injection [--agent <name> \| --session <id>]`                            | what session start puts in context, and what it left out       |
+| `inbox [--agent <name> \| --session <id>]`                                | items omitted from your context for length                     |
+| `ask <name> "<question>"`                                                 | ask a peer something and record that a reply is owed           |
+| `answer <id> "<answer>"`                                                  | answer a question asked of you (id from `asks`)                |
+| `asks`                                                                    | questions waiting on you, and what you are waiting for         |
+| `request <name> "<text>"`                                                 | record a proposed obligation for a peer                        |
+| `promise <name> "<text>" [--refrain --until 4h\|<text>]`                  | bind yourself to perform or refrain                            |
+| `handoff <name> "<subject>"`                                              | propose moving responsibility to a peer                        |
+| `grant <name> "<scope>"`                                                  | grant explicit clearance over opaque scope text                |
+| `correct <name> <self\|peer\|implementation> "<text>"`                    | record an explicit typed correction                            |
+| `hazard <name> "<subject>" "<warning>"`                                   | record a warning independently of obligations                  |
+| `act <name> --json <file>`                                                | atomically create a compound structured message                |
+| `obligation <id> [event] [flags]`                                         | inspect or append a versioned obligation event                 |
+| `obligations [--agent <name>] [--all]`                                    | everything outstanding across the ledger                       |
+| `clearance <id> [revoke\|expire] [flags]`                                 | inspect, revoke or expire a clearance                          |
+| `clearances [--all]`                                                      | every clearance still in force                                 |
+| `files <agent> [--hours 24]`                                              | every file an agent has touched, and why                       |
+| `blame <path>`                                                            | who has been in this file, newest first                        |
+| `sessions <words> [--all] [--limit n]`                                    | find a past conversation by what was said in it, and resume it |
+| `quit <name> [--force]`                                                   | drop a session off the roster; no liveness check               |
+| `clear [--force]`                                                         | wipe the roster and claims; the log is kept                    |
+| `export [path]`                                                           | copy the store somewhere safe before anything destructive      |
+| `init [--check [--repo]] [--test-policy <p>] [--base-ref <ref>] [--sign]` | set this repo up: crew.json, the CLAUDE.md block, settings     |
+| `help`                                                                    | this list                                                      |
 
 ### What you are doing
 
-| Command | Does |
-|---|---|
-| `doing "<subject>" [--plan "a; b; c"] [--plan-doc <path>]` | open a work item; --plan is optional |
-| `did <n> ["<what changed>"] [--item <match>]` | tick a step off, with what actually changed |
-| `undo <n> [--item <match>]` | take a tick back; the step goes outstanding again |
-| `step <n> "<status>" [--item <match>]` | note progress on a step without closing it |
-| `add "<step>" [--item <match>]` | a phase the plan missed |
-| `done [<subject match>] [--abandoned]` | close ONE item; --abandoned is the honest exit |
-| `board [<agent>] [--history] [--all]` | what everyone is doing |
-| `link <plan path> [--item <match>]` | say which plan document this item executes |
-| `plans` | every plan with work against it, and what shipped |
-| `mine` | my open items |
-| `breaks "<what>" [--item <match>]` | record a breaking change; tells agents in the same files |
-| `needs "<what>" [--item <match>]` | record what you are blocked on, and tell them |
+| Command                                                    | Does                                                     |
+| ---------------------------------------------------------- | -------------------------------------------------------- |
+| `doing "<subject>" [--plan "a; b; c"] [--plan-doc <path>]` | open a work item; --plan is optional                     |
+| `did <n> ["<what changed>"] [--item <match>]`              | tick a step off, with what actually changed              |
+| `undo <n> [--item <match>]`                                | take a tick back; the step goes outstanding again        |
+| `step <n> "<status>" [--item <match>]`                     | note progress on a step without closing it               |
+| `add "<step>" [--item <match>]`                            | a phase the plan missed                                  |
+| `done [<subject match>] [--abandoned]`                     | close ONE item; --abandoned is the honest exit           |
+| `board [<agent>] [--history] [--all]`                      | what everyone is doing                                   |
+| `link <plan path> [--item <match>]`                        | say which plan document this item executes               |
+| `plans`                                                    | every plan with work against it, and what shipped        |
+| `mine`                                                     | my open items                                            |
+| `breaks "<what>" [--item <match>]`                         | record a breaking change; tells agents in the same files |
+| `needs "<what>" [--item <match>]`                          | record what you are blocked on, and tell them            |
 
 ### Findings that outlive the session
 
-| Command | Does |
-|---|---|
+| Command                                                               | Does                                                        |
+| --------------------------------------------------------------------- | ----------------------------------------------------------- |
 | `note "<title>" --topic <t> [--scope <dir>] [--kind error\|decision]` | file a finding, a bug, or a decision; `note <id>` reads one |
-| `recall <words> [--scope <dir>] [--limit n]` | search findings |
-| `bugs [--scope <dir>] [--limit n]` | errors nobody has fixed yet |
-| `topics` | every topic, with how much is under it |
-| `topic <name> [--limit n]  \|  merge <from> <into>` | read one topic, or fold two together |
-| `tags` | every tag in use |
-| `note-deprecate <id> "<why it stopped being true>"` | mark a finding no longer true, keeping the history |
-| `note-supersede <old-id> <new-id>` | point an old finding at the one that replaced it |
-| `diary check` | findings that look stale, thin or duplicated |
+| `recall <words> [--scope <dir>] [--limit n]`                          | search findings                                             |
+| `bugs [--scope <dir>] [--limit n]`                                    | errors nobody has fixed yet                                 |
+| `topics`                                                              | every topic, with how much is under it                      |
+| `topic <name> [--limit n]  \|  merge <from> <into>`                   | read one topic, or fold two together                        |
+| `tags`                                                                | every tag in use                                            |
+| `note-deprecate <id> "<why it stopped being true>"`                   | mark a finding no longer true, keeping the history          |
+| `note-supersede <old-id> <new-id>`                                    | point an old finding at the one that replaced it            |
+| `diary check`                                                         | findings that look stale, thin or duplicated                |
 
 ### What you remember about the user
 
-| Command | Does |
-|---|---|
-| `remember "<title>" [--body "<detail>"] [--tags a,b] [--global]` | keep something about the user across sessions |
-| `about-me [--all]` | what you have kept |
-| `memories [--agent <name>] [--all-projects]` | every memory every agent holds about you |
-| `forget <id>` | drop a memory outright -- a wrong one must not outlive you |
-| `inherit [<name>]` | take up a departed agent's knowledge; bare lists them |
+| Command                                                          | Does                                                       |
+| ---------------------------------------------------------------- | ---------------------------------------------------------- |
+| `remember "<title>" [--body "<detail>"] [--tags a,b] [--global]` | keep something about the user across sessions              |
+| `about-me [--all]`                                               | what you have kept                                         |
+| `memories [--agent <name>] [--all-projects]`                     | every memory every agent holds about you                   |
+| `forget <id>`                                                    | drop a memory outright -- a wrong one must not outlive you |
+| `inherit [<name>]`                                               | take up a departed agent's knowledge; bare lists them      |
 
 ### Names and roles
 
-| Command | Does |
-|---|---|
-| `call-me <name> [--agent <who>]` | take a different name; peers type it at msg |
-| `set-role "<role>" [--agent <who>]` | set your role: Keeper of Wet Things |
-| `release [--agent <who>]` | give up your name so a successor can take it |
+| Command                             | Does                                         |
+| ----------------------------------- | -------------------------------------------- |
+| `call-me <name> [--agent <who>]`    | take a different name; peers type it at msg  |
+| `set-role "<role>" [--agent <who>]` | set your role: Keeper of Wet Things          |
+| `release [--agent <who>]`           | give up your name so a successor can take it |
 
 <!-- END GENERATED COMMANDS -->
 
@@ -250,7 +281,7 @@ Generated from the verb table in `core/verbs.ts`. `test/verbs.test.ts` fails if 
 - **Waking an idle session.** A hook only fires because its own session did something, so a message to a quiet peer waits until a human types into that window. `msg` says so when it happens.
 - **Secrecy.** A directed message is shown only to its recipient, but every agent runs as you and can read the database directly. It keeps contexts clean; it is not a channel for anything you would not want all your sessions to see.
 - **Trusted input.** Message, obligation and hazard text are arbitrary strings written by one agent and delivered into another's context, some of it above the roster in priority. Hooks label where a line came from; nothing sanitises what it says.
-- **A task queue.** This is tuned for peers all working *now*, learning about each other between turns.
+- **A task queue.** This is tuned for peers all working _now_, learning about each other between turns.
 
 ## Documentation
 
