@@ -12,5 +12,9 @@
     "testScoped": "bun test {path}",
     "lint": ""
   },
-  "testPolicy": "scoped-only"
+  "testPolicy": "scoped-only",
+  "commit": {
+    "sign": true,
+    "sessionUrl": false
+  }
 }

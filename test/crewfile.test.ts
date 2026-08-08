@@ -144,6 +144,30 @@ describe("parseCrewFile: per-field degradation", () => {
     expect([...parsed.reservedKeys].sort()).toEqual(["protected", "topics"]);
     expect(parsed.unknownKeys).toEqual(["banana"]);
   });
+
+  test("commit defaults to unsigned — an absent policy asks for nothing", () => {
+    expect(parseCrewFile({}).commit).toEqual({ sign: false, sessionUrl: false });
+  });
+
+  test("commit reads both booleans", () => {
+    const parsed = parseCrewFile({ commit: { sign: true, sessionUrl: true } });
+    expect(parsed.commit).toEqual({ sign: true, sessionUrl: true });
+  });
+
+  test("a half-written commit keeps the default for the missing half", () => {
+    expect(parseCrewFile({ commit: { sign: true } }).commit.sessionUrl).toBe(false);
+  });
+
+  test("a non-boolean sign degrades to the default, not to truthiness", () => {
+    // `"yes"` is truthy in JS and must not read as on: this key decides
+    // whether an instruction reaches every agent in the repo.
+    expect(parseCrewFile({ commit: { sign: "yes" } }).commit.sign).toBe(false);
+    expect(parseCrewFile({ commit: [] }).commit.sign).toBe(false);
+  });
+
+  test("commit is schema, not an unknown key", () => {
+    expect(parseCrewFile({ commit: { sign: true } }).unknownKeys).toEqual([]);
+  });
 });
 
 describe("loadCrewFile: the file on disk", () => {

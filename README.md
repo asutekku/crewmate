@@ -60,8 +60,8 @@ test scripts, `.gitignore` — and writes three files at the main tree root:
 - **`.claude/crew.json`** — the repo's shape: `generated` globs the pre-edit
   hook never claims, `hot` files it warns on regardless of who is live,
   `checks` (the real test commands), `testPolicy` (`scoped-only` makes
-  pre-bash suggest the one-file form on full-suite runs), and per-repo
-  `tunables` overriding `config.json`.
+  pre-bash suggest the one-file form on full-suite runs), `commit` (see
+  below), and per-repo `tunables` overriding `config.json`.
 - **A CLAUDE.md block** between `<!-- crew:init:begin/end -->` markers — the
   shared-tree git rules, the crew habits, and the repo's scoped test command.
   Text outside the markers is never touched.
@@ -69,8 +69,40 @@ test scripts, `.gitignore` — and writes three files at the main tree root:
 
 It never prompts: bare `crew init` applies detection plus defaults, flags
 override (`--test-policy`, `--base-ref`, `--crew-size`, `--task-length`,
-`--overnight`, `--no-claude-md`), and re-running re-derives while keeping
-hand-added keys. `--check --repo` is CI-safe — it ignores machine state.
+`--overnight`, `--sign`, `--session-url`, `--no-claude-md`), and re-running
+re-derives while keeping hand-added keys. `--check --repo` is CI-safe — it
+ignores machine state.
+
+### Signing commits
+
+`crew init --sign` sets `commit.sign` and adds a rule to the CLAUDE.md block:
+trail your own given name, not a bare model name.
+
+```
+Co-Authored-By: Aoi (Claude Opus 5) <noreply@anthropic.com>
+```
+
+`git log` outlives every session, and `Claude Opus 5` cannot tell eight agents
+apart in it. A disciple signs the form the roster shows — `Vega, Hopper's
+Disciple` — because it holds what its master learned and not its transcript. A
+subagent's work is signed by the parent, whose tree the edits land in.
+
+The block is what teaches this; `pre-bash` enforces it, **denying** a commit
+that carries no trailer or one naming another agent. Deny rather than warn
+because the artifact is permanent: an unsigned commit is repairable only by
+rewriting history, where a denied one costs a retry.
+
+What makes that safe is the rule that an unreadable message is never judged.
+`--amend --no-edit`, `-F -`, and — the case a real commit found — a message
+file the same command has yet to write, as in `printf … > msg && git commit -F
+msg`. `PreToolUse` runs before the redirect, so the bytes on disk are the
+previous commit's; reading them would block a correct commit over someone
+else's text.
+
+`commit.sessionUrl` is **off by default**, and the block tells agents to leave
+the `Claude-Session:` trailer out. The link is permanent and points at a
+private transcript — not something to publish from a shared remote.
+`--session-url` opts back in.
 
 ## Usage
 

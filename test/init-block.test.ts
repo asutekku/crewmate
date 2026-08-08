@@ -24,6 +24,8 @@ const GIT: BlockParams = {
   baseRef: "head",
   testScoped: "bun test {path}",
   testPolicy: "scoped-only",
+  sign: false,
+  sessionUrl: false,
 };
 
 describe("renderBlock: the git form", () => {
@@ -92,6 +94,34 @@ describe("renderBlock: the non-git form", () => {
   test("keeps the crew habits", () => {
     expect(block).toContain("crew board");
     expect(block).toContain("Shared directory");
+  });
+});
+
+describe("renderBlock: the signing rule", () => {
+  test("is absent until the policy asks for it", () => {
+    expect(renderBlock(GIT)).not.toContain("Co-Authored-By");
+  });
+
+  const signed = renderBlock({ ...GIT, sign: true });
+
+  test("names the trailer and the lineage form", () => {
+    expect(signed).toContain("Co-Authored-By: Aoi (Claude Opus 5)");
+    expect(signed).toContain("Hopper's Disciple");
+  });
+
+  test("says a minion's work is signed by the parent", () => {
+    expect(signed).toContain("signed by the PARENT");
+  });
+
+  test("forbids the session link, and stops forbidding it when it is allowed", () => {
+    expect(signed).toContain("No `Claude-Session:` trailer");
+    expect(renderBlock({ ...GIT, sign: true, sessionUrl: true })).not.toContain(
+      "No `Claude-Session:` trailer",
+    );
+  });
+
+  test("stays out of the non-git form — no commits without a repo", () => {
+    expect(renderBlock({ ...GIT, isGit: false, sign: true })).not.toContain("Co-Authored-By");
   });
 });
 

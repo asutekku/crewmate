@@ -24,6 +24,18 @@ export interface CodegenPair {
   readonly run: string;
 }
 
+/**
+ * Who a commit says wrote it, and what else the trailer carries.
+ *
+ * `sign` makes an agent trail its OWN given name; a generic model name cannot
+ * tell two conversations apart in `git log`. `sessionUrl` is opt-in because the
+ * link is permanent and points at a private transcript from a public remote.
+ */
+export interface CommitPolicy {
+  readonly sign: boolean;
+  readonly sessionUrl: boolean;
+}
+
 export interface CrewFile {
   readonly v: number;
   readonly units: readonly string[];
@@ -33,6 +45,7 @@ export interface CrewFile {
   readonly checks: CrewChecks;
   /** Empty means "no policy" — never guessed. */
   readonly testPolicy: "" | "scoped-only" | "full-ok";
+  readonly commit: CommitPolicy;
   readonly codegen: readonly CodegenPair[];
   /** Only valid PresenceConfig keys with finite positive values survive parsing. */
   readonly tunables: Partial<PresenceConfig>;
@@ -53,11 +66,18 @@ const SCHEMA_KEYS = new Set([
   "sequenced",
   "checks",
   "testPolicy",
+  "commit",
   "codegen",
   "tunables",
 ]);
 
 export const EMPTY_CHECKS: CrewChecks = { test: "", testScoped: "", lint: "" };
+
+/**
+ * Signing OFF by default: the block only tells agents to sign where the file
+ * says so, and a repo that never ran `crew init` gets no new instruction.
+ */
+export const DEFAULT_COMMIT: CommitPolicy = { sign: false, sessionUrl: false };
 
 export const EMPTY_CREWFILE: CrewFile = {
   v: 1,
@@ -67,6 +87,7 @@ export const EMPTY_CREWFILE: CrewFile = {
   sequenced: [],
   checks: EMPTY_CHECKS,
   testPolicy: "",
+  commit: DEFAULT_COMMIT,
   codegen: [],
   tunables: {},
   unknownKeys: [],
@@ -93,6 +114,17 @@ function parseChecks(value: unknown): CrewChecks {
     test: stringField(o["test"]),
     testScoped: stringField(o["testScoped"]),
     lint: stringField(o["lint"]),
+  };
+}
+
+/** A missing key keeps its default, so a half-written `commit` is still read. */
+function parseCommit(value: unknown): CommitPolicy {
+  if (typeof value !== "object" || value === null) return DEFAULT_COMMIT;
+  const o = value as Record<string, unknown>;
+  return {
+    sign: typeof o["sign"] === "boolean" ? o["sign"] : DEFAULT_COMMIT.sign,
+    sessionUrl:
+      typeof o["sessionUrl"] === "boolean" ? o["sessionUrl"] : DEFAULT_COMMIT.sessionUrl,
   };
 }
 
@@ -137,6 +169,7 @@ export function parseCrewFile(raw: unknown): CrewFile {
     sequenced: stringList(o["sequenced"]),
     checks: parseChecks(o["checks"]),
     testPolicy: policy === "scoped-only" || policy === "full-ok" ? policy : "",
+    commit: parseCommit(o["commit"]),
     codegen: parseCodegen(o["codegen"]),
     tunables: parseTunables(o["tunables"]),
     unknownKeys: keys.filter(

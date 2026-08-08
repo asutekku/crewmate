@@ -81,6 +81,47 @@ Three rules, each protecting something specific:
   a trailing newline is cleaned instead of rejected.
 
 
+## The name in a commit
+
+A name that reaches the roster, the board and every message still stopped at
+the one artifact that outlives the session. `git log` recorded `Claude Opus 5`,
+which names the model and not the agent — eight sessions in one tree collapse
+to one line, and a lineage is invisible.
+
+`crew init --sign` writes `commit.sign` into crew.json, and the CLAUDE.md block
+then tells agents to trail their own name:
+
+```
+Co-Authored-By: Aoi (Claude Opus 5) <noreply@anthropic.com>
+```
+
+**Name first, the same rule `fullName` follows** — the unique part leads. A
+disciple signs its read form, `Vega, Hopper's Disciple`, because that is
+exactly the case generic attribution loses: two conversations on one lineage,
+indistinguishable in `git log`. `checkCommitSignature` compares the GIVEN NAME
+only, so the prose suffix is never parsed as a different agent.
+
+**A minion's work is signed by the parent.** Its edits land in the parent's
+tree and its tool calls already carry the parent's `session_id`; signing
+`Aoi's Minion #2` would name something no peer can reach, and `minionName` is
+read-only for the same reason.
+
+The trailer is a CLAIM, not evidence — the distinction `commit-landed.ts`
+draws about a sha. An agent can forget it or copy a peer's. `pre-bash` compares
+it against the session running the command and DENIES a mismatch, so the claim
+is checked before it becomes permanent.
+
+**It only judges a message it actually read.** `--amend --no-edit` reuses text
+this hook never sees, and `printf … > msg && git commit -F msg` — the form the
+shared-tree rules teach — runs its redirect AFTER `PreToolUse`, leaving the
+previous commit's message on disk. Measured 2026-08-08: a correctly signed
+commit was refused over the unsigned test before it. Both cases now yield no
+message and no verdict, because blocking a correct commit is the failure that
+teaches agents to route around the hook.
+
+`commit.sessionUrl` is off by default. `Claude-Session:` is a permanent link to
+a private transcript, and a public remote is the wrong place for it.
+
 ## Handing a name to a successor
 
 An agent gives its name up while still alive:

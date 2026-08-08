@@ -117,6 +117,28 @@ describe("deriveCrewJson: detection layered over the existing file", () => {
     expect((derived["checks"] as Record<string, string>)["testScoped"]).toBe("bun test {path}");
   });
 
+  test("commit is absent until something asks for it", () => {
+    expect(deriveCrewJson(DETECTED, null, NO_OPTIONS)["commit"]).toBeUndefined();
+  });
+
+  test("--sign writes the policy", () => {
+    const derived = deriveCrewJson(DETECTED, null, { ...NO_OPTIONS, sign: true });
+    expect(derived["commit"]).toEqual({ sign: true, sessionUrl: false });
+  });
+
+  test("a hand-written policy survives a re-run with no flag", () => {
+    const derived = deriveCrewJson(DETECTED, { commit: { sign: true } }, NO_OPTIONS);
+    expect((derived["commit"] as Record<string, boolean>)["sign"]).toBe(true);
+  });
+
+  test("--no-sign beats the hand-written value", () => {
+    const derived = deriveCrewJson(DETECTED, { commit: { sign: true } }, {
+      ...NO_OPTIONS,
+      sign: false,
+    });
+    expect(derived["commit"]).toBeUndefined();
+  });
+
   test("pending, reserved and unknown keys pass through verbatim", () => {
     const derived = deriveCrewJson(
       DETECTED,

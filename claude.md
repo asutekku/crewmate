@@ -33,6 +33,22 @@ them destroys work that isn't yours:
   `git log -1` first — HEAD moves under you.
   `ExitWorktree --keep` when the work should survive.
 
+**Sign a commit with your own name.** `git log` outlives every session here, and a
+generic model name cannot tell two agents apart in it. Trail your given name — the
+one at the top of this session — and the model you are:
+
+```
+Co-Authored-By: Aoi (Claude Opus 5) <noreply@anthropic.com>
+```
+
+A name you took up a lineage under is written the way the roster reads it,
+`Vega, Hopper's Disciple` — you hold what it learned, not its transcript, so the
+trailer must not claim to be it. A subagent's work is signed by the PARENT: its edits
+land in the parent's tree, and nobody can reach a minion by name.
+
+**No `Claude-Session:` trailer.** The link is permanent and points at a private
+transcript, which is not something to publish from a shared remote.
+
 Coordination runs through `crew`. The roster, overlap warnings and scoped findings
 arrive on their own; `crew help` lists every command. Two habits are worth forming:
 `crew board` before starting something large, and `crew note "<finding>" --scope <folder>`

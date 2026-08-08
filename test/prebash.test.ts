@@ -29,7 +29,8 @@
 
 import { describe, expect, test } from "bun:test";
 
-import { checkCommand } from "../hooks/pre-bash.ts";
+import { checkCommand, checkCommitSignature, commitMessage } from "../hooks/pre-bash.ts";
+import { EMPTY_CREWFILE, type CrewFile } from "../core/crewfile.ts";
 
 const denied = (cmd: string): boolean => checkCommand(cmd).deny;
 
@@ -395,5 +396,149 @@ describe("known gaps — pinned so that changing one is deliberate", () => {
     // is read as shell. Rare, but it fails closed rather than open.
     const cmd = "cat > a <<'A'\nfor i in 1 2; do sleep 5; cat tasks/x.output; done";
     expect(denied(cmd)).toBe(true);
+  });
+});
+/**
+ * The commit-signature check. It DENIES, like the poll guard: an unsigned
+ * commit is permanent and only repairable by rewriting history, where a denied
+ * one costs a retry.
+ *
+ * WHAT MAKES THAT SAFE is the rule that an unreadable message never reaches
+ * the check — `-F` before the file is written, `--amend` reusing the old text.
+ * The strict answer is only given about text actually seen, so the cases below
+ * that pin silence are load-bearing: each one is a commit that would otherwise
+ * be BLOCKED on a message the hook never read.
+ */
+const SIGNING: CrewFile = { ...EMPTY_CREWFILE, commit: { sign: true, sessionUrl: false } };
+
+/** The reason, or "" when the commit is allowed — `deny` and reason move together. */
+const warn = (cmd: string, msg: string, me = "aoi"): string => {
+  const v = checkCommitSignature(cmd, SIGNING, me, msg);
+  expect(v.deny).toBe(v.reason !== "");
+  return v.reason;
+};
+
+describe("commitMessage: finding the message in either real form", () => {
+  const noFile = (): string => {
+    throw new Error("unreadable");
+  };
+
+  test("reads a double-quoted -m", () => {
+    expect(commitMessage(`git commit -m "subject line"`, noFile)).toBe("subject line");
+  });
+
+  test("joins repeated -m the way git does — the trailer is in the last", () => {
+    const msg = commitMessage(`git commit -m "subject" -m "Co-Authored-By: Aoi"`, noFile);
+    expect(msg).toBe("subject\n\nCo-Authored-By: Aoi");
+  });
+
+  test("reads -F from disk, resolved by the caller", () => {
+    expect(commitMessage(`git commit -F msg.txt -o -- a.ts`, () => "from a file")).toBe(
+      "from a file",
+    );
+  });
+
+  test("a file this same command writes is STALE on disk, so it is not read", () => {
+    // FOUND BY A REAL COMMIT, 2026-08-08. PreToolUse runs before the `printf`,
+    // so the bytes on disk are the PREVIOUS commit's message — here a signed
+    // commit would have been denied over the unsigned text still sitting there.
+    const cmd = `printf 'subject\\n\\nCo-Authored-By: Aoi\\n' > .git/MSG && git commit -F .git/MSG`;
+    expect(commitMessage(cmd, () => "stale unsigned text")).toBe("");
+  });
+
+  test("the redirect and the flag need not spell the path alike", () => {
+    const cmd = `printf 'x' > ./.git/MSG && git commit -F "I:/repo/.git/MSG"`;
+    expect(commitMessage(cmd, () => "stale")).toBe("");
+  });
+
+  test("`tee` into the message file counts as writing it", () => {
+    const cmd = `printf 'x' | tee .git/MSG && git commit -F .git/MSG`;
+    expect(commitMessage(cmd, () => "stale")).toBe("");
+  });
+
+  test("a file written by an EARLIER command is read normally", () => {
+    // The whole point of the check above is that it must not swallow this: a
+    // message already on disk is exactly what the hook exists to inspect.
+    expect(commitMessage(`git commit -F .git/MSG -o -- a.ts`, () => "real text")).toBe("real text");
+  });
+
+  test("an unreadable -F yields nothing rather than a guess", () => {
+    // Written moments later by the same command in a && chain; warning here
+    // would fire on a message that does not exist yet.
+    expect(commitMessage(`git commit -F msg.txt`, noFile)).toBe("");
+  });
+
+  test("`-F -` is stdin, which this cannot read", () => {
+    expect(commitMessage(`git commit -F -`, () => "wrong")).toBe("");
+  });
+
+  test("a heredoc body inside -m is found", () => {
+    const cmd = `git commit -m "$(cat <<'EOF'\nsubject\n\nCo-Authored-By: Aoi\nEOF\n)"`;
+    expect(commitMessage(cmd, noFile)).toContain("Co-Authored-By: Aoi");
+  });
+});
+
+describe("checkCommitSignature: what it says", () => {
+  test("an unsigned commit names the agent and the exact trailer", () => {
+    const w = warn(`git commit -m "x"`, "subject only");
+    expect(w).toContain("aoi");
+    expect(w).toContain("Co-Authored-By: aoi");
+  });
+
+  test("a correctly signed commit is silent", () => {
+    expect(warn(`git commit -m "x"`, "s\n\nCo-Authored-By: Aoi (Claude Opus 5) <n@a.com>")).toBe(
+      "",
+    );
+  });
+
+  test("a peer's name is caught — it points blame at the wrong conversation", () => {
+    const w = warn(`git commit -m "x"`, "s\n\nCo-Authored-By: Hopper (Claude Opus 5) <n@a.com>");
+    expect(w).toContain("hopper");
+    expect(w).toContain("wrong conversation");
+  });
+
+  test("a disciple signs its own given name, not its master's", () => {
+    // `lineageName` yields `Aoi, Akari's Disciple`; only the given name is
+    // compared, so the prose suffix must not read as a different agent.
+    const msg = "s\n\nCo-Authored-By: Aoi, Akari's Disciple (Claude Opus 5) <n@a.com>";
+    expect(warn(`git commit -m "x"`, msg, "Aoi, Akari's Disciple")).toBe("");
+  });
+
+  test("the session link is refused while the policy forbids it", () => {
+    const msg = "s\n\nCo-Authored-By: Aoi\nClaude-Session: https://claude.ai/code/session_01";
+    expect(warn(`git commit -m "x"`, msg)).toContain("Claude-Session");
+  });
+
+  test("and allowed when the policy permits it", () => {
+    const crew: CrewFile = { ...SIGNING, commit: { sign: true, sessionUrl: true } };
+    const msg = "s\n\nCo-Authored-By: Aoi\nClaude-Session: https://claude.ai/code/session_01";
+    expect(checkCommitSignature(`git commit -m "x"`, crew, "aoi", msg).deny).toBe(false);
+  });
+});
+
+describe("checkCommitSignature: when it must stay quiet", () => {
+  test("the policy is off", () => {
+    expect(
+      checkCommitSignature(`git commit -m "x"`, EMPTY_CREWFILE, "aoi", "no trailer").deny,
+    ).toBe(false);
+  });
+
+  test("the session has no name to sign with", () => {
+    expect(warn(`git commit -m "x"`, "no trailer", "")).toBe("");
+  });
+
+  test("the message is unreadable", () => {
+    expect(warn(`git commit --amend --no-edit`, "")).toBe("");
+  });
+
+  test("the command is not a commit", () => {
+    expect(warn(`git log --oneline -5`, "some text")).toBe("");
+  });
+
+  test("a commit named only inside a heredoc is data, not a commit", () => {
+    // Same stripper the poll guard leans on: documenting the command in a file
+    // must not warn about how that example is signed.
+    const cmd = "cat > doc.md <<'EOF'\nRun `git commit -m \"x\"` to land it.\nEOF";
+    expect(warn(cmd, "irrelevant")).toBe("");
   });
 });

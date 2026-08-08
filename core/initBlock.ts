@@ -22,6 +22,10 @@ export interface BlockParams {
   readonly testScoped: string;
   /** `scoped-only` adds the full-suite warning beside the scoped command. */
   readonly testPolicy: string;
+  /** False drops the signing rule entirely — no policy, no instruction. */
+  readonly sign: boolean;
+  /** True keeps the session link out of the "do not include" list. */
+  readonly sessionUrl: boolean;
 }
 
 export function renderBlock(params: BlockParams): string {
@@ -49,6 +53,30 @@ export function renderBlock(params: BlockParams): string {
       "  `ExitWorktree --keep` when the work should survive.",
       "",
     );
+    if (params.sign) {
+      lines.push(
+        "**Sign a commit with your own name.** `git log` outlives every session here, and a",
+        "generic model name cannot tell two agents apart in it. Trail your given name — the",
+        "one at the top of this session — and the model you are:",
+        "",
+        "```",
+        "Co-Authored-By: Aoi (Claude Opus 5) <noreply@anthropic.com>",
+        "```",
+        "",
+        "A name you took up a lineage under is written the way the roster reads it,",
+        "`Vega, Hopper's Disciple` — you hold what it learned, not its transcript, so the",
+        "trailer must not claim to be it. A subagent's work is signed by the PARENT: its edits",
+        "land in the parent's tree, and nobody can reach a minion by name.",
+        ...(params.sessionUrl
+          ? []
+          : [
+              "",
+              "**No `Claude-Session:` trailer.** The link is permanent and points at a private",
+              "transcript, which is not something to publish from a shared remote.",
+            ]),
+        "",
+      );
+    }
   } else {
     lines.push(
       `## Shared directory — you are one of ${params.crewSize} agents`,

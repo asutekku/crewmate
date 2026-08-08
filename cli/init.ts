@@ -35,6 +35,9 @@ export interface InitOptions {
   readonly overnight: boolean;
   readonly testPolicy?: "scoped-only" | "full-ok";
   readonly baseRef: string;
+  /** `--sign` / `--no-sign`; undefined keeps whatever the file already says. */
+  readonly sign?: boolean;
+  readonly sessionUrl?: boolean;
 }
 
 /** The headline's N. Free integers pass through; the default names a range. */
@@ -65,7 +68,7 @@ export function deriveTunables(options: InitOptions): Record<string, number> {
 }
 
 /** Keys whose consumers have shipped — the only ones init itself writes. */
-const WRITTEN_KEYS = ["generated", "hot", "checks", "testPolicy", "tunables"] as const;
+const WRITTEN_KEYS = ["generated", "hot", "checks", "testPolicy", "commit", "tunables"] as const;
 
 /** Detected keys whose consumers are still pending (INIT_PLAN P4). */
 const PENDING_KEYS = ["units", "sequenced", "codegen"] as const;
@@ -121,6 +124,14 @@ export function deriveCrewJson(
     options.testPolicy ??
     (parsed.testPolicy !== "" ? parsed.testPolicy : checks.testScoped !== "" ? "scoped-only" : "");
   if (policy !== "") out["testPolicy"] = policy;
+
+  // WRITTEN ONLY WHEN ON, so a repo that never asked for signing keeps a
+  // crew.json with no opinion about it rather than an explicit `false`.
+  const commit = {
+    sign: options.sign ?? parsed.commit.sign,
+    sessionUrl: options.sessionUrl ?? parsed.commit.sessionUrl,
+  };
+  if (commit.sign || commit.sessionUrl) out["commit"] = commit;
 
   if (Array.isArray(existing["codegen"]) && existing["codegen"].length > 0) {
     out["codegen"] = existing["codegen"];
@@ -191,7 +202,10 @@ export function createInitCommands(context: CliContext): CommandMap {
   return {
     init(args) {
       const parsed = parseArguments(args, {
-        booleanFlags: ["--check", "--repo", "--yes", "--claude-md", "--no-claude-md", "--overnight"],
+        booleanFlags: [
+          "--check", "--repo", "--yes", "--claude-md", "--no-claude-md", "--overnight",
+          "--sign", "--no-sign", "--session-url",
+        ],
         valueFlags: ["--crew-size", "--task-length", "--test-policy", "--base-ref"],
         maxPositionals: 0,
       });
@@ -220,6 +234,12 @@ export function createInitCommands(context: CliContext): CommandMap {
         overnight: booleanFlag(parsed.value, "--overnight"),
         ...(testPolicy.value !== undefined ? { testPolicy: testPolicy.value } : {}),
         baseRef: stringFlag(parsed.value, "--base-ref") ?? "head",
+        ...(booleanFlag(parsed.value, "--sign")
+          ? { sign: true }
+          : booleanFlag(parsed.value, "--no-sign")
+            ? { sign: false }
+            : {}),
+        ...(booleanFlag(parsed.value, "--session-url") ? { sessionUrl: true } : {}),
       };
 
       const root = context.projectRoot;
@@ -301,14 +321,16 @@ export function createInitCommands(context: CliContext): CommandMap {
             `init: ${claudePath} has one crew marker without its pair — repair it, then re-run`,
           );
         } else {
-          const checks = parseCrewFile(derived).checks;
+          const written = parseCrewFile(derived);
           const policy = typeof derived["testPolicy"] === "string" ? derived["testPolicy"] : "";
           const block = renderBlock({
             crewSize: crewSizeLabel(options.crewSize),
             isGit: context.isGit,
             baseRef: options.baseRef,
-            testScoped: checks.testScoped,
+            testScoped: written.checks.testScoped,
             testPolicy: policy,
+            sign: written.commit.sign,
+            sessionUrl: written.commit.sessionUrl,
           });
           writeFileSync(claudePath, applyBlock(claudeText, block));
           context.log(
